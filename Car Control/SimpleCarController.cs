@@ -3,7 +3,7 @@ using UnityEngine;
 /// <summary>
 /// 简单车辆控制器
 /// 功能：手动控制（WASD）+ 自动驾驶接口
-/// 作者：[你的名字]
+/// 作者：
 /// 日期：2025
 /// </summary>
 public class SimpleCarController : MonoBehaviour
