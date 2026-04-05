@@ -100,4 +100,8 @@ public class TrafficLightController : MonoBehaviour
         SetState(state);
         timer = 0f;
     }
+    public void SetPhaseOffset(float offset)
+{
+    timer = offset % (redDuration + yellowDuration + greenDuration);
+}
 }

@@ -121,6 +121,20 @@ public class RoadNetworkGenerator : MonoBehaviour
     /// <summary>
     /// 生成路网（主入口）
     /// </summary>
+    void Update()
+    {
+        if (pendingGenerate)
+        {
+            pendingGenerate = false;
+            Generate();
+        }
+
+        if (pendingRandomGenerate)
+        {
+            pendingRandomGenerate = false;
+            Generate();
+        }
+    }
     public void Generate()
     {
         // 清空旧数据
@@ -158,6 +172,9 @@ public class RoadNetworkGenerator : MonoBehaviour
         var roadBuilder = GetComponent<ProceduralRoadBuilder>();
         if (roadBuilder != null)
             roadBuilder.BuildRoads();
+        var trafficLightManager = GetComponent<TrafficLightManager>();
+        if (trafficLightManager != null)
+            trafficLightManager.PlaceTrafficLights();
     }
 
     /// <summary>

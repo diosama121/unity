@@ -191,26 +191,23 @@ public class RaycastSensor : MonoBehaviour
     /// 检测红绿灯（通过 Tag 识别）
     /// </summary>
     public bool DetectTrafficLight(out string lightState, float maxDistance = 20f)
+{
+    lightState = "None";
+    
+    Vector3 origin = transform.position + Vector3.up * 0.5f;
+    RaycastHit hit;
+
+    if (Physics.Raycast(origin, transform.forward, out hit, maxDistance))
     {
-        lightState = "None";
-        
-        Vector3 origin = transform.position + Vector3.up * 0.5f;
-        RaycastHit hit;
-
-        if (Physics.Raycast(origin, transform.forward, out hit, maxDistance))
+        // 直接检测组件，不依赖Tag
+        var trafficLight = hit.collider.GetComponent<TrafficLightController>();
+        if (trafficLight != null)
         {
-            if (hit.collider.CompareTag("TrafficLight"))
-            {
-                // 假设红绿灯对象有 TrafficLightController 组件
-                var trafficLight = hit.collider.GetComponent<TrafficLightController>();
-                if (trafficLight != null)
-                {
-                    lightState = trafficLight.GetCurrentState();
-                    return true;
-                }
-            }
+            lightState = trafficLight.GetCurrentState();
+            return true;
         }
-
-        return false;
     }
+
+    return false;
+}
 }

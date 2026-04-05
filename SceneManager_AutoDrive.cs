@@ -40,16 +40,6 @@ public class SceneManager_AutoDrive : MonoBehaviour
     [Tooltip("场景中所有交通灯的根物体（可不填，自动查找 Tag=TrafficLight）")]
     public GameObject[] trafficLightObjects;
 
-    [Header("=== 摄像机配置 ===")]
-    [Tooltip("跟随摄像机（可不填，自动查找 MainCamera）")]
-    public Camera followCamera;
-
-    [Tooltip("跟随偏移（相对于车辆）")]
-    public Vector3 cameraOffset = new Vector3(0, 8, -15);
-
-    [Tooltip("摄像机跟随平滑度")]
-    public float cameraSmoothSpeed = 5f;
-
     [Header("=== 调试 ===")]
     public bool showDebugInfo = true;
 
@@ -92,12 +82,6 @@ public class SceneManager_AutoDrive : MonoBehaviour
         }
 
         SpawnVehicle();
-
-        if (followCamera == null)
-            followCamera = Camera.main;
-
-        if (autoStartNavigation && autoDrive != null)
-            Invoke(nameof(StartNavigation), 0.5f);
 
         Debug.Log("=== 场景初始化完成 ===");
     }
@@ -249,19 +233,6 @@ public class SceneManager_AutoDrive : MonoBehaviour
 
     void Update()
     {
-        // 摄像机跟随车辆
-        if (followCamera != null && vehicleInstance != null)
-        {
-            Vector3 targetPos = vehicleInstance.transform.position + vehicleInstance.transform.TransformDirection(cameraOffset);
-            followCamera.transform.position = Vector3.Lerp(
-                followCamera.transform.position,
-                targetPos,
-                Time.deltaTime * cameraSmoothSpeed
-            );
-            followCamera.transform.LookAt(vehicleInstance.transform.position + Vector3.up * 1f);
-        }
-
-        // 键盘快捷键
         HandleHotkeys();
     }
 
@@ -308,6 +279,7 @@ public class SceneManager_AutoDrive : MonoBehaviour
             autoDrive.SetDestination(destinationPosition);
             Debug.Log("🗺️ 重新开始导航");
         }
+        
     }
 
     // =============================================
@@ -333,8 +305,8 @@ public class SceneManager_AutoDrive : MonoBehaviour
     {
         if (!showDebugInfo) return;
 
-        GUI.Box(new Rect(10, 10, 280, 220), "");
-        GUILayout.BeginArea(new Rect(15, 15, 270, 210));
+    GUI.Box(new Rect(10, 10, 280, 450), "");
+GUILayout.BeginArea(new Rect(15, 15, 250, 400));
 
         GUILayout.Label("🚗 自动驾驶仿真平台",
             new GUIStyle(GUI.skin.label) { fontSize = 14, fontStyle = FontStyle.Bold });
@@ -367,7 +339,8 @@ public class SceneManager_AutoDrive : MonoBehaviour
             new GUIStyle(GUI.skin.label) { fontSize = 10, normal = { textColor = Color.yellow } });
         GUILayout.Label("[Space] 手动模式下刹车",
             new GUIStyle(GUI.skin.label) { fontSize = 10, normal = { textColor = Color.yellow } });
-
+        GUILayout.Label("[C] 切换摄像机视角",
+            new GUIStyle(GUI.skin.label) { fontSize = 10, normal = { textColor = Color.yellow } });
         GUILayout.EndArea();
     }
 }

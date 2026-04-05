@@ -24,7 +24,7 @@ public class ProceduralRoadBuilder : MonoBehaviour
     public Material sidewalkMaterial;
 
     [Tooltip("道路高度偏移（略高于地面防止Z-fighting）")]
-    public float roadHeightOffset = 0.02f;
+    public float roadHeightOffset = 0.5f;
 
     [Header("=== 路口Prefab ===")]
     [Tooltip("1号：十字路口（4方向）")]
@@ -59,7 +59,7 @@ public class ProceduralRoadBuilder : MonoBehaviour
     public float sidewalkWidth = 1.5f;
 
     [Tooltip("人行道高度")]
-    public float sidewalkHeight = 0.1f;
+    public float sidewalkHeight = 0.2f;
 
     [Header("=== 调试 ===")]
     public bool showDebugLog = true;
@@ -69,6 +69,7 @@ public class ProceduralRoadBuilder : MonoBehaviour
     // =============================================
 
     private RoadNetworkGenerator roadGen;
+    public float intersectionScale = 1f;
 
     // 生成的所有道路物体（方便清理）
     private List<GameObject> generatedObjects = new List<GameObject>();
@@ -83,12 +84,12 @@ public class ProceduralRoadBuilder : MonoBehaviour
 
     public enum IntersectionType
     {
-        Isolated  = 0,  // 无连接
-        DeadEnd   = 1,  // 1个连接
-        Corner    = 2,  // 2个连接，直角
-        Straight  = 3,  // 2个连接，直线
+        Isolated = 0,  // 无连接
+        DeadEnd = 1,  // 1个连接
+        Corner = 2,  // 2个连接，直角
+        Straight = 3,  // 2个连接，直线
         TJunction = 4,  // 3个连接
-        Cross     = 5   // 4个连接
+        Cross = 5   // 4个连接
     }
 
     // =============================================
@@ -108,11 +109,9 @@ public class ProceduralRoadBuilder : MonoBehaviour
             return;
         }
 
-        // 清理旧道路
         ClearRoads();
 
-        // 创建根节点
-        roadRoot         = new GameObject("Roads_Mesh");
+        roadRoot = new GameObject("Roads_Mesh");
         intersectionRoot = new GameObject("Roads_Intersections");
         roadRoot.transform.SetParent(transform);
         intersectionRoot.transform.SetParent(transform);
@@ -120,47 +119,68 @@ public class ProceduralRoadBuilder : MonoBehaviour
         generatedObjects.Add(roadRoot);
         generatedObjects.Add(intersectionRoot);
 
-        // 确保材质存在
         EnsureMaterials();
 
-        int roadCount         = 0;
+        int roadCount = 0;
+        int straightCount = 0;
         int intersectionCount = 0;
 
-        // ---- 生成路段Mesh ----
-        if (generateRoadMesh)
+        HashSet<string> processedEdges = new HashSet<string>();
+
+        foreach (var edge in roadGen.edges)
         {
-            HashSet<string> processedEdges = new HashSet<string>();
+            string key = $"{Mathf.Min(edge.Item1, edge.Item2)}_{Mathf.Max(edge.Item1, edge.Item2)}";
+            if (processedEdges.Contains(key)) continue;
+            processedEdges.Add(key);
 
-            foreach (var edge in roadGen.edges)
+            var nodeA = roadGen.nodes[edge.Item1];
+            var nodeB = roadGen.nodes[edge.Item2];
+
+            // 1. 生成路段Mesh
+            if (generateRoadMesh)
             {
-                string key = $"{Mathf.Min(edge.Item1, edge.Item2)}_{Mathf.Max(edge.Item1, edge.Item2)}";
-                if (processedEdges.Contains(key)) continue;
-                processedEdges.Add(key);
-
-                var nodeA = roadGen.nodes[edge.Item1];
-                var nodeB = roadGen.nodes[edge.Item2];
-
                 BuildRoadSegment(nodeA.position, nodeB.position, roadRoot.transform);
                 roadCount++;
             }
+
+            // 2. 在路段中点放直线Prefab（独立于Mesh开关）
+            if (placeIntersectionPrefabs && prefab_Straight != null)
+            {
+                Vector3 center = (nodeA.position + nodeB.position) / 2f;
+                Vector3 dir = (nodeB.position - nodeA.position);
+                dir.y = 0;
+                Quaternion rot = Quaternion.LookRotation(dir.normalized);
+
+                GameObject obj = Instantiate(
+                    prefab_Straight,
+                    center + Vector3.up * roadHeightOffset,
+                    rot,
+                    roadRoot.transform
+                );
+                obj.name = $"Straight_{edge.Item1}_{edge.Item2}";
+                obj.transform.localScale = Vector3.one * intersectionScale;
+                generatedObjects.Add(obj);
+                straightCount++;
+            }
         }
 
-        // ---- 生成路口 ----
+        // 3. 在路点处放路口Prefab（十字、T字、转角、断头、孤立）
         if (placeIntersectionPrefabs)
         {
             foreach (var node in roadGen.nodes)
             {
+                // 直线已经在边上处理了，这里跳过Straight类型
                 IntersectionType type = ClassifyNode(node);
+                if (type == IntersectionType.Straight) continue;
+
                 PlaceIntersection(node, type, intersectionRoot.transform);
                 intersectionCount++;
             }
         }
 
         if (showDebugLog)
-            Debug.Log($"✅ 道路生成完成：{roadCount} 条路段，{intersectionCount} 个路口");
+            Debug.Log($"✅ 道路生成完成：{roadCount} 路段Mesh，{straightCount} 直线Prefab，{intersectionCount} 路口Prefab");
     }
-
-    /// <summary>
     /// 清理所有生成的道路
     /// </summary>
     public void ClearRoads()
@@ -174,9 +194,9 @@ public class ProceduralRoadBuilder : MonoBehaviour
 
         // 额外清理可能残留的子物体
         Transform roadRootT = transform.Find("Roads_Mesh");
-        Transform intRootT  = transform.Find("Roads_Intersections");
+        Transform intRootT = transform.Find("Roads_Intersections");
         if (roadRootT != null) DestroyImmediate(roadRootT.gameObject);
-        if (intRootT  != null) DestroyImmediate(intRootT.gameObject);
+        if (intRootT != null) DestroyImmediate(intRootT.gameObject);
     }
 
     // =============================================
@@ -185,9 +205,9 @@ public class ProceduralRoadBuilder : MonoBehaviour
 
     void BuildRoadSegment(Vector3 posA, Vector3 posB, Transform parent)
     {
-        Vector3 center    = (posA + posB) / 2f;
+        Vector3 center = (posA + posB) / 2f;
         Vector3 direction = (posB - posA);
-        float   length    = direction.magnitude;
+        float length = direction.magnitude;
         direction.Normalize();
 
         // ---- 主路面 ----
@@ -196,15 +216,15 @@ public class ProceduralRoadBuilder : MonoBehaviour
         roadObj.transform.position = center + Vector3.up * roadHeightOffset;
         roadObj.transform.rotation = Quaternion.LookRotation(direction);
 
-        MeshFilter   mf = roadObj.AddComponent<MeshFilter>();
+        MeshFilter mf = roadObj.AddComponent<MeshFilter>();
         MeshRenderer mr = roadObj.AddComponent<MeshRenderer>();
-        mr.material      = roadMaterial;
+        mr.material = roadMaterial;
 
         mf.mesh = BuildQuadMesh(length, roadWidth);
 
         // 添加Collider（车辆可以在上面行驶）
         MeshCollider mc = roadObj.AddComponent<MeshCollider>();
-        mc.sharedMesh   = mf.mesh;
+        mc.sharedMesh = mf.mesh;
 
         // ---- 人行道（左右各一条）----
         if (generateSidewalk && sidewalkMaterial != null)
@@ -216,24 +236,24 @@ public class ProceduralRoadBuilder : MonoBehaviour
 
     void BuildSidewalkSegment(Vector3 posA, Vector3 posB, Transform parent, bool isLeft)
     {
-        Vector3 direction  = (posB - posA).normalized;
-        Vector3 right      = Vector3.Cross(Vector3.up, direction);
-        float   sideOffset = (roadWidth / 2f + sidewalkWidth / 2f) * (isLeft ? -1f : 1f);
+        Vector3 direction = (posB - posA).normalized;
+        Vector3 right = Vector3.Cross(Vector3.up, direction);
+        float sideOffset = (roadWidth / 2f + sidewalkWidth / 2f) * (isLeft ? -1f : 1f);
 
         Vector3 offsetA = posA + right * sideOffset;
         Vector3 offsetB = posB + right * sideOffset;
-        Vector3 center  = (offsetA + offsetB) / 2f;
-        float   length  = Vector3.Distance(offsetA, offsetB);
+        Vector3 center = (offsetA + offsetB) / 2f;
+        float length = Vector3.Distance(offsetA, offsetB);
 
         GameObject swObj = new GameObject($"Sidewalk_{(isLeft ? "L" : "R")}");
         swObj.transform.SetParent(parent);
         swObj.transform.position = center + Vector3.up * (roadHeightOffset + sidewalkHeight);
         swObj.transform.rotation = Quaternion.LookRotation(direction);
 
-        MeshFilter   mf = swObj.AddComponent<MeshFilter>();
+        MeshFilter mf = swObj.AddComponent<MeshFilter>();
         MeshRenderer mr = swObj.AddComponent<MeshRenderer>();
-        mr.material      = sidewalkMaterial;
-        mf.mesh          = BuildQuadMesh(length, sidewalkWidth);
+        mr.material = sidewalkMaterial;
+        mf.mesh = BuildQuadMesh(length, sidewalkWidth);
     }
 
     /// <summary>
@@ -243,7 +263,7 @@ public class ProceduralRoadBuilder : MonoBehaviour
     {
         Mesh mesh = new Mesh();
 
-        float halfW = width  / 2f;
+        float halfW = width / 2f;
         float halfL = length / 2f;
 
         mesh.vertices = new Vector3[]
@@ -287,8 +307,9 @@ public class ProceduralRoadBuilder : MonoBehaviour
             case 3: return IntersectionType.TJunction;
             case 4: return IntersectionType.Cross;
             case 2:
-                // 判断是直路还是转角
-                return IsCorner(node) ? IntersectionType.Corner : IntersectionType.Straight;
+                bool corner = IsCorner(node);
+                Debug.Log($"节点{node.id} 2连接 → {(corner ? "Corner" : "Straight")} | 角度:{Vector3.Angle((roadGen.nodes[node.neighbors[0]].position - node.position).normalized, (roadGen.nodes[node.neighbors[1]].position - node.position).normalized):F1}°");
+                return corner ? IntersectionType.Corner : IntersectionType.Straight;
             default:
                 // 5个以上连接，当十字路口处理
                 return IntersectionType.Cross;
@@ -316,28 +337,28 @@ public class ProceduralRoadBuilder : MonoBehaviour
     /// 在路点处放置对应路口Prefab或生成占位体
     /// </summary>
     void PlaceIntersection(RoadNetworkGenerator.WaypointNode node,
-                           IntersectionType type, Transform parent)
+                         IntersectionType type, Transform parent)
     {
         GameObject prefab = GetPrefabForType(type);
-        Vector3    pos    = node.position + Vector3.up * roadHeightOffset;
-        Quaternion rot    = CalculateIntersectionRotation(node, type);
+        Vector3 pos = node.position + Vector3.up * roadHeightOffset;
+        Quaternion rot = CalculateIntersectionRotation(node, type);
 
         GameObject obj;
 
         if (prefab != null)
         {
             obj = Instantiate(prefab, pos, rot, parent);
+            Debug.Log($"✅ 放置Prefab: {type} 于 {pos}"); // 加这行
         }
         else
         {
-            // 没有Prefab时生成占位体（颜色区分类型）
             obj = CreatePlaceholder(type, pos, rot, parent);
+            Debug.Log($"⚠️ 无Prefab占位: {type} 于 {pos}"); // 加这行
         }
 
         obj.name = $"Node_{node.id}_{type}";
         generatedObjects.Add(obj);
     }
-
     /// <summary>
     /// 根据路口类型获取对应Prefab
     /// </summary>
@@ -345,13 +366,13 @@ public class ProceduralRoadBuilder : MonoBehaviour
     {
         switch (type)
         {
-            case IntersectionType.Cross:     return prefab_Intersection4;
+            case IntersectionType.Cross: return prefab_Intersection4;
             case IntersectionType.TJunction: return prefab_Intersection3;
-            case IntersectionType.Straight:  return prefab_Straight;
-            case IntersectionType.Corner:    return prefab_Corner;
-            case IntersectionType.DeadEnd:   return prefab_DeadEnd;
-            case IntersectionType.Isolated:  return prefab_Isolated;
-            default:                         return null;
+            case IntersectionType.Straight: return prefab_Straight;
+            case IntersectionType.Corner: return prefab_Corner;
+            case IntersectionType.DeadEnd: return prefab_DeadEnd;
+            case IntersectionType.Isolated: return prefab_Isolated;
+            default: return null;
         }
     }
 
@@ -364,15 +385,48 @@ public class ProceduralRoadBuilder : MonoBehaviour
         if (node.neighbors.Count == 0)
             return Quaternion.identity;
 
-        // 取第一个邻居方向作为主方向
-        Vector3 neighbor0Pos = roadGen.nodes[node.neighbors[0]].position;
-        Vector3 mainDir      = (neighbor0Pos - node.position);
-        mainDir.y = 0;
+        if (type == IntersectionType.Straight)
+        {
+            // 直路：对齐到两个邻居的连线方向
+            Vector3 dirA = (roadGen.nodes[node.neighbors[0]].position - node.position);
+            dirA.y = 0;
+            return Quaternion.LookRotation(dirA.normalized);
+        }
 
-        if (mainDir == Vector3.zero)
+        if (type == IntersectionType.Corner)
+        {
+            Vector3 dirA = (roadGen.nodes[node.neighbors[0]].position - node.position);
+            Vector3 dirB = (roadGen.nodes[node.neighbors[1]].position - node.position);
+            dirA.y = 0; dirB.y = 0;
+            dirA.Normalize(); dirB.Normalize();
+
+            Vector3 bisector = (dirA + dirB).normalized;
+            float angle = Mathf.Atan2(bisector.x, bisector.z) * Mathf.Rad2Deg;
+            return Quaternion.Euler(0, angle + 45f + 180f, 0); // 加180修正反向
+        }
+
+        if (type == IntersectionType.TJunction)
+        {
+            Vector3 sum = Vector3.zero;
+            foreach (int nId in node.neighbors)
+            {
+                Vector3 d = (roadGen.nodes[nId].position - node.position);
+                d.y = 0;
+                sum += d.normalized;
+            }
+            sum.y = 0;
+            if (sum.magnitude > 0.01f)
+                return Quaternion.LookRotation(sum.normalized) *
+                       Quaternion.Euler(0, 270f, 0); // 加90修正偏移
             return Quaternion.identity;
+        }
+        // 十字路口和其他：取第一个邻居方向
+        Vector3 mainDir = (roadGen.nodes[node.neighbors[0]].position - node.position);
+        mainDir.y = 0;
+        if (mainDir.magnitude > 0.01f)
+            return Quaternion.LookRotation(mainDir.normalized);
 
-        return Quaternion.LookRotation(mainDir.normalized);
+        return Quaternion.identity;
     }
 
     /// <summary>
@@ -383,20 +437,20 @@ public class ProceduralRoadBuilder : MonoBehaviour
     {
         GameObject obj = GameObject.CreatePrimitive(PrimitiveType.Cube);
         obj.transform.SetParent(parent);
-        obj.transform.position   = pos;
-        obj.transform.rotation   = rot;
+        obj.transform.position = pos;
+        obj.transform.rotation = rot;
         obj.transform.localScale = new Vector3(roadWidth, 0.05f, roadWidth);
 
         // 颜色区分类型
         Material mat = new Material(Shader.Find("Standard"));
         switch (type)
         {
-            case IntersectionType.Cross:     mat.color = new Color(0.3f, 0.3f, 0.3f); break; // 深灰：十字
+            case IntersectionType.Cross: mat.color = new Color(0.3f, 0.3f, 0.3f); break; // 深灰：十字
             case IntersectionType.TJunction: mat.color = new Color(0.4f, 0.4f, 0.4f); break; // 中灰：T字
-            case IntersectionType.Straight:  mat.color = new Color(0.35f,0.35f,0.35f);break; // 灰：直路
-            case IntersectionType.Corner:    mat.color = new Color(0.4f, 0.35f,0.3f); break; // 暖灰：转角
-            case IntersectionType.DeadEnd:   mat.color = new Color(0.5f, 0.4f, 0.3f); break; // 棕：断头
-            case IntersectionType.Isolated:  mat.color = new Color(0.2f, 0.5f, 0.2f); break; // 绿：孤立/建筑
+            case IntersectionType.Straight: mat.color = new Color(0.35f, 0.35f, 0.35f); break; // 灰：直路
+            case IntersectionType.Corner: mat.color = new Color(0.4f, 0.35f, 0.3f); break; // 暖灰：转角
+            case IntersectionType.DeadEnd: mat.color = new Color(0.5f, 0.4f, 0.3f); break; // 棕：断头
+            case IntersectionType.Isolated: mat.color = new Color(0.2f, 0.5f, 0.2f); break; // 绿：孤立/建筑
         }
 
         obj.GetComponent<MeshRenderer>().material = mat;
@@ -411,16 +465,16 @@ public class ProceduralRoadBuilder : MonoBehaviour
     {
         if (roadMaterial == null)
         {
-            roadMaterial       = new Material(Shader.Find("Standard"));
+            roadMaterial = new Material(Shader.Find("Standard"));
             roadMaterial.color = new Color(0.25f, 0.25f, 0.25f); // 深灰色道路
-            roadMaterial.name  = "RoadMaterial_Auto";
+            roadMaterial.name = "RoadMaterial_Auto";
         }
 
         if (sidewalkMaterial == null && generateSidewalk)
         {
-            sidewalkMaterial       = new Material(Shader.Find("Standard"));
+            sidewalkMaterial = new Material(Shader.Find("Standard"));
             sidewalkMaterial.color = new Color(0.7f, 0.7f, 0.65f); // 浅灰色人行道
-            sidewalkMaterial.name  = "SidewalkMaterial_Auto";
+            sidewalkMaterial.name = "SidewalkMaterial_Auto";
         }
     }
 
