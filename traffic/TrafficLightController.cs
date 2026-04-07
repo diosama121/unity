@@ -57,28 +57,36 @@ public class TrafficLightController : MonoBehaviour
                 break;
         }
     }
+    [HideInInspector] public Light managedLight;
+    [HideInInspector] public Color redColor = Color.red;
+    [HideInInspector] public Color yellowColor = Color.yellow;
+    [HideInInspector] public Color greenColor = Color.green;
 
     void SetState(string state)
     {
         currentState = state;
 
-        // 关闭所有灯
+        // 原来三灯逻辑保留
         if (redLight != null) redLight.enabled = false;
         if (yellowLight != null) yellowLight.enabled = false;
         if (greenLight != null) greenLight.enabled = false;
 
-        // 开启对应的灯
+        // 新增：单Light模式
+        if (managedLight != null)
+        {
+            switch (state)
+            {
+                case "Red": managedLight.color = redColor; break;
+                case "Yellow": managedLight.color = yellowColor; break;
+                case "Green": managedLight.color = greenColor; break;
+            }
+        }
+
         switch (state)
         {
-            case "Red":
-                if (redLight != null) redLight.enabled = true;
-                break;
-            case "Yellow":
-                if (yellowLight != null) yellowLight.enabled = true;
-                break;
-            case "Green":
-                if (greenLight != null) greenLight.enabled = true;
-                break;
+            case "Red": if (redLight != null) redLight.enabled = true; break;
+            case "Yellow": if (yellowLight != null) yellowLight.enabled = true; break;
+            case "Green": if (greenLight != null) greenLight.enabled = true; break;
         }
 
         Debug.Log($"红绿灯状态切换为：{state}");
@@ -101,7 +109,7 @@ public class TrafficLightController : MonoBehaviour
         timer = 0f;
     }
     public void SetPhaseOffset(float offset)
-{
-    timer = offset % (redDuration + yellowDuration + greenDuration);
-}
+    {
+        timer = offset % (redDuration + yellowDuration + greenDuration);
+    }
 }

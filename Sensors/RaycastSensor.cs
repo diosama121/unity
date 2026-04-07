@@ -16,10 +16,10 @@ public class RaycastSensor : MonoBehaviour
     public float sideDetectionRange = 10f;
     
     [Tooltip("多射线传感器：射线数量")]
-    public int rayCount = 5;
+    public int rayCount = 7;
     
     [Tooltip("多射线传感器：扫描角度范围")]
-    public float scanAngle = 90f;
+    public float scanAngle = 120f;
 
     [Header("可视化")]
     [Tooltip("是否显示射线（调试用）")]
@@ -187,24 +187,35 @@ public class RaycastSensor : MonoBehaviour
         return rayHits;
     }
 
-    /// <summary>
-    /// 检测红绿灯（通过 Tag 识别）
-    /// </summary>
-    public bool DetectTrafficLight(out string lightState, float maxDistance = 20f)
+
+   public bool DetectTrafficLight(out string lightState, float maxDistance = 20f)
 {
     lightState = "None";
-    
-    Vector3 origin = transform.position + Vector3.up * 0.5f;
-    RaycastHit hit;
+    Vector3 origin = transform.position + Vector3.up * 1f;
 
-    if (Physics.Raycast(origin, transform.forward, out hit, maxDistance))
+    // 扇形5条射线，覆盖前方左右各30度
+    float[] angles = { -30f, -15f, 0f, 15f, 30f };
+
+    foreach (float angle in angles)
     {
-        // 直接检测组件，不依赖Tag
-        var trafficLight = hit.collider.GetComponent<TrafficLightController>();
-        if (trafficLight != null)
+        Vector3 dir = Quaternion.Euler(0, angle, 0) * transform.forward;
+        RaycastHit hit;
+
+        if (showRays)
+            Debug.DrawRay(origin, dir * maxDistance, Color.magenta);
+
+        if (Physics.Raycast(origin, dir, out hit, maxDistance))
         {
-            lightState = trafficLight.GetCurrentState();
-            return true;
+            // 先检查自身及父物体
+            var trafficLight = hit.collider.GetComponent<TrafficLightController>();
+            if (trafficLight == null)
+                trafficLight = hit.collider.GetComponentInParent<TrafficLightController>();
+
+            if (trafficLight != null)
+            {
+                lightState = trafficLight.GetCurrentState();
+                return true;
+            }
         }
     }
 

@@ -226,14 +226,20 @@ public class TrafficLightManager : MonoBehaviour
         controller.SetPhaseOffset(phaseOffset);
 
         // 添加Light组件（挂在子物体上）
-        Light lightComp = AddLightToTrafficLight(tlObj);
+      Light lightComp = AddLightToTrafficLight(tlObj);
+
+// 把Light传给Controller，让Controller直接控制颜色
+controller.managedLight = lightComp;
+controller.redColor = redColor;
+controller.yellowColor = yellowColor;
+controller.greenColor = greenColor;
 
         // 添加碰撞体（供RaycastSensor检测）
         if (tlObj.GetComponent<Collider>() == null)
         {
             BoxCollider col = tlObj.AddComponent<BoxCollider>();
-            col.size = new Vector3(0.5f, 2f, 0.5f);
-            col.center = new Vector3(0, 1f, 0);
+col.size = new Vector3(2f, 4f, 2f);
+col.center = new Vector3(0, 2f, 0);
         }
 
         // 记录实例
@@ -309,19 +315,6 @@ public class TrafficLightManager : MonoBehaviour
             string state = tl.controller.GetCurrentState();
             tl.currentState = state;
 
-            // 根据状态更新Light颜色
-            switch (state)
-            {
-                case "Red":
-                    tl.lightComponent.color = redColor;
-                    break;
-                case "Yellow":
-                    tl.lightComponent.color = yellowColor;
-                    break;
-                case "Green":
-                    tl.lightComponent.color = greenColor;
-                    break;
-            }
         }
     }
 

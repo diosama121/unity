@@ -1,11 +1,6 @@
 using UnityEngine;
 using System.Collections.Generic;
 
-/// <summary>
-/// 简单自动驾驶控制器
-/// 功能：路径跟踪 + 避障 + 红绿灯识别
-/// 依赖：SimpleCarController, RaycastSensor, PathPlanner
-/// </summary>
 [RequireComponent(typeof(SimpleCarController))]
 [RequireComponent(typeof(RaycastSensor))]
 public class SimpleAutoDrive : MonoBehaviour
@@ -14,26 +9,15 @@ public class SimpleAutoDrive : MonoBehaviour
     public PathPlanner pathPlanner;
 
     [Header("控制参数")]
-    [Tooltip("目标速度 (m/s)")]
-    public float targetSpeed = 40f;
-
-    [Tooltip("路点到达阈值（米）")]
+    public float targetSpeed = 8f;
     public float waypointReachThreshold = 5f;
+    public float safeDistance = 8f;
+    public int lookAheadStep = 1;
+    public float trafficLightDistance = 15f;
 
-    [Tooltip("安全距离（米）")]
-    public float safeDistance = 10f;
-
-    [Tooltip("红绿灯检测距离（米）")]
-    public float trafficLightDistance = 20f;
-
-    // 驾驶状态枚举
     public enum DriveState
     {
-        Idle,           // 空闲
-        Following,      // 路径跟踪
-        Avoiding,       // 避障
-        Stopping,       // 停止（红灯/障碍物）
-        Waiting         // 等待
+        Idle, Following, Avoiding, Stopping, Waiting
     }
 
     [Header("状态机")]
@@ -45,85 +29,122 @@ public class SimpleAutoDrive : MonoBehaviour
     public bool obstacleDetected = false;
     public string trafficLightState = "None";
 
-    // 内部组件
     private SimpleCarController carController;
     private RaycastSensor sensor;
     private List<Vector3> path;
+    private Vector3 finalDestination = Vector3.zero;
+
+    // 避障
+    private float avoidCooldown = 0f;
+    private float startupDelay = 0f;
+    private bool isReversing = false;
+    private float reverseTimer = 0f;
+    private float reverseDuration = 1.5f;
+
+    // 防卡死
+    private float stuckTimer = 0f;
+    private Vector3 lastPosition = Vector3.zero;
+    private float stuckCheckInterval = 0.5f;
+    private float stuckCheckTimer = 0f;
 
     void Start()
     {
         carController = GetComponent<SimpleCarController>();
         sensor = GetComponent<RaycastSensor>();
-
         if (pathPlanner == null)
-        {
             pathPlanner = FindObjectOfType<PathPlanner>();
-        }
-
-        // 默认启用自动驾驶模式
         carController.autoMode = true;
+        lastPosition = transform.position;
     }
 
     void Update()
     {
         if (!carController.autoMode) return;
 
-        // 更新传感器数据
-        UpdateSensorData();
+        if (avoidCooldown > 0f) avoidCooldown -= Time.deltaTime;
 
-        // 状态机
+        UpdateSensorData();
+        UpdateStuckDetection();
+
         switch (currentState)
         {
-            case DriveState.Idle:
-                HandleIdleState();
-                break;
-
-            case DriveState.Following:
-                HandleFollowingState();
-                break;
-
-            case DriveState.Avoiding:
-                HandleAvoidingState();
-                break;
-
-            case DriveState.Stopping:
-                HandleStoppingState();
-                break;
-
-            case DriveState.Waiting:
-                HandleWaitingState();
-                break;
+            case DriveState.Idle:      HandleIdleState();      break;
+            case DriveState.Following: HandleFollowingState(); break;
+            case DriveState.Avoiding:  HandleAvoidingState();  break;
+            case DriveState.Stopping:  HandleStoppingState();  break;
+            case DriveState.Waiting:   HandleWaitingState();   break;
         }
     }
 
-    // ========== 传感器数据更新 ==========
-
     void UpdateSensorData()
     {
-        // 检测前方障碍物
         obstacleDetected = sensor.HasFrontObstacle(safeDistance);
-
-        // 检测红绿灯
         sensor.DetectTrafficLight(out trafficLightState, trafficLightDistance);
 
-        // 计算到下一个路点的距离
         if (path != null && currentWaypointIndex < path.Count)
         {
             Vector3 flatPos = new Vector3(transform.position.x, 0, transform.position.z);
-            Vector3 flatWP = new Vector3(path[currentWaypointIndex].x, 0, path[currentWaypointIndex].z);
+            Vector3 flatWP  = new Vector3(path[currentWaypointIndex].x, 0, path[currentWaypointIndex].z);
             distanceToNextWaypoint = Vector3.Distance(flatPos, flatWP);
         }
     }
 
-    // ========== 状态处理 ==========
+    void UpdateStuckDetection()
+{
+    // 先检查状态，不是Following直接重置
+    if (currentState != DriveState.Following)
+    {
+        stuckTimer = 0f;
+        stuckCheckTimer = 0f;
+        startupDelay = 0f; // 非Following状态清零delay
+        lastPosition = transform.position;
+        return;
+    }
+
+    // Following状态下，delay期间不计卡死
+    if (startupDelay > 0f)
+    {
+        startupDelay -= Time.deltaTime;
+        stuckTimer = 0f;
+        stuckCheckTimer = 0f;
+        lastPosition = transform.position;
+        return;
+    }
+
+    stuckCheckTimer += Time.deltaTime;
+    if (stuckCheckTimer < stuckCheckInterval) return;
+    stuckCheckTimer = 0f;
+
+    float moved = Vector3.Distance(transform.position, lastPosition);
+    lastPosition = transform.position;
+
+    if (moved < 0.3f)
+    {
+        stuckTimer += stuckCheckInterval;
+
+        if (stuckTimer > 4f && stuckTimer <= 6f)
+        {
+            Debug.Log("⚠️ 检测到卡死，尝试倒车");
+            carController.SetAutoControl(-0.4f, 0f);
+        }
+        else if (stuckTimer > 6f)
+        {
+            stuckTimer = 0f;
+            avoidCooldown = 2f;
+            RerouteToDestination();
+            Debug.Log("⚠️ 卡死超时，重新规划路径");
+        }
+    }
+    else
+    {
+        stuckTimer = 0f;
+    }
+}
 
     void HandleIdleState()
     {
         carController.SetAutoControl(0f, 0f);
-
-        // 加这个判断，path为null时不重新导航
         if (path != null && path.Count > 0) return;
-
         if (pathPlanner != null && pathPlanner.GetCurrentPath().Count > 0)
         {
             path = pathPlanner.GetCurrentPath();
@@ -134,7 +155,6 @@ public class SimpleAutoDrive : MonoBehaviour
 
     void HandleFollowingState()
     {
-        // 优先处理红绿灯和障碍物
         if (trafficLightState == "Red")
         {
             currentState = DriveState.Stopping;
@@ -142,64 +162,78 @@ public class SimpleAutoDrive : MonoBehaviour
             return;
         }
 
-        if (obstacleDetected)
+        if (obstacleDetected && avoidCooldown <= 0f)
         {
+            isReversing = false;
+            reverseTimer = 0f;
             currentState = DriveState.Avoiding;
             Debug.Log("检测到障碍物，开始避障");
             return;
         }
 
-        // 检查是否到达路点
         if (distanceToNextWaypoint < waypointReachThreshold)
         {
             currentWaypointIndex++;
+            stuckTimer = 0f;
 
             if (currentWaypointIndex >= path.Count)
             {
                 currentState = DriveState.Idle;
-                path = null;                          // 清空路径
-                pathPlanner.currentPath.Clear();      // 清空PathPlanner里的路径
-                carController.SetAutoControl(0f, 0f); // 停车
-                Debug.Log("✅ 到达目的地，停车");
+                path = null;
+                pathPlanner.currentPath.Clear();
+                carController.SetAutoControl(0f, 0f);
+                Debug.Log("✅ 到达目的地");
                 return;
             }
         }
 
-        // 路径跟踪控制
         FollowPath();
     }
 
     void HandleAvoidingState()
     {
-        // 简单避障：减速或停止
-        if (sensor.GetFrontDistance() < safeDistance / 2f)
+        if (isReversing)
         {
-            // 距离太近，停车
-            carController.SetAutoControl(0f, 0f);
-        }
-        else
-        {
-            // 减速通过
-            float slowSpeed = targetSpeed * 0.3f;
-            carController.SetAutoControl(slowSpeed / carController.maxSpeed, 0f);
+            reverseTimer += Time.deltaTime;
+            carController.SetAutoControl(-0.4f, 0f);
+
+            if (reverseTimer >= reverseDuration)
+            {
+                isReversing = false;
+                reverseTimer = 0f;
+                avoidCooldown = 2f;
+                startupDelay = 1f;
+                RerouteToDestination();
+                currentState = DriveState.Following;
+                Debug.Log("倒车完成，重新规划路径");
+            }
+            return;
         }
 
-        // 障碍物消失后恢复跟踪
-        if (!obstacleDetected)
+        if (obstacleDetected)
         {
-            currentState = DriveState.Following;
-            Debug.Log("障碍物已清除，恢复跟踪");
+            isReversing = true;
+            reverseTimer = 0f;
+            Debug.Log("开始倒车避障");
+            return;
         }
+
+        isReversing = false;
+        reverseTimer = 0f;
+        avoidCooldown = 1f;
+        currentState = DriveState.Following;
+        Debug.Log("障碍物消失，恢复跟踪");
     }
 
     void HandleStoppingState()
     {
-        // 停车
         carController.SetAutoControl(0f, 0f);
-
-        // 绿灯后继续
         if (trafficLightState == "Green" || trafficLightState == "None")
         {
+            stuckTimer = 0f;
+            stuckCheckTimer = 0f;
+            lastPosition = transform.position;
+            startupDelay = 3f;
             currentState = DriveState.Following;
             Debug.Log("绿灯，继续行驶");
         }
@@ -207,112 +241,109 @@ public class SimpleAutoDrive : MonoBehaviour
 
     void HandleWaitingState()
     {
-        // 等待状态（可扩展）
         carController.SetAutoControl(0f, 0f);
     }
-
-    // ========== 路径跟踪算法 ==========
 
     void FollowPath()
     {
         if (path == null || currentWaypointIndex >= path.Count) return;
 
         Vector3 targetWaypoint = path[currentWaypointIndex];
+        targetWaypoint.y = transform.position.y;
 
-        // 计算到目标点的方向
-        Vector3 direction = (targetWaypoint - transform.position).normalized;
-        direction.y = 0;  // 忽略高度差
+        Vector3 localTarget = transform.InverseTransformPoint(targetWaypoint);
+        float angle = Mathf.Atan2(localTarget.x, localTarget.z) * Mathf.Rad2Deg;
+        float absAngle = Mathf.Abs(angle);
+        float steering = Mathf.Clamp(angle / 45f, -1f, 1f);
 
-        // 计算转向角度
-        Vector3 forward = transform.forward;
-        forward.y = 0;
-        forward.Normalize();
+        float speedFactor;
+        if (absAngle > 60f)      speedFactor = 0.2f;
+        else if (absAngle > 30f) speedFactor = 0.4f;
+        else                     speedFactor = 1f;
 
-        float angle = Vector3.SignedAngle(forward, direction, Vector3.up);
-
-        // 归一化转向输入 (-1 到 1)
-        float steering = Mathf.Clamp(angle / carController.maxSteeringAngle, -1f, 1f);
-
-        float speedFactor = 1f - Mathf.Abs(steering) * 0.5f;
-
-        // 接近终点时减速
-        bool isLastWaypoint = (currentWaypointIndex == path.Count - 1);
-        if (isLastWaypoint && distanceToNextWaypoint < 25f)
-        {
-            // 距终点25米内线性减速
-            speedFactor *= distanceToNextWaypoint / 25f;
-            speedFactor = Mathf.Max(speedFactor, 0.1f); // 最低保持一点速度防止停死
-        }
+        if (currentWaypointIndex == path.Count - 1 && distanceToNextWaypoint < 15f)
+            speedFactor *= Mathf.Max(distanceToNextWaypoint / 15f, 0.1f);
 
         float throttle = (targetSpeed * speedFactor) / carController.maxSpeed;
         carController.SetAutoControl(throttle, steering);
     }
 
-    // ========== 公共接口 ==========
-
-    /// <summary>
-    /// 设置新的目标位置
-    /// </summary>
-    public void SetDestination(Vector3 destination)
+    void RerouteToDestination()
     {
-        if (pathPlanner == null)
+        if (pathPlanner == null) return;
+
+        Vector3 target = finalDestination != Vector3.zero ? finalDestination
+                       : (path != null && path.Count > 0 ? path[path.Count - 1] : Vector3.zero);
+
+        if (target == Vector3.zero) return;
+
+        List<Vector3> newPath = pathPlanner.PlanPath(transform.position, target);
+        if (newPath.Count > 1)
         {
-            Debug.LogError("未找到 PathPlanner！");
-            return;
+            path = newPath;
+            currentWaypointIndex = 0;
+            Debug.Log($"重新规划路径成功，{path.Count}个路点");
+        }
+        else
+        {
+            Vector3 escape = GetEscapeNode();
+            path = pathPlanner.PlanPath(transform.position, escape);
+            currentWaypointIndex = 0;
+            Debug.Log("规划失败，导航到逃逸点");
+        }
+    }
+
+    Vector3 GetEscapeNode()
+    {
+        var roadGen = FindObjectOfType<RoadNetworkGenerator>();
+        if (roadGen == null || roadGen.nodes.Count == 0)
+            return transform.position - transform.forward * 15f;
+
+        var sorted = new List<RoadNetworkGenerator.WaypointNode>(roadGen.nodes);
+        sorted.Sort((a, b) =>
+            Vector3.Distance(transform.position, a.position)
+            .CompareTo(Vector3.Distance(transform.position, b.position)));
+
+        for (int i = 2; i < Mathf.Min(10, sorted.Count); i++)
+        {
+            Vector3 dir = (sorted[i].position - transform.position).normalized;
+            float dot = Vector3.Dot(transform.forward, dir);
+            if (dot < 0.3f) return sorted[i].position;
         }
 
-        // 规划路径
-        path = pathPlanner.PlanPath(transform.position, destination);
+        return sorted[Mathf.Min(3, sorted.Count - 1)].position;
+    }
 
+    public void SetDestination(Vector3 destination)
+    {
+        if (pathPlanner == null) { Debug.LogError("未找到PathPlanner！"); return; }
+        finalDestination = destination;
+        path = pathPlanner.PlanPath(transform.position, destination);
         if (path.Count > 0)
         {
             currentWaypointIndex = 0;
             currentState = DriveState.Following;
             Debug.Log($"路径规划成功，开始导航到 {destination}");
         }
-        else
-        {
-            Debug.LogError("路径规划失败！");
-        }
+        else Debug.LogError("路径规划失败！");
     }
 
-    /// <summary>
-    /// 启动/停止自动驾驶
-    /// </summary>
     public void ToggleAutoDrive()
     {
         carController.autoMode = !carController.autoMode;
-
-        if (!carController.autoMode)
-        {
-            currentState = DriveState.Idle;
-        }
+        if (!carController.autoMode) currentState = DriveState.Idle;
     }
 
-    /// <summary>
-    /// 获取当前状态
-    /// </summary>
-    public DriveState GetCurrentState()
-    {
-        return currentState;
-    }
-
-    // ========== 可视化 ==========
+    public DriveState GetCurrentState() => currentState;
 
     void OnDrawGizmos()
     {
-        if (path != null && path.Count > 0)
+        if (path != null && path.Count > 0 && currentWaypointIndex < path.Count)
         {
-            // 绘制当前目标路点
-            if (currentWaypointIndex < path.Count)
-            {
-                Gizmos.color = Color.yellow;
-                Gizmos.DrawWireSphere(path[currentWaypointIndex], 3f);
-                Gizmos.DrawLine(transform.position, path[currentWaypointIndex]);
-            }
+            Gizmos.color = Color.yellow;
+            Gizmos.DrawWireSphere(path[currentWaypointIndex], 2f);
+            Gizmos.DrawLine(transform.position, path[currentWaypointIndex]);
         }
-
-        // 显示安全距离范围
         Gizmos.color = Color.red;
         Gizmos.DrawWireSphere(transform.position, safeDistance);
     }

@@ -10,19 +10,19 @@ public class SimpleCarController : MonoBehaviour
 {
     [Header("车辆参数")]
     [Tooltip("最大速度 (m/s)")]
-    public float maxSpeed = 20f;
-    
+    public float maxSpeed = 10f;
+
     [Tooltip("加速度 (m/s²)")]
-    public float acceleration = 5f;
-    
+    public float acceleration = 4f;
+
     [Tooltip("制动减速度 (m/s²)")]
     public float brakeDeceleration = 10f;
-    
+
     [Tooltip("转向速度 (度/秒)")]
-    public float steeringSpeed = 100f;
-    
+    public float steeringSpeed = 80f;
+
     [Tooltip("最大转向角度")]
-    public float maxSteeringAngle = 30f;
+    public float maxSteeringAngle = 45f;
 
     [Header("控制模式")]
     [Tooltip("是否启用自动驾驶")]
@@ -44,7 +44,7 @@ public class SimpleCarController : MonoBehaviour
     void Start()
     {
         rb = GetComponent<Rigidbody>();
-        
+
         if (rb == null)
         {
             Debug.LogError("车辆缺少 Rigidbody 组件！");
@@ -57,36 +57,29 @@ public class SimpleCarController : MonoBehaviour
         rb.drag = 0.5f;
         rb.angularDrag = 3f;
         rb.interpolation = RigidbodyInterpolation.Interpolate;
+        rb.constraints = RigidbodyConstraints.FreezeRotationX
+               | RigidbodyConstraints.FreezeRotationZ;
     }
 
     void Update()
     {
-        if (autoMode)
-        {
-            // 自动驾驶模式
-            HandleAutoDrive();
-        }
-        else
-        {
-            // 手动控制模式
-            HandleManualControl();
-        }
+        if (autoMode) HandleAutoDrive();
+        else HandleManualControl();
 
-        // 更新显示信息
-        currentSpeed = rb.velocity.magnitude;
+        // 有符号速度：前进正，后退负
+        currentSpeed = Vector3.Dot(rb.velocity, transform.forward);
         currentSteeringAngle = targetSteering;
     }
-
     void FixedUpdate()
     {
-        // 应用加速度
         ApplyAcceleration();
-        
-        // 应用转向
         ApplySteering();
-        
-        // 速度限制
         LimitSpeed();
+
+        //  防侧滑
+      Vector3 localVel = transform.InverseTransformDirection(rb.velocity);
+localVel.x *= 0.5f; // 从0.3改成0.5，太强的侧滑抑制会阻止倒车
+rb.velocity = transform.TransformDirection(localVel);
     }
 
     /// <summary>
@@ -127,45 +120,60 @@ public class SimpleCarController : MonoBehaviour
     /// 自动驾驶处理
     /// </summary>
     void HandleAutoDrive()
+{
+    if (autoThrottle >= 0)
     {
-        // 使用外部设置的控制值
-        targetSpeed = Mathf.Lerp(targetSpeed, maxSpeed * Mathf.Clamp(autoThrottle, 0f, 1f), Time.deltaTime * 2f);
-        targetSteering = autoSteering * maxSteeringAngle;
+        targetSpeed = Mathf.Lerp(targetSpeed, maxSpeed * autoThrottle, Time.deltaTime * 2f);
     }
-
+    else
+    {
+        // 倒车：直接设置不用Lerp，立即响应
+        targetSpeed = maxSpeed * autoThrottle;
+    }
+    targetSteering = autoSteering * maxSteeringAngle;
+}
     /// <summary>
     /// 应用加速度
     /// </summary>
-    void ApplyAcceleration()
-    {
-        float speedDiff = targetSpeed - currentSpeed;
-        
-        Vector3 force = transform.forward * speedDiff * acceleration;
-        rb.AddForce(force, ForceMode.Acceleration);
-    }
+  void ApplyAcceleration()
+{
+    float diff = targetSpeed - currentSpeed;
+    float force = diff * acceleration;
 
+    // 倒车静止起步额外推力
+    if (targetSpeed < 0 && currentSpeed > -0.5f)
+        force -= 8f;
+
+    rb.AddForce(transform.forward * force, ForceMode.Acceleration);
+}
     /// <summary>
     /// 应用转向
     /// </summary>
     void ApplySteering()
     {
-        if (currentSpeed > 0.5f)  // 只在运动时转向
+        if (Mathf.Abs(currentSpeed) > 0.01f)
         {
-            float steering = targetSteering * (currentSpeed / maxSpeed);  // 速度越快转向越敏感
-            transform.Rotate(0, steering * Time.fixedDeltaTime, 0);
+            // ✅ 高速转向衰减（更强）
+            float speedFactor = Mathf.Pow(1f - (Mathf.Abs(currentSpeed) / maxSpeed), 2);
+
+            float steering = targetSteering * speedFactor;
+
+            // ✅ 使用 steeringSpeed（关键修复）
+            float turnRate = steering * steeringSpeed * Time.fixedDeltaTime;
+            transform.Rotate(0, turnRate, 0);
         }
     }
-
     /// <summary>
     /// 限制最大速度
     /// </summary>
     void LimitSpeed()
+{
+    float signedSpeed = Vector3.Dot(rb.velocity, transform.forward);
+    if (Mathf.Abs(signedSpeed) > maxSpeed)
     {
-        if (rb.velocity.magnitude > maxSpeed)
-        {
-            rb.velocity = rb.velocity.normalized * maxSpeed;
-        }
+        rb.velocity = transform.forward * Mathf.Sign(signedSpeed) * maxSpeed;
     }
+}
 
     // ========== 公共接口（供其他脚本调用） ==========
 

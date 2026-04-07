@@ -5,46 +5,23 @@ using System.Collections.Generic;
 using UnityEditor;
 #endif
 
-/// <summary>
-/// 随机路网生成器
-/// 功能：网格为基础 + 随机偏移，支持种子复现，Inspector + 运行时UI双模式输入
-/// 挂载位置：场景中空 GameObject，命名 "RoadNetworkGenerator"
-/// </summary>
 public class RoadNetworkGenerator : MonoBehaviour
 {
-    // =============================================
-    // Inspector 配置
-    // =============================================
-
     [Header("=== 路网尺寸 ===")]
-    [Tooltip("横向格子数量")]
     public int gridWidth = 5;
-
-    [Tooltip("纵向格子数量")]
     public int gridHeight = 5;
-
-    [Tooltip("每个格子的基础间距（米）")]
     public float cellSize = 20f;
 
     [Header("=== 随机偏移 ===")]
-    [Tooltip("路点随机偏移最大值（米），0 = 纯网格")]
     public float randomOffset = 5f;
-
-    [Tooltip("随机种子（相同种子生成相同路网）")]
     public int seed = 42;
 
-    [Tooltip("随机删除部分连接，模拟真实路网（0=不删，1=全删）")]
     [Range(0f, 0.4f)]
     public float connectionRemoveRate = 0.1f;
 
     [Header("=== 生成控制 ===")]
-    [Tooltip("启动时自动生成路网")]
     public bool generateOnStart = true;
-
-    [Tooltip("生成路网后自动关联到 PathPlanner")]
     public bool autoLinkPathPlanner = true;
-
-    [Tooltip("是否显示运行时UI面板")]
     public bool showRuntimeUI = true;
 
     [Header("=== 可视化 ===")]
@@ -52,33 +29,38 @@ public class RoadNetworkGenerator : MonoBehaviour
     public Color nodeColor = Color.yellow;
     public Color edgeColor = Color.white;
     public float nodeSphereSize = 1f;
-    // 在类的字段区域加
+
     private bool pendingGenerate = false;
     private bool pendingRandomGenerate = false;
+
     // =============================================
-    // 内部数据
+    // 数据结构：Road优先
     // =============================================
 
-    // 路点数据结构
     public class WaypointNode
     {
         public int id;
         public Vector3 position;
         public List<int> neighbors = new List<int>();
-        public GameObject gizmoObject; // 可选：场景中的标记物体
+        public GameObject gizmoObject;
     }
 
-    // 生成的路网数据
-    [HideInInspector]
-    public List<WaypointNode> nodes = new List<WaypointNode>();
+    // 道路段定义（先有路，再有节点）
+    public class RoadSegment
+    {
+        public Vector3 start;
+        public Vector3 end;
+        public int startNodeId;
+        public int endNodeId;
+    }
 
-    [HideInInspector]
-    public List<(int, int)> edges = new List<(int, int)>();
+    [HideInInspector] public List<WaypointNode> nodes = new List<WaypointNode>();
+    [HideInInspector] public List<(int, int)> edges = new List<(int, int)>();
+    [HideInInspector] public List<RoadSegment> roadSegments = new List<RoadSegment>();
 
-    // 二维索引，方便查找 grid[x][z] → nodeId
     private int[,] grid;
 
-    // 运行时UI状态
+    // UI
     private bool uiExpanded = true;
     private string uiSeed = "42";
     private string uiWidth = "5";
@@ -86,7 +68,6 @@ public class RoadNetworkGenerator : MonoBehaviour
     private string uiCellSize = "20";
     private string uiOffset = "5";
 
-    // PathPlanner引用
     public PathPlanner pathPlanner;
 
     // =============================================
@@ -100,285 +81,291 @@ public class RoadNetworkGenerator : MonoBehaviour
             pathPlanner = FindObjectOfType<PathPlanner>();
             if (pathPlanner == null)
             {
-                GameObject ppGO = new GameObject("PathPlanner");
-                pathPlanner = ppGO.AddComponent<PathPlanner>();
+                pathPlanner = new GameObject("PathPlanner").AddComponent<PathPlanner>();
             }
         }
 
-        if (generateOnStart)
-        {
-            Generate();
-        }
-
-        // 同步UI字段
+        if (generateOnStart) Generate();
         SyncUIFields();
     }
 
-    // =============================================
-    // 核心生成逻辑
-    // =============================================
-
-    /// <summary>
-    /// 生成路网（主入口）
-    /// </summary>
     void Update()
     {
-        if (pendingGenerate)
-        {
-            pendingGenerate = false;
-            Generate();
-        }
-
-        if (pendingRandomGenerate)
-        {
-            pendingRandomGenerate = false;
-            Generate();
-        }
+        if (pendingGenerate) { pendingGenerate = false; Generate(); }
+        if (pendingRandomGenerate) { pendingRandomGenerate = false; Generate(); }
     }
+
+    // =============================================
+    // 核心生成：道路优先
+    // =============================================
+
     public void Generate()
     {
-        // 清空旧数据
         Clear();
-
-        // 初始化随机数（固定种子）
         Random.InitState(seed);
 
-        // 生成节点
-        GenerateNodes();
+        // Step 1: 生成道路网格（先定义所有道路段）
+        GenerateRoadGrid();
 
-        // 生成连接
-        GenerateEdges();
+        // Step 2: 从道路端点提取节点
+        ExtractNodesFromRoads();
 
-        // 同步到 PathPlanner
+        // Step 3: 按道路连接节点
+        ConnectNodesByRoads();
+
+        // Step 4: 同步到PathPlanner（A*在此图上运行）
         if (autoLinkPathPlanner && pathPlanner != null)
-        {
             SyncToPathPlanner();
-        }
-        SimpleAutoDrive autoDrive = FindObjectOfType<SimpleAutoDrive>();
+
+        // 重置自动驾驶
+        var autoDrive = FindObjectOfType<SimpleAutoDrive>();
         if (autoDrive != null)
         {
             autoDrive.currentState = SimpleAutoDrive.DriveState.Idle;
-            // 用反射清空私有path字段
-            var pathField = typeof(SimpleAutoDrive).GetField("path",
+            var f = typeof(SimpleAutoDrive).GetField("path",
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            if (pathField != null)
-                pathField.SetValue(autoDrive, null);
-
-            Debug.Log("⚠️ 路网已重建，自动驾驶已重置为 Idle");
+            if (f != null) f.SetValue(autoDrive, null);
         }
 
-        Debug.Log($"✅ 路网生成完成 | 种子:{seed} | 尺寸:{gridWidth}x{gridHeight} | " +
-                  $"节点:{nodes.Count} | 连接:{edges.Count}");
+        Debug.Log($"✅ 路网生成完成 | 种子:{seed} | 节点:{nodes.Count} | 道路:{roadSegments.Count} | 连接:{edges.Count}");
+
         var roadBuilder = GetComponent<ProceduralRoadBuilder>();
-        if (roadBuilder != null)
-            roadBuilder.BuildRoads();
-        var trafficLightManager = GetComponent<TrafficLightManager>();
-        if (trafficLightManager != null)
-            trafficLightManager.PlaceTrafficLights();
+        if (roadBuilder != null) roadBuilder.BuildRoads();
+
+        var tlm = GetComponent<TrafficLightManager>();
+        if (tlm != null) tlm.PlaceTrafficLights();
     }
 
-    /// <summary>
-    /// 生成所有路点节点
-    /// </summary>
-    void GenerateNodes()
+    // =============================================
+    // Step 1: 生成道路网格
+    // =============================================
+
+    void GenerateRoadGrid()
     {
-        grid = new int[gridWidth, gridHeight];
-        int id = 0;
+        roadSegments.Clear();
+
+        // 先生成所有网格点位置（带随机偏移）
+        Vector3[,] gridPositions = new Vector3[gridWidth, gridHeight];
 
         for (int x = 0; x < gridWidth; x++)
         {
             for (int z = 0; z < gridHeight; z++)
             {
-                // 基础网格位置
-                float baseX = x * cellSize;
-                float baseZ = z * cellSize;
-
-                // 随机偏移（四角节点不偏移，保持路网边界整齐）
-                float offsetX = 0f;
-                float offsetZ = 0f;
+                float bx = x * cellSize;
+                float bz = z * cellSize;
+                float ox = 0f, oz = 0f;
 
                 bool isCorner = (x == 0 || x == gridWidth - 1) &&
                                 (z == 0 || z == gridHeight - 1);
 
                 if (!isCorner && randomOffset > 0f)
                 {
-                    offsetX = Random.Range(-randomOffset, randomOffset);
-                    offsetZ = Random.Range(-randomOffset, randomOffset);
+                    ox = Random.Range(-randomOffset, randomOffset);
+                    oz = Random.Range(-randomOffset, randomOffset);
                 }
 
-                Vector3 pos = new Vector3(baseX + offsetX, 0f, baseZ + offsetZ);
-
-                WaypointNode node = new WaypointNode
-                {
-                    id = id,
-                    position = pos
-                };
-
-                nodes.Add(node);
-                grid[x, z] = id;
-                id++;
+                gridPositions[x, z] = new Vector3(bx + ox, 0f, bz + oz);
             }
         }
-    }
 
-    /// <summary>
-    /// 生成节点之间的连接
-    /// </summary>
-    void GenerateEdges()
-    {
+        // 按网格生成道路段（横向+纵向）
         for (int x = 0; x < gridWidth; x++)
         {
             for (int z = 0; z < gridHeight; z++)
             {
-                int currentId = grid[x, z];
-
-                // 向右连接
+                // 横向道路（向右）
                 if (x + 1 < gridWidth)
                 {
-                    TryAddEdge(currentId, grid[x + 1, z]);
+                    bool isBoundary = (z == 0 || z == gridHeight - 1);
+                    if (isBoundary || Random.value > connectionRemoveRate)
+                    {
+                        roadSegments.Add(new RoadSegment
+                        {
+                            start = gridPositions[x, z],
+                            end = gridPositions[x + 1, z]
+                        });
+                    }
                 }
 
-                // 向上连接
+                // 纵向道路（向上）
                 if (z + 1 < gridHeight)
                 {
-                    TryAddEdge(currentId, grid[x, z + 1]);
+                    bool isBoundary = (x == 0 || x == gridWidth - 1);
+                    if (isBoundary || Random.value > connectionRemoveRate)
+                    {
+                        roadSegments.Add(new RoadSegment
+                        {
+                            start = gridPositions[x, z],
+                            end = gridPositions[x, z + 1]
+                        });
+                    }
                 }
             }
         }
     }
 
-    /// <summary>
-    /// 尝试添加一条边（有概率随机删除）
-    /// </summary>
-    void TryAddEdge(int nodeA, int nodeB)
+    // =============================================
+    // Step 2: 从道路端点提取节点（合并重复位置）
+    // =============================================
+
+    void ExtractNodesFromRoads()
     {
-        // 边界边不删除，保证路网连通性
-        bool isBoundaryEdge = IsBoundaryEdge(nodeA, nodeB);
+        nodes.Clear();
+        Dictionary<Vector3, int> posToId = new Dictionary<Vector3, int>();
+        int nextId = 0;
 
-        if (!isBoundaryEdge && Random.value < connectionRemoveRate)
+        foreach (var seg in roadSegments)
         {
-            return; // 随机删除这条边
-        }
-
-        edges.Add((nodeA, nodeB));
-        nodes[nodeA].neighbors.Add(nodeB);
-        nodes[nodeB].neighbors.Add(nodeA);
-    }
-
-    /// <summary>
-    /// 判断是否是边界边（边界边不随机删除）
-    /// </summary>
-    bool IsBoundaryEdge(int nodeA, int nodeB)
-    {
-        for (int x = 0; x < gridWidth; x++)
-        {
-            for (int z = 0; z < gridHeight; z++)
+            // 起点
+            if (!posToId.ContainsKey(seg.start))
             {
-                if (grid[x, z] == nodeA || grid[x, z] == nodeB)
-                {
-                    if (x == 0 || x == gridWidth - 1 || z == 0 || z == gridHeight - 1)
-                        return true;
-                }
+                posToId[seg.start] = nextId;
+                nodes.Add(new WaypointNode { id = nextId, position = seg.start });
+                nextId++;
             }
+            seg.startNodeId = posToId[seg.start];
+
+            // 终点
+            if (!posToId.ContainsKey(seg.end))
+            {
+                posToId[seg.end] = nextId;
+                nodes.Add(new WaypointNode { id = nextId, position = seg.end });
+                nextId++;
+            }
+            seg.endNodeId = posToId[seg.end];
         }
-        return false;
+
+        // 重建grid（用于GetFarCornerPosition）
+        grid = new int[gridWidth, gridHeight];
+        int idx = 0;
+        for (int x = 0; x < gridWidth; x++)
+            for (int z = 0; z < gridHeight; z++)
+                grid[x, z] = idx++;
     }
 
-    /// <summary>
-    /// 清空路网数据
-    /// </summary>
+    // =============================================
+    // Step 3: 按道路连接节点
+    // =============================================
+
+    void ConnectNodesByRoads()
+    {
+        edges.Clear();
+        foreach (var node in nodes) node.neighbors.Clear();
+
+        foreach (var seg in roadSegments)
+        {
+            int a = seg.startNodeId;
+            int b = seg.endNodeId;
+
+            if (!nodes[a].neighbors.Contains(b))
+                nodes[a].neighbors.Add(b);
+
+            if (!nodes[b].neighbors.Contains(a))
+                nodes[b].neighbors.Add(a);
+
+            edges.Add((a, b));
+        }
+    }
+
+    // =============================================
+    // Step 4: 同步到PathPlanner
+    // =============================================
+
+    void SyncToPathPlanner()
+    {
+        pathPlanner.ResetNetwork();
+
+        // 每条道路段插入中间点（每15米一个节点）
+        float interpolateStep = 15f;
+        Dictionary<Vector3, int> posToId = new Dictionary<Vector3, int>();
+
+        int GetOrAddNode(Vector3 pos)
+        {
+            // 查找是否已有近似位置节点（容差0.1米）
+            foreach (var kv in posToId)
+            {
+                if (Vector3.Distance(kv.Key, pos) < 0.1f)
+                    return kv.Value;
+            }
+            int id = pathPlanner.AddWaypoint(pos);
+            posToId[pos] = id;
+            return id;
+        }
+
+        foreach (var seg in roadSegments)
+        {
+            float segLength = Vector3.Distance(seg.start, seg.end);
+            int steps = Mathf.Max(1, Mathf.FloorToInt(segLength / interpolateStep));
+
+            int prevId = GetOrAddNode(seg.start);
+
+            for (int i = 1; i <= steps; i++)
+            {
+                float t = (float)i / steps;
+                Vector3 pos = Vector3.Lerp(seg.start, seg.end, t);
+                int curId = GetOrAddNode(pos);
+                pathPlanner.ConnectWaypoints(prevId, curId);
+                prevId = curId;
+            }
+        }
+
+        Debug.Log($"✅ 路网已同步到PathPlanner（含插值节点）");
+    }
+
+    // =============================================
+    // 清空
+    // =============================================
+
     public void Clear()
     {
         nodes.Clear();
         edges.Clear();
+        roadSegments.Clear();
         grid = null;
-
-        if (pathPlanner != null)
-        {
-            // 重置PathPlanner（通过重建路网）
-            pathPlanner.GetRoadNetwork().Clear();
-        }
+        if (pathPlanner != null) pathPlanner.ResetNetwork();
     }
 
-    // =============================================
-    // 同步到 PathPlanner
-    // =============================================
-    void SyncToPathPlanner()
-    {
-        // 用新方法完全重置，而不是只Clear字典
-        pathPlanner.ResetNetwork();
-
-        // 重新添加所有节点
-        foreach (var node in nodes)
-        {
-            pathPlanner.AddWaypoint(node.position);
-        }
-
-        // 重新添加所有连接
-        foreach (var edge in edges)
-        {
-            pathPlanner.ConnectWaypoints(edge.Item1, edge.Item2);
-        }
-
-        Debug.Log($"✅ 路网已同步到 PathPlanner：{nodes.Count} 节点，{edges.Count} 连接");
-    }
     // =============================================
     // 公共接口
     // =============================================
 
-    /// <summary>
-    /// 获取所有节点位置（供外部使用）
-    /// </summary>
     public List<Vector3> GetAllNodePositions()
     {
-        List<Vector3> positions = new List<Vector3>();
-        foreach (var node in nodes)
-            positions.Add(node.position);
-        return positions;
+        var list = new List<Vector3>();
+        foreach (var n in nodes) list.Add(n.position);
+        return list;
     }
 
-    /// <summary>
-    /// 获取路网边界（用于摄像机定位）
-    /// </summary>
     public Bounds GetNetworkBounds()
     {
         if (nodes.Count == 0) return new Bounds(Vector3.zero, Vector3.zero);
-
-        Vector3 min = nodes[0].position;
-        Vector3 max = nodes[0].position;
-
-        foreach (var node in nodes)
-        {
-            min = Vector3.Min(min, node.position);
-            max = Vector3.Max(max, node.position);
-        }
-
-        Bounds bounds = new Bounds();
-        bounds.SetMinMax(min, max);
-        return bounds;
+        Vector3 min = nodes[0].position, max = nodes[0].position;
+        foreach (var n in nodes) { min = Vector3.Min(min, n.position); max = Vector3.Max(max, n.position); }
+        Bounds b = new Bounds(); b.SetMinMax(min, max); return b;
     }
 
-    /// <summary>
-    /// 获取随机一个节点位置（用于随机目的地）
-    /// </summary>
     public Vector3 GetRandomNodePosition()
     {
         if (nodes.Count == 0) return Vector3.zero;
-        int idx = Random.Range(0, nodes.Count);
-        return nodes[idx].position;
+        return nodes[Random.Range(0, nodes.Count)].position;
     }
 
-    /// <summary>
-    /// 获取路网右上角节点位置（常用作默认目的地）
-    /// </summary>
     public Vector3 GetFarCornerPosition()
     {
-        if (grid == null || nodes.Count == 0) return Vector3.zero;
-        return nodes[grid[gridWidth - 1, gridHeight - 1]].position;
+        if (nodes.Count == 0) return Vector3.zero;
+        // 找离原点最远的节点
+        Vector3 farthest = nodes[0].position;
+        float maxDist = 0f;
+        foreach (var n in nodes)
+        {
+            float d = Vector3.Distance(Vector3.zero, n.position);
+            if (d > maxDist) { maxDist = d; farthest = n.position; }
+        }
+        return farthest;
     }
 
     // =============================================
-    // 运行时 UI
+    // 运行时UI
     // =============================================
 
     void SyncUIFields()
@@ -390,90 +377,6 @@ public class RoadNetworkGenerator : MonoBehaviour
         uiOffset = randomOffset.ToString();
     }
 
-    void OnGUI()
-    {
-        if (!showRuntimeUI) return;
-
-        float panelWidth = 260f;
-        float panelHeight = uiExpanded ? 300f : 40f;
-        float x = Screen.width - panelWidth - 10f;
-        float y = 10f;
-
-        GUI.Box(new Rect(x, y, panelWidth, panelHeight), "");
-        GUILayout.BeginArea(new Rect(x + 8, y + 8, panelWidth - 16, panelHeight - 16));
-
-        // 标题栏
-        GUILayout.BeginHorizontal();
-        GUILayout.Label("🗺️ 路网生成器",
-            new GUIStyle(GUI.skin.label) { fontSize = 13, fontStyle = FontStyle.Bold });
-        if (GUILayout.Button(uiExpanded ? "▲" : "▼", GUILayout.Width(30)))
-            uiExpanded = !uiExpanded;
-        GUILayout.EndHorizontal();
-
-        if (uiExpanded)
-        {
-            GUILayout.Space(5);
-
-            GUILayout.BeginHorizontal();
-            GUILayout.Label("种子 Seed:", GUILayout.Width(90));
-            uiSeed = GUILayout.TextField(uiSeed, GUILayout.Width(80));
-            GUILayout.EndHorizontal();
-
-            GUILayout.BeginHorizontal();
-            GUILayout.Label("宽 (列数):", GUILayout.Width(90));
-            uiWidth = GUILayout.TextField(uiWidth, GUILayout.Width(80));
-            GUILayout.EndHorizontal();
-
-            GUILayout.BeginHorizontal();
-            GUILayout.Label("高 (行数):", GUILayout.Width(90));
-            uiHeight = GUILayout.TextField(uiHeight, GUILayout.Width(80));
-            GUILayout.EndHorizontal();
-
-            GUILayout.BeginHorizontal();
-            GUILayout.Label("格子大小(m):", GUILayout.Width(90));
-            uiCellSize = GUILayout.TextField(uiCellSize, GUILayout.Width(80));
-            GUILayout.EndHorizontal();
-
-            GUILayout.BeginHorizontal();
-            GUILayout.Label("随机偏移(m):", GUILayout.Width(90));
-            uiOffset = GUILayout.TextField(uiOffset, GUILayout.Width(80));
-            GUILayout.EndHorizontal();
-
-            GUILayout.Space(8);
-
-            GUI.backgroundColor = new Color(0.3f, 0.8f, 0.3f);
-            if (GUILayout.Button("▶  生成路网", GUILayout.Height(30)))
-            {
-                ApplyUISettings();
-                pendingGenerate = true;
-            }
-
-            GUILayout.Space(3);
-
-            GUI.backgroundColor = new Color(0.3f, 0.6f, 1f);
-            if (GUILayout.Button("🎲  随机种子并生成", GUILayout.Height(25)))
-            {
-                seed = Random.Range(0, 99999);
-                uiSeed = seed.ToString();
-                ApplyUISettings();
-                pendingRandomGenerate = true;
-            }
-
-            GUI.backgroundColor = Color.white;
-
-            GUILayout.Space(5);
-
-            GUILayout.Label($"节点: {nodes.Count}  连接: {edges.Count}",
-                new GUIStyle(GUI.skin.label) { fontSize = 10, normal = { textColor = Color.gray } });
-            GUILayout.Label($"当前种子: {seed}",
-                new GUIStyle(GUI.skin.label) { fontSize = 10, normal = { textColor = Color.cyan } });
-        }
-
-        GUILayout.EndArea();
-    }
-    /// <summary>
-    /// 把UI输入的字符串应用到实际参数
-    /// </summary>
     void ApplyUISettings()
     {
         if (int.TryParse(uiSeed, out int s)) seed = s;
@@ -483,42 +386,78 @@ public class RoadNetworkGenerator : MonoBehaviour
         if (float.TryParse(uiOffset, out float o)) randomOffset = Mathf.Max(0f, o);
     }
 
+    void OnGUI()
+    {
+        if (!showRuntimeUI) return;
+
+        float pw = 260f, ph = uiExpanded ? 300f : 40f;
+        float x = Screen.width - pw - 10f, y = 10f;
+
+        GUI.Box(new Rect(x, y, pw, ph), "");
+        GUILayout.BeginArea(new Rect(x + 8, y + 8, pw - 16, ph - 16));
+
+        GUILayout.BeginHorizontal();
+        GUILayout.Label("🗺️ 路网生成器", new GUIStyle(GUI.skin.label) { fontSize = 13, fontStyle = FontStyle.Bold });
+        if (GUILayout.Button(uiExpanded ? "▲" : "▼", GUILayout.Width(30))) uiExpanded = !uiExpanded;
+        GUILayout.EndHorizontal();
+
+        if (uiExpanded)
+        {
+            GUILayout.Space(5);
+            GUILayout.BeginHorizontal(); GUILayout.Label("种子 Seed:", GUILayout.Width(90)); uiSeed = GUILayout.TextField(uiSeed, GUILayout.Width(80)); GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal(); GUILayout.Label("宽 (列数):", GUILayout.Width(90)); uiWidth = GUILayout.TextField(uiWidth, GUILayout.Width(80)); GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal(); GUILayout.Label("高 (行数):", GUILayout.Width(90)); uiHeight = GUILayout.TextField(uiHeight, GUILayout.Width(80)); GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal(); GUILayout.Label("格子大小(m):", GUILayout.Width(90)); uiCellSize = GUILayout.TextField(uiCellSize, GUILayout.Width(80)); GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal(); GUILayout.Label("随机偏移(m):", GUILayout.Width(90)); uiOffset = GUILayout.TextField(uiOffset, GUILayout.Width(80)); GUILayout.EndHorizontal();
+
+            GUILayout.Space(8);
+            GUI.backgroundColor = new Color(0.3f, 0.8f, 0.3f);
+            if (GUILayout.Button("▶  生成路网", GUILayout.Height(30))) { ApplyUISettings(); pendingGenerate = true; }
+
+            GUILayout.Space(3);
+            GUI.backgroundColor = new Color(0.3f, 0.6f, 1f);
+            if (GUILayout.Button("🎲  随机种子并生成", GUILayout.Height(25)))
+            {
+                int newSeed = (int)(Time.realtimeSinceStartup * 1000) % 99999;
+                seed = newSeed;
+                uiSeed = seed.ToString();
+                ApplyUISettings();
+                pendingRandomGenerate = true;
+            }
+            GUI.backgroundColor = Color.white;
+            GUILayout.Space(5);
+            GUILayout.Label($"节点:{nodes.Count} 道路:{roadSegments.Count} 连接:{edges.Count}", new GUIStyle(GUI.skin.label) { fontSize = 10, normal = { textColor = Color.gray } });
+            GUILayout.Label($"当前种子: {seed}", new GUIStyle(GUI.skin.label) { fontSize = 10, normal = { textColor = Color.cyan } });
+        }
+
+        GUILayout.EndArea();
+    }
+
     // =============================================
-    // Gizmos 可视化
+    // Gizmos
     // =============================================
 
     void OnDrawGizmos()
     {
         if (!showGizmos || nodes == null) return;
 
-        // 绘制节点
         Gizmos.color = nodeColor;
         foreach (var node in nodes)
         {
             Gizmos.DrawSphere(node.position + Vector3.up * 0.5f, nodeSphereSize);
-
 #if UNITY_EDITOR
-            // 显示节点ID
-            Handles.Label(node.position + Vector3.up * 2f,
-                node.id.ToString(),
+            Handles.Label(node.position + Vector3.up * 2f, node.id.ToString(),
                 new GUIStyle { normal = { textColor = Color.yellow }, fontSize = 10 });
 #endif
         }
 
-        // 绘制连接
-        Gizmos.color = edgeColor;
-        foreach (var edge in edges)
+        // 绘制道路段（绿色=实际道路）
+        Gizmos.color = Color.green;
+        foreach (var seg in roadSegments)
         {
-            if (edge.Item1 < nodes.Count && edge.Item2 < nodes.Count)
-            {
-                Gizmos.DrawLine(
-                    nodes[edge.Item1].position + Vector3.up * 0.5f,
-                    nodes[edge.Item2].position + Vector3.up * 0.5f
-                );
-            }
+            Gizmos.DrawLine(seg.start + Vector3.up * 0.5f, seg.end + Vector3.up * 0.5f);
         }
 
-        // 绘制路网边界框
         if (nodes.Count > 0)
         {
             Bounds b = GetNetworkBounds();
