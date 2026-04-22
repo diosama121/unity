@@ -10,7 +10,7 @@ public class SimpleCarController : MonoBehaviour
 {
     [Header("车辆参数")]
     [Tooltip("最大速度 (m/s)")]
-    public float maxSpeed = 30f;
+    public float maxSpeed = 25f;
 
     [Tooltip("加速度 (m/s²)")]
     public float acceleration = 4f;
@@ -31,7 +31,9 @@ public class SimpleCarController : MonoBehaviour
     [Header("调试信息")]
     public float currentSpeed = 0f;
     public float currentSteeringAngle = 0f;
-
+    [Header("物理环境")]
+    [Tooltip("侧向滑动系数 (0.1=极强抓地, 0.5=正常干地, 0.9=雨雪湿滑)")]
+    public float slipFactor = 0.5f;
     // 内部变量
     private Rigidbody rb;
     private float targetSpeed = 0f;
@@ -78,8 +80,8 @@ public class SimpleCarController : MonoBehaviour
 
         //  防侧滑
       Vector3 localVel = transform.InverseTransformDirection(rb.velocity);
-localVel.x *= 0.5f; // 从0.3改成0.5，太强的侧滑抑制会阻止倒车
-rb.velocity = transform.TransformDirection(localVel);
+        localVel.x *= slipFactor; // 将原来的 0.5f 替换为动态的 slipFactor
+        rb.velocity = transform.TransformDirection(localVel);
     }
 
     /// <summary>
@@ -87,6 +89,7 @@ rb.velocity = transform.TransformDirection(localVel);
     /// </summary>
     void HandleManualControl()
     {
+        // WASD 控制
         float throttle = Input.GetAxis("Vertical");    // W/S
         float steering = Input.GetAxis("Horizontal");  // A/D
 
@@ -96,15 +99,15 @@ rb.velocity = transform.TransformDirection(localVel);
         }
         else if (throttle < 0)
         {
-            // 【修复】倒车与刹车逻辑分离
-            if (currentSpeed > 0.5f) 
+            // 【修复 1】分离刹车和倒车逻辑
+            if (currentSpeed > 0.5f)
             {
-                // 如果当前正在往前走，按S键是刹车
+                // 如果车还在往前开，按S键是刹车减速
                 targetSpeed = Mathf.Lerp(targetSpeed, 0, Time.deltaTime * 5f);
             }
-            else 
+            else
             {
-                // 如果已经基本静止，按S键是倒车
+                // 如果车已经基本停下，按S键则是倒车
                 targetSpeed = Mathf.Lerp(targetSpeed, maxSpeed * throttle, Time.deltaTime * 2f);
             }
         }
@@ -155,16 +158,19 @@ rb.velocity = transform.TransformDirection(localVel);
     /// <summary>
     /// 应用转向
     /// </summary>
-    void ApplySteering()
+   void ApplySteering()
     {
         if (Mathf.Abs(currentSpeed) > 0.01f)
         {
-            // ✅ 高速转向衰减（更强）
+            // ✅ 高速转向衰减
             float speedFactor = Mathf.Pow(1f - (Mathf.Abs(currentSpeed) / maxSpeed), 2);
 
-            float steering = targetSteering * speedFactor;
+            // 【核心修复】将 targetSteering (最大45) 还原成 -1 到 1 的系数
+            float normalizedSteering = targetSteering / maxSteeringAngle; 
+            
+            float steering = normalizedSteering * speedFactor;
 
-            // ✅ 使用 steeringSpeed（关键修复）
+            // ✅ 使用 steeringSpeed (80度/秒) 乘以系数，得出每帧真实旋转角度
             float turnRate = steering * steeringSpeed * Time.fixedDeltaTime;
             transform.Rotate(0, turnRate, 0);
         }
@@ -225,8 +231,16 @@ rb.velocity = transform.TransformDirection(localVel);
     {
         autoMode = !autoMode;
         Debug.Log($"控制模式切换为: {(autoMode ? "自动驾驶" : "手动控制")}");
+        
+        // 【修复 2】强制重置状态机
+        // 防止手动接管期间，AI 的状态机还卡在“避障”或“红绿灯”状态导致切回时暴走
+        SimpleAutoDrive autoDrive = GetComponent<SimpleAutoDrive>();
+        if (autoDrive != null && !autoMode)
+        {
+            autoDrive.currentState = SimpleAutoDrive.DriveState.Idle;
+            SetAutoControl(0f, 0f); // 瞬间清除残留的油门转向指令
+        }
     }
-
     // ========== 调试可视化 ==========
     void OnDrawGizmos()
     {

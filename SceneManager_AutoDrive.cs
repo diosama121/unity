@@ -341,6 +341,8 @@ GUILayout.BeginArea(new Rect(15, 15, 250, 400));
             new GUIStyle(GUI.skin.label) { fontSize = 10, normal = { textColor = Color.yellow } });
         GUILayout.Label("[C] 切换摄像机视角",
             new GUIStyle(GUI.skin.label) { fontSize = 10, normal = { textColor = Color.yellow } });
+        GUILayout.Label("[TAB] 切换车辆",
+            new GUIStyle(GUI.skin.label) { fontSize = 10, normal = { textColor = Color.yellow } });
         GUILayout.EndArea();
     }
 }

@@ -157,16 +157,14 @@ public class SimpleAutoDrive : MonoBehaviour
     void HandleIdleState()
     {
         carController.SetAutoControl(0f, 0f);
-        if (path != null && path.Count > 0) return;
-        if (pathPlanner != null && pathPlanner.GetCurrentPath().Count > 0)
+        if (path != null && path.Count > 0) 
         {
-            path = pathPlanner.GetCurrentPath();
             currentWaypointIndex = 0;
             currentState = DriveState.Following;
         }
     }
 
-    void HandleFollowingState()
+  void HandleFollowingState()
     {
         if (trafficLightState == "Red")
         {
@@ -184,7 +182,7 @@ public class SimpleAutoDrive : MonoBehaviour
             return;
         }
 
-        // --- 到达判定 与 防死角逻辑 ---
+        // 常规到达判定
         if (distanceToNextWaypoint < waypointReachThreshold)
         {
             currentWaypointIndex++;
@@ -194,24 +192,34 @@ public class SimpleAutoDrive : MonoBehaviour
             {
                 currentState = DriveState.Idle;
                 path = null;
-                pathPlanner.currentPath.Clear();
+                if (pathPlanner != null && pathPlanner.currentPath != null) pathPlanner.currentPath.Clear();
                 carController.SetAutoControl(0f, 0f);
                 Debug.Log("✅ 到达目的地");
                 return;
             }
         }
-        else if (path != null && currentWaypointIndex < path.Count - 1)
+        else if (path != null && currentWaypointIndex < path.Count)
         {
-            // 【核心修复：防回头切弯】
-            // 如果目标点在车身侧面或偏后（比如倒车脱困后），硬转弯极易撞墙。
-            // 计算车头朝向与目标点方向的点积，小于 0.2f 说明点在侧面/后面，直接跳过！
+            // 【核心修复】防原地画圈 / 切弯死角
+            // 计算车头朝向与目标点的点积，如果 < 0.1f 说明点已经在侧方或后方
             Vector3 toWaypoint = path[currentWaypointIndex] - transform.position;
             toWaypoint.y = 0;
-            if (Vector3.Dot(transform.forward, toWaypoint.normalized) < 0.2f) 
+            
+            // 且距离不大于 15m (防止把很远的大弯也误判跳过)
+            if (Vector3.Dot(transform.forward, toWaypoint.normalized) < 0.1f && distanceToNextWaypoint < 15f)
             {
                 currentWaypointIndex++;
                 stuckTimer = 0f;
-                Debug.Log("⏩ 目标点在侧/后方，为防止切弯撞墙，已自动跳过");
+                Debug.Log("⏩ 节点已被甩在身后，自动跳过防止原地画圈");
+                
+                // 边界安全检查
+                if (currentWaypointIndex >= path.Count)
+                {
+                    currentState = DriveState.Idle;
+                    path = null;
+                    carController.SetAutoControl(0f, 0f);
+                    return;
+                }
             }
         }
 
@@ -225,15 +233,16 @@ public class SimpleAutoDrive : MonoBehaviour
             reverseTimer += Time.deltaTime;
             
             // 【应用转向，倒车力度加大，使车头甩开角度】
-            carController.SetAutoControl(-0.6f, escapeSteering);
+            carController.SetAutoControl(-0.4f, escapeSteering);
 
             // 【延长倒车时间从 1.5 秒改为 2.0 秒，拉开安全距离】
-            if (reverseTimer >= 2.0f)
+            if (reverseTimer >= 1.2f)
             {
                 isReversing = false;
                 reverseTimer = 0f;
-                avoidCooldown = 2f;
-                startupDelay = 1f;
+                avoidCooldown = 1.5f;
+                startupDelay = 0.8f;
+                carController.SetAutoControl(0f, 0f);
                 RerouteToDestination();
                 currentState = DriveState.Following;
                 Debug.Log("倒车完成，重新规划路径");

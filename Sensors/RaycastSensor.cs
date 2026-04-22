@@ -29,7 +29,7 @@ public class RaycastSensor : MonoBehaviour
     public float frontObstacleDistance = -1f;  // -1 表示未检测到
     public float leftObstacleDistance = -1f;
     public float rightObstacleDistance = -1f;
-    
+    public LayerMask detectionMask;
     // 多射线检测结果
     public List<RayHitInfo> rayHits = new List<RayHitInfo>();
 
@@ -53,32 +53,38 @@ public class RaycastSensor : MonoBehaviour
     /// <summary>
     /// 检测前方障碍物
     /// </summary>
-    void DetectFrontObstacle()
+   void DetectFrontObstacle()
     {
-        Vector3 origin = transform.position + Vector3.up * 0.5f;  // 从车辆中心发射
+        // 【修复1】将起点从车辆中心向前推 2.2 米(大约到车头保险杠的位置)，高度稍微抬高
+        Vector3 origin = transform.position + transform.forward * 2.2f + Vector3.up * 0.6f;  
         Vector3 direction = transform.forward;
 
         RaycastHit hit;
-        if (Physics.Raycast(origin, direction, out hit, forwardDetectionRange))
+        // 【修复2】使用 SphereCast (球形射线)，给雷达增加 1.0m 的“宽度”，防止漏掉前方的车辆
+        if (Physics.SphereCast(origin, 1.0f, direction, out hit, forwardDetectionRange))
         {
-            frontObstacleDistance = hit.distance;
-            
-            if (showRays)
+            // 【修复3】排除自己！确保射线碰到的不是自己的车壳或车轮
+            if (hit.collider.transform.root != transform.root)
             {
-                Debug.DrawLine(origin, hit.point, Color.red);
+                frontObstacleDistance = hit.distance;
+                
+                if (showRays)
+                {
+                    // 绘制检测到的红线
+                    Debug.DrawLine(origin, hit.point, Color.red);
+                }
+                return; // 成功检测到外部障碍物，直接结束
             }
         }
-        else
+        
+        // 没有碰到障碍物，或者只碰到了自己
+        frontObstacleDistance = -1f;
+        
+        if (showRays)
         {
-            frontObstacleDistance = -1f;
-            
-            if (showRays)
-            {
-                Debug.DrawRay(origin, direction * forwardDetectionRange, Color.green);
-            }
+            Debug.DrawRay(origin, direction * forwardDetectionRange, Color.green);
         }
     }
-
     /// <summary>
     /// 检测侧向障碍物
     /// </summary>
@@ -136,6 +142,7 @@ public class RaycastSensor : MonoBehaviour
 
             if (Physics.Raycast(origin, direction, out hit, forwardDetectionRange))
             {
+                if (hit.collider.transform.root == transform.root) continue;
                 hitInfo.hit = true;
                 hitInfo.distance = hit.distance;
                 hitInfo.hitPoint = hit.point;

@@ -60,7 +60,11 @@ public class ProceduralRoadBuilder : MonoBehaviour
 
     [Tooltip("人行道高度")]
     public float sidewalkHeight = 0.2f;
-
+    [Header("=== 动态测试用例 ===")]
+    [Tooltip("是否在路上随机生成横穿马路的行人")]
+    public bool spawnPedestrians = true;
+    [Tooltip("行人生成概率 (0~1)")]
+    public float pedestrianSpawnRate = 0.2f;
     [Header("=== 调试 ===")]
     public bool showDebugLog = true;
 
@@ -231,6 +235,25 @@ public class ProceduralRoadBuilder : MonoBehaviour
         {
             BuildSidewalkSegment(posA, posB, parent, true);
             BuildSidewalkSegment(posA, posB, parent, false);
+        }
+        if (spawnPedestrians && Random.value < pedestrianSpawnRate && length > 15f)
+        {
+            // 创建一个胶囊体代替行人
+            GameObject pedObj = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+            pedObj.name = $"Pedestrian_{posA.x}";
+            pedObj.transform.SetParent(roadObj.transform); // 挂在道路下，方便一键清理
+            
+            // 放在路段正中间，高度抬高一点防止卡地
+            pedObj.transform.position = center + Vector3.up * 1f;
+            // 朝向和道路一致，这样 transform.right 就是横穿马路的方向
+            pedObj.transform.rotation = Quaternion.LookRotation(direction);
+            
+            // 换个醒目的颜色（比如红色预警）
+            pedObj.GetComponent<MeshRenderer>().material.color = Color.red;
+
+            // 添加行人移动脚本
+            VirtualPedestrian vp = pedObj.AddComponent<VirtualPedestrian>();
+            vp.crossDistance = roadWidth + sidewalkWidth; // 行走范围覆盖马路和人行道
         }
     }
 
