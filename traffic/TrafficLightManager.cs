@@ -183,19 +183,24 @@ public class TrafficLightManager : MonoBehaviour
     {
         // 计算放置位置（路口角落，偏移到路边）
         Vector3 basePos = node.position + Vector3.up * heightOffset;
-
-        // 取第一个邻居方向作为朝向参考
+  // 取第一个邻居方向作为朝向参考
         Vector3 facingDir = Vector3.forward;
         if (node.neighbors.Count > 0)
         {
-            facingDir = (roadGen.nodes[node.neighbors[0]].position - node.position).normalized;
+            facingDir = (roadGen.nodes[node.neighbors[0]].position - node.position); // 去掉 .normalized
             facingDir.y = 0;
+            facingDir.Normalize(); // 【修复】清除 y 轴后必须重新归一化！
         }
+        
+        if (facingDir == Vector3.zero) facingDir = Vector3.forward; // 防御性判断
 
         // 偏移到路口右侧
+       // 偏移到路口右侧
         Vector3 rightDir = Vector3.Cross(Vector3.up, facingDir).normalized;
-        Vector3 spawnPos = basePos + facingDir * offsetFromCenter + rightDir * offsetFromCenter;
-
+        
+        // 【物理层面修复】将灯柱往人行道内部再退让 1.5 米，给车辆留出转弯切弯的安全冗余空间
+        float safeOffset = offsetFromCenter + 1.5f;
+        Vector3 spawnPos = basePos + facingDir * safeOffset + rightDir * safeOffset;
         // 创建交通灯GameObject
         GameObject tlObj;
         if (trafficLightPrefab != null)
@@ -235,11 +240,13 @@ controller.yellowColor = yellowColor;
 controller.greenColor = greenColor;
 
         // 添加碰撞体（供RaycastSensor检测）
+      // 添加碰撞体（供RaycastSensor检测）
         if (tlObj.GetComponent<Collider>() == null)
         {
             BoxCollider col = tlObj.AddComponent<BoxCollider>();
-col.size = new Vector3(2f, 4f, 2f);
-col.center = new Vector3(0, 2f, 0);
+            // 【修复】将灯柱碰撞体改为 0.5x0.5，防止侵占转弯车道
+            col.size = new Vector3(0.5f, 4f, 0.5f); 
+            col.center = new Vector3(0, 2f, 0);
         }
 
         // 记录实例

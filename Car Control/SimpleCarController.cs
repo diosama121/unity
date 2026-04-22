@@ -10,7 +10,7 @@ public class SimpleCarController : MonoBehaviour
 {
     [Header("车辆参数")]
     [Tooltip("最大速度 (m/s)")]
-    public float maxSpeed = 10f;
+    public float maxSpeed = 30f;
 
     [Tooltip("加速度 (m/s²)")]
     public float acceleration = 4f;
@@ -87,18 +87,26 @@ rb.velocity = transform.TransformDirection(localVel);
     /// </summary>
     void HandleManualControl()
     {
-        // WASD 控制
         float throttle = Input.GetAxis("Vertical");    // W/S
         float steering = Input.GetAxis("Horizontal");  // A/D
 
-        // 油门/刹车
         if (throttle > 0)
         {
             targetSpeed = Mathf.Lerp(targetSpeed, maxSpeed * throttle, Time.deltaTime * 2f);
         }
         else if (throttle < 0)
         {
-            targetSpeed = Mathf.Lerp(targetSpeed, 0, Time.deltaTime * 5f);
+            // 【修复】倒车与刹车逻辑分离
+            if (currentSpeed > 0.5f) 
+            {
+                // 如果当前正在往前走，按S键是刹车
+                targetSpeed = Mathf.Lerp(targetSpeed, 0, Time.deltaTime * 5f);
+            }
+            else 
+            {
+                // 如果已经基本静止，按S键是倒车
+                targetSpeed = Mathf.Lerp(targetSpeed, maxSpeed * throttle, Time.deltaTime * 2f);
+            }
         }
         else
         {
@@ -106,10 +114,8 @@ rb.velocity = transform.TransformDirection(localVel);
             targetSpeed = Mathf.Lerp(targetSpeed, 0, Time.deltaTime * 1f);
         }
 
-        // 转向
         targetSteering = steering * maxSteeringAngle;
 
-        // 空格刹车
         if (Input.GetKey(KeyCode.Space))
         {
             targetSpeed = 0f;

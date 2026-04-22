@@ -47,12 +47,19 @@ public class VehicleDashboard : MonoBehaviour
             sensor = FindObjectOfType<RaycastSensor>();
     }
 
-    void UpdateSpeedDisplay()
+   void UpdateSpeedDisplay()
     {
         if (speedText != null && carController != null)
         {
             float speed = carController.GetSpeed();
-            speedText.text = $"速度: {speed:F1} m/s ({speed * 3.6f:F1} km/h)";
+            // 判断挡位：速度绝对值极小视为N，负数为R，正数为D
+            string gear = "N";
+            if (Mathf.Abs(speed) > 0.5f) {
+                gear = speed > 0 ? "D" : "R";
+            }
+            
+            // 使用绝对值显示车速
+            speedText.text = $"挡位: {gear} | 车速: {Mathf.Abs(speed):F1} m/s ({Mathf.Abs(speed) * 3.6f:F1} km/h)";
         }
     }
 
