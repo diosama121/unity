@@ -11,7 +11,7 @@ public class ProceduralRoadBuilder : MonoBehaviour
 
     [Header("=== 人行道(物理护栏) ===")]
     public bool generateSidewalk = true;
-    public float sidewalkWidth = 1.5f;
+    public float sidewalkWidth = 0.8f;
     public float sidewalkHeight = 0.3f; // 抬高充当护栏
     public Material sidewalkMaterial;
 
@@ -175,7 +175,7 @@ public class ProceduralRoadBuilder : MonoBehaviour
 
             // 缺口宽度，太大说明是真实缺口，太小说明两条路紧贴（不需要挡墙）
             float gapDist = Vector3.Distance(cornerA, cornerB);
-            if (gapDist < 0.3f) continue;
+            if (gapDist < 1.5f) continue;
 
             // 在缺口处生成一段挡墙
             Vector3 wallCenter = (cornerA + cornerB) / 2f;
@@ -190,8 +190,10 @@ public class ProceduralRoadBuilder : MonoBehaviour
 
             var mf = wall.AddComponent<MeshFilter>();
             mf.mesh = BuildWallMesh(wallLength, sidewalkWidth * 0.5f, sidewalkHeight);
-            wall.AddComponent<MeshRenderer>().material = sidewalkMaterial;
-
+            MeshCollider mc = intObj.AddComponent<MeshCollider>();
+mc.sharedMesh = roadMesh;
+mc.convex = true; // 设为凸包
+mc.isTrigger = true; // 关键：设为触发器，车轮不会再陷入其中
             var bc = wall.AddComponent<BoxCollider>();
             bc.size = new Vector3(sidewalkWidth * 0.5f, sidewalkHeight, wallLength);
             bc.center = Vector3.zero;

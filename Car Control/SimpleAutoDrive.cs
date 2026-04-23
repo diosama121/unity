@@ -14,7 +14,10 @@ public class SimpleAutoDrive : MonoBehaviour
     public float safeDistance = 8f;
     public int lookAheadStep = 1;
     public float trafficLightDistance = 15f;
-
+    [Header("=== 交通规则注入 ===")]
+    [Tooltip("靠右行驶的偏移距离")]
+    public float rightLaneOffset = 3.5f;
+    public float lookAheadDistance = 12f;
     public enum DriveState
     {
         Idle, Following, Avoiding, Stopping, Waiting
@@ -46,7 +49,7 @@ public class SimpleAutoDrive : MonoBehaviour
     private Vector3 lastPosition = Vector3.zero;
     private float stuckCheckInterval = 0.5f;
     private float stuckCheckTimer = 0f;
-// 避障脱困时的转向记录
+    // 避障脱困时的转向记录
     private float escapeSteering = 0f;
     void Start()
     {
@@ -69,11 +72,11 @@ public class SimpleAutoDrive : MonoBehaviour
 
         switch (currentState)
         {
-            case DriveState.Idle:      HandleIdleState();      break;
+            case DriveState.Idle: HandleIdleState(); break;
             case DriveState.Following: HandleFollowingState(); break;
-            case DriveState.Avoiding:  HandleAvoidingState();  break;
-            case DriveState.Stopping:  HandleStoppingState();  break;
-            case DriveState.Waiting:   HandleWaitingState();   break;
+            case DriveState.Avoiding: HandleAvoidingState(); break;
+            case DriveState.Stopping: HandleStoppingState(); break;
+            case DriveState.Waiting: HandleWaitingState(); break;
         }
     }
 
@@ -85,7 +88,7 @@ public class SimpleAutoDrive : MonoBehaviour
         if (path != null && currentWaypointIndex < path.Count)
         {
             Vector3 flatPos = new Vector3(transform.position.x, 0, transform.position.z);
-            Vector3 flatWP  = new Vector3(path[currentWaypointIndex].x, 0, path[currentWaypointIndex].z);
+            Vector3 flatWP = new Vector3(path[currentWaypointIndex].x, 0, path[currentWaypointIndex].z);
             distanceToNextWaypoint = Vector3.Distance(flatPos, flatWP);
         }
     }
@@ -97,7 +100,7 @@ public class SimpleAutoDrive : MonoBehaviour
         {
             stuckTimer = 0f;
             stuckCheckTimer = 0f;
-            startupDelay = 0f; 
+            startupDelay = 0f;
             lastPosition = transform.position;
             return;
         }
@@ -125,27 +128,27 @@ public class SimpleAutoDrive : MonoBehaviour
             stuckTimer += stuckCheckInterval;
 
             // 【核心修复】将控制权交接给避障状态机，不再在当前状态硬写控制指令
-          if (stuckTimer > 4f)
+            if (stuckTimer > 4f)
             {
                 Debug.Log("⚠️ 检测到物理卡死，进入避障模式执行倒车脱困");
-                stuckTimer = 0f;          
-                isReversing = true;       
-                reverseTimer = 0f;        
-                
+                stuckTimer = 0f;
+                isReversing = true;
+                reverseTimer = 0f;
+
                 // 【核心新增：智能反向打方向盘】
                 // 如果我们要去的路点在右侧（往往是右转切弯撞了右侧柱子）
                 // 此时倒车向右打方向盘（1f），车屁股向右走，车头就会向左甩开！
-                if (path != null && currentWaypointIndex < path.Count) 
+                if (path != null && currentWaypointIndex < path.Count)
                 {
                     Vector3 toWaypoint = transform.InverseTransformPoint(path[currentWaypointIndex]);
                     escapeSteering = toWaypoint.x > 0 ? 1f : -1f;
-                } 
-                else 
+                }
+                else
                 {
                     escapeSteering = 0f;
                 }
 
-                currentState = DriveState.Avoiding; 
+                currentState = DriveState.Avoiding;
             }
         }
         else
@@ -157,14 +160,14 @@ public class SimpleAutoDrive : MonoBehaviour
     void HandleIdleState()
     {
         carController.SetAutoControl(0f, 0f);
-        if (path != null && path.Count > 0) 
+        if (path != null && path.Count > 0)
         {
             currentWaypointIndex = 0;
             currentState = DriveState.Following;
         }
     }
 
-  void HandleFollowingState()
+    void HandleFollowingState()
     {
         if (trafficLightState == "Red")
         {
@@ -204,14 +207,14 @@ public class SimpleAutoDrive : MonoBehaviour
             // 计算车头朝向与目标点的点积，如果 < 0.1f 说明点已经在侧方或后方
             Vector3 toWaypoint = path[currentWaypointIndex] - transform.position;
             toWaypoint.y = 0;
-            
+
             // 且距离不大于 15m (防止把很远的大弯也误判跳过)
             if (Vector3.Dot(transform.forward, toWaypoint.normalized) < 0.1f && distanceToNextWaypoint < 15f)
             {
                 currentWaypointIndex++;
                 stuckTimer = 0f;
                 Debug.Log("⏩ 节点已被甩在身后，自动跳过防止原地画圈");
-                
+
                 // 边界安全检查
                 if (currentWaypointIndex >= path.Count)
                 {
@@ -228,10 +231,10 @@ public class SimpleAutoDrive : MonoBehaviour
 
     void HandleAvoidingState()
     {
-       if (isReversing)
+        if (isReversing)
         {
             reverseTimer += Time.deltaTime;
-            
+
             // 【应用转向，倒车力度加大，使车头甩开角度】
             carController.SetAutoControl(-0.4f, escapeSteering);
 
@@ -272,7 +275,7 @@ public class SimpleAutoDrive : MonoBehaviour
             // 【修复】状态切换瞬间强制重置
             stuckTimer = 0f;
             stuckCheckTimer = 0f;
-            lastPosition = transform.position; 
+            lastPosition = transform.position;
             startupDelay = 2f; // 给一个起步缓冲
             currentState = DriveState.Following;
             Debug.Log("绿灯，继续行驶");
@@ -285,54 +288,58 @@ public class SimpleAutoDrive : MonoBehaviour
     }
 
   void FollowPath()
+{
+    if (path == null || currentWaypointIndex >= path.Count) return;
+
+    // 1. 确定当前路段的参考方向 (极其重要：用于计算稳定的右向量)
+    Vector3 segmentDir;
+    if (currentWaypointIndex + 1 < path.Count)
+        segmentDir = (path[currentWaypointIndex + 1] - path[currentWaypointIndex]).normalized;
+    else
+        segmentDir = (path[currentWaypointIndex] - transform.position).normalized;
+
+    // 2. 计算稳定的右侧偏移向量
+    Vector3 rightVector = Vector3.Cross(Vector3.up, segmentDir).normalized;
+    
+    // 3. 获取带偏移的目标点
+    Vector3 targetPos = path[currentWaypointIndex] + rightVector * rightLaneOffset;
+
+    // 4. 连续弯道稳定性优化：多点预瞄插值
+    // 如果距离当前点很近，提前向下一个偏移点过渡，防止弯道突变
+    if (Vector3.Distance(transform.position, targetPos) < lookAheadDistance && currentWaypointIndex + 1 < path.Count)
     {
-        if (path == null || currentWaypointIndex >= path.Count) return;
+        Vector3 nextBase = path[currentWaypointIndex + 1];
+        Vector3 nextDir = (currentWaypointIndex + 2 < path.Count) ? 
+            (path[currentWaypointIndex + 2] - nextBase).normalized : segmentDir;
+        Vector3 nextRight = Vector3.Cross(Vector3.up, nextDir).normalized;
+        Vector3 nextTarget = nextBase + nextRight * rightLaneOffset;
 
-        // ========== 新增：动态预瞄插值 (平滑过弯) ==========
-        Vector3 targetWaypoint = path[currentWaypointIndex];
-        
-        // 如果距离当前节点小于 8 米，且存在下一个节点，提前把目光“拉”向下一个节点
-        if (distanceToNextWaypoint < 8f && currentWaypointIndex + 1 < path.Count)
-        {
-            Vector3 nextWaypoint = path[currentWaypointIndex + 1];
-            // 距离越近，视线越靠近下一个节点 (权重 t 从 0 平滑过渡到 1)
-            float lookAheadWeight = 1f - (distanceToNextWaypoint / 8f);
-            targetWaypoint = Vector3.Lerp(path[currentWaypointIndex], nextWaypoint, lookAheadWeight);
-        }
-
-        targetWaypoint.y = transform.position.y;
-
-        // 坐标转换与转向计算
-        Vector3 localTarget = transform.InverseTransformPoint(targetWaypoint);
-        float angle = Mathf.Atan2(localTarget.x, localTarget.z) * Mathf.Rad2Deg;
-        
-        // 增加方向盘阻尼，防止高速猛打方向
-        float steering = Mathf.Clamp(angle / 30f, -1f, 1f); // 从45改为30，让转向稍微敏锐一点
-
-        // ========== 保留你原有的速度控制逻辑 ==========
-        float lookAheadAngle = Mathf.Abs(angle);
-        if (distanceToNextWaypoint < 8f && currentWaypointIndex + lookAheadStep < path.Count)
-        {
-            Vector3 currentDir = (path[currentWaypointIndex] - transform.position).normalized;
-            Vector3 nextDir = (path[currentWaypointIndex + lookAheadStep] - path[currentWaypointIndex]).normalized;
-            currentDir.y = 0; nextDir.y = 0;
-            float curveAngle = Vector3.Angle(currentDir, nextDir);
-            float weight = 1f - (distanceToNextWaypoint / 8f);
-            lookAheadAngle = Mathf.Max(Mathf.Abs(angle), curveAngle * weight); 
-        }
-
-        float speedFactor = 1f;
-        if (lookAheadAngle > 75f)      speedFactor = 0.3f;   
-        else if (lookAheadAngle > 45f) speedFactor = 0.6f;   
-        else if (lookAheadAngle > 20f) speedFactor = 0.9f;   
-
-        if (currentWaypointIndex == path.Count - 1 && distanceToNextWaypoint < 15f)
-            speedFactor *= Mathf.Max(distanceToNextWaypoint / 15f, 0.15f);
-
-        float throttle = (targetSpeed * speedFactor) / carController.maxSpeed;
-        carController.SetAutoControl(throttle, steering);
+        // 根据距离平滑切换目标
+        float t = 1f - (Vector3.Distance(transform.position, targetPos) / lookAheadDistance);
+        targetPos = Vector3.Lerp(targetPos, nextTarget, t);
     }
-        void RerouteToDestination()
+
+    // 5. 核心：增加“车道保持”偏航修正
+    // 如果车辆因为惯性已经偏离中心线太远，除了追逐目标点，再额外增加一个回归力
+    targetPos.y = transform.position.y;
+    Vector3 localTarget = transform.InverseTransformPoint(targetPos);
+    
+    // 6. 计算转向控制 (增加 damping 比例，数值越大转向越柔和)
+    float angle = Mathf.Atan2(localTarget.x, localTarget.z) * Mathf.Rad2Deg;
+    float steering = Mathf.Clamp(angle / 45f, -1f, 1f); 
+
+    // 7. 速度与障碍物逻辑
+    float speedFactor = 1f;
+    // 弯道大幅减速：偏移越大，离心力影响越大，必须降速压住车头
+    if (Mathf.Abs(angle) > 25f) speedFactor = 0.4f; 
+    
+    if (trafficLightState == "Red" || obstacleDetected) speedFactor = 0f;
+
+    // 8. 提交控制
+    float throttle = (targetSpeed * speedFactor) / carController.maxSpeed;
+    carController.SetAutoControl(throttle, steering);
+}
+    void RerouteToDestination()
     {
         if (pathPlanner == null) return;
 
