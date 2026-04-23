@@ -11,7 +11,7 @@ using System.Collections.Concurrent;
 public class ROS2BridgeV2 : MonoBehaviour
 {
     [Header("ROS2 Connection")]
-    public string rosIP = "172.21.16.202"; 
+    public string rosIP = "172.21.16.202";
     public int rosPort = 10086;
 
     [Header("Vehicle Components")]
@@ -21,12 +21,14 @@ public class ROS2BridgeV2 : MonoBehaviour
 
     [Header("发送频率")]
     public float sendRate = 10f;
-
+    [Header("安全与降级策略")]
+    public float rosTimeout = 2.0f; // 超过 2 秒没收到数据，认为 ROS2 掉线
+    private float lastReceiveTime = 0f; // 记录最后一次收到数据的时间
     private TcpClient client;
     private NetworkStream stream;
     private Thread receiveThread;
     private Thread connectThread; // 新增：专门用于连接的后台线程
-    
+
     private volatile bool isConnected = false;
     private float lastSendTime = 0f;
 
@@ -38,7 +40,7 @@ public class ROS2BridgeV2 : MonoBehaviour
     // 线程安全的并发队列
     private ConcurrentQueue<string> commandQueue = new ConcurrentQueue<string>();
 
-   void Start()
+    void Start()
     {
         // 【核心修复】防止生成的 NPC 车辆也去抢占 ROS2 端口
         // 假设你的 NPC 名字里带有 "NPC" 或者 "Clone"
@@ -55,9 +57,42 @@ public class ROS2BridgeV2 : MonoBehaviour
 
     void FindComponents()
     {
+        // 1. 先尝试在自己或子物体身上找（最安全的做法）
         if (carController == null) carController = GetComponent<SimpleCarController>();
-        if (autoDrive == null) autoDrive = GetComponent<SimpleAutoDrive>();
-        if (sensor == null) sensor = GetComponent<RaycastSensor>();
+        if (carController == null) carController = GetComponentInChildren<SimpleCarController>();
+
+        // 2. 如果必须全图搜索，启动【NPC 排除过滤】！
+        if (carController == null)
+        {
+            SimpleCarController[] allCars = FindObjectsOfType<SimpleCarController>();
+            foreach (var car in allCars)
+            {
+                string objName = car.gameObject.name.ToLower();
+                // 核心过滤逻辑：只要名字里带有 npc、clone、traffic 的，统统跳过！
+                if (!objName.Contains("npc") && !objName.Contains("clone") && !objName.Contains("traffic"))
+                {
+                    carController = car;
+                    break; // 找到主车，立刻锁定！
+                }
+            }
+        }
+
+        // 3. 顺藤摸瓜，找到主车的另外两个组件
+        if (autoDrive == null && carController != null)
+            autoDrive = carController.GetComponent<SimpleAutoDrive>();
+
+        if (sensor == null && carController != null)
+            sensor = carController.GetComponent<RaycastSensor>();
+
+        // 4. 状态汇报
+        if (carController == null)
+        {
+            Debug.LogError("❌ 找不到主车底盘！请确保主车名字中不包含 NPC/Clone。");
+        }
+        else
+        {
+            Debug.Log($"🎯 ROS2 专属桥接成功！已锁定主车: {carController.gameObject.name}，完美排除所有 NPC。");
+        }
     }
 
     void ConnectToROS2()
@@ -76,10 +111,10 @@ public class ROS2BridgeV2 : MonoBehaviour
                 client.ReceiveTimeout = 2000;
 
                 // 这一步即使卡20秒，也只会卡在这个看不见的后台线程里，游戏画面依然流畅
-                client.Connect(cleanIP, rosPort); 
+                client.Connect(cleanIP, rosPort);
                 stream = client.GetStream();
                 isConnected = true;
-                
+
                 Debug.Log($"✅ ROS2 连接成功！");
 
                 // 连上之后，启动接收线程
@@ -93,21 +128,46 @@ public class ROS2BridgeV2 : MonoBehaviour
                 isConnected = false;
             }
         });
-        
+
         connectThread.IsBackground = true;
         connectThread.Start();
     }
 
-  void Update()
+ void Update()
     {
         // 1. 解析队列中的指令
+        bool receivedThisFrame = false;
         while (commandQueue.TryDequeue(out string jsonData))
         {
-            // 【侦察兵】直接在控制台打印收到的最原始字符串！看看到底长什么样！
-            Debug.Log($"📦 收到原始数据: {jsonData}");
             ProcessControlCommand(jsonData);
+            receivedThisFrame = true;
         }
 
+        // 🌟 记录最后一次收到正确指令的时间
+        if (receivedThisFrame)
+        {
+            lastReceiveTime = Time.time;
+        }
+
+        // 🌟 【核心修复】：降级机制必须在 `return` 之前执行！
+        // 触发条件：超过两秒没数据，或者 TCP 连接被强制断开（比如 Ctrl+C）
+        bool isTimeout = (Time.time - lastReceiveTime > rosTimeout);
+        
+        if (useRosControl && (!isConnected || isTimeout))
+        {
+            Debug.LogWarning("⚠️ ROS2 连接断开或指令超时！触发安全降级，瞬间交还控制权给本地 AI...");
+            useRosControl = false;
+            rosLinearVelocity = 0f;
+            rosAngularVelocity = 0f;
+
+            // 唤醒本地的 SimpleAutoDrive 寻路 AI
+            if (autoDrive != null) 
+            {
+                autoDrive.enabled = true; 
+            }
+        }
+
+        // 如果网络断了，不执行后面的发送数据的代码
         if (!isConnected) return;
 
         // 2. 定时发送状态
@@ -117,7 +177,7 @@ public class ROS2BridgeV2 : MonoBehaviour
             lastSendTime = Time.time;
         }
 
-        // 3. 应用控制
+        // 3. 应用 ROS2 控制 (只有在没超时且连着的时候执行)
         if (useRosControl)
         {
             if (autoDrive != null && autoDrive.enabled) autoDrive.enabled = false; 
@@ -129,15 +189,10 @@ public class ROS2BridgeV2 : MonoBehaviour
                 float targetThrottle = Mathf.Clamp(rosLinearVelocity / maxSpd, -1f, 1f);
                 float targetSteering = Mathf.Clamp(-rosAngularVelocity / 1.5f, -1f, 1f);
 
-                // 正常下发给汽车底盘脚本
                 carController.SetAutoControl(targetThrottle, targetSteering);
             }
-
-          
-            
         }
-    }
-   void SendVehicleState()
+       }    void SendVehicleState()
     {
         if (!isConnected || stream == null || !stream.CanWrite) return;
 
@@ -156,11 +211,11 @@ public class ROS2BridgeV2 : MonoBehaviour
 
             string jsonData = JsonUtility.ToJson(state) + "\n";
             byte[] data = Encoding.UTF8.GetBytes(jsonData);
-            
+
             // 【核心修复】摒弃 BeginWrite，恢复为强制同步写入！
             // 只要加上 Flush()，数据就会像子弹一样瞬间打到 ROS2 端
             stream.Write(data, 0, data.Length);
-            stream.Flush(); 
+            stream.Flush();
         }
         catch (Exception)
         {
@@ -214,25 +269,26 @@ public class ROS2BridgeV2 : MonoBehaviour
         }
     }
 
-  void ProcessControlCommand(string jsonData)
+    void ProcessControlCommand(string jsonData)
     {
         try
         {
             // 清除多余换行符，防止 JSON 解析器报错罢工
-            jsonData = jsonData.Trim(); 
-            
+            jsonData = jsonData.Trim();
+
             ControlCommand cmd = JsonUtility.FromJson<ControlCommand>(jsonData);
             if (cmd != null)
             {
                 rosLinearVelocity = cmd.linear_velocity;
                 rosAngularVelocity = cmd.angular_velocity;
-                
+
                 // 霸道逻辑：无视其他状态，只要 ROS2 发来了数据，无脑强行接管方向盘！
-                useRosControl = true; 
+                useRosControl = true;
             }
+            Debug.Log($"🧩 JSON解析结果: 提取到的速度 = {rosLinearVelocity}");
         }
-        catch (Exception e) 
-        { 
+        catch (Exception e)
+        {
             // 如果解析失败，在控制台静默提示，绝不卡死
             Debug.LogWarning($"JSON 解析异常: {e.Message} | 数据: {jsonData}");
         }

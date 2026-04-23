@@ -53,35 +53,47 @@ public class RaycastSensor : MonoBehaviour
     /// <summary>
     /// 检测前方障碍物
     /// </summary>
-   void DetectFrontObstacle()
+  /// <summary>
+    /// 检测前方障碍物
+    /// </summary>
+    void DetectFrontObstacle()
     {
-        // 【修复1】将起点从车辆中心向前推 2.2 米(大约到车头保险杠的位置)，高度稍微抬高
-        Vector3 origin = transform.position + transform.forward * 2.2f + Vector3.up * 0.6f;  
+        // 【修复1：抬高雷达】将起点从 0.6f 抬高到 1.0f，大致在引擎盖的高度
+        Vector3 origin = transform.position + transform.forward * 2.2f + Vector3.up * 1.0f;  
         Vector3 direction = transform.forward;
 
         RaycastHit hit;
-        // 【修复2】使用 SphereCast (球形射线)，给雷达增加 1.0m 的“宽度”，防止漏掉前方的车辆
-        if (Physics.SphereCast(origin, 1.0f, direction, out hit, forwardDetectionRange))
+        
+        // 【修复2：缩小球体 & 启用层级过滤】
+        // 1. 半径从 1.0f 改为 0.4f（直径0.8米，完全足够覆盖车头，且不会扫到地）
+        // 2. 加上 detectionMask，如果是纯物理测试，默认传 ~0 (检测所有层)
+        int layerMask = detectionMask.value != 0 ? detectionMask.value : ~0;
+
+        if (Physics.SphereCast(origin, 0.4f, direction, out hit, forwardDetectionRange, layerMask))
         {
             // 【修复3】排除自己！确保射线碰到的不是自己的车壳或车轮
             if (hit.collider.transform.root != transform.root)
             {
-                frontObstacleDistance = hit.distance;
-                
-                if (showRays)
+                // 【终极防误触】：哪怕真的擦到了一点点地面，只要碰撞点的法线是朝上的(平地)，就忽略它！
+                if (Vector3.Dot(hit.normal, Vector3.up) > 0.8f) 
                 {
-                    // 绘制检测到的红线
-                    Debug.DrawLine(origin, hit.point, Color.red);
+                    frontObstacleDistance = -1f; // 忽略平坦的地面
                 }
-                return; // 成功检测到外部障碍物，直接结束
+                else
+                {
+                    frontObstacleDistance = hit.distance;
+                    if (showRays) Debug.DrawLine(origin, hit.point, Color.red);
+                    return; // 成功检测到真正的垂直障碍物，直接结束
+                }
             }
         }
         
-        // 没有碰到障碍物，或者只碰到了自己
+        // 没有碰到障碍物，或者只碰到了自己/地面
         frontObstacleDistance = -1f;
         
         if (showRays)
         {
+            // 在 Scene 窗口画出安全的绿色探测线
             Debug.DrawRay(origin, direction * forwardDetectionRange, Color.green);
         }
     }

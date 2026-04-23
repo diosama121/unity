@@ -9,7 +9,7 @@ public class SimpleAutoDrive : MonoBehaviour
     public PathPlanner pathPlanner;
 
     [Header("控制参数")]
-    public float targetSpeed = 8f;
+    public float targetSpeed = 15f;
     public float waypointReachThreshold = 5f;
     public float safeDistance = 8f;
     public int lookAheadStep = 1;
@@ -42,7 +42,7 @@ public class SimpleAutoDrive : MonoBehaviour
     private float reverseDuration = 1.5f;
 
     // 防卡死
-    private float stuckTimer = 0f;
+    private float stuckTimer = 0.3f;
     private Vector3 lastPosition = Vector3.zero;
     private float stuckCheckInterval = 0.5f;
     private float stuckCheckTimer = 0f;
