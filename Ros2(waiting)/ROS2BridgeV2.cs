@@ -98,40 +98,45 @@ public class ROS2BridgeV2 : MonoBehaviour
         connectThread.Start();
     }
 
-    void Update()
+  void Update()
     {
-        // 安全地从后台队列里取出 ROS2 指令并解析
+        // 1. 解析队列中的指令
         while (commandQueue.TryDequeue(out string jsonData))
         {
+            // 【侦察兵】直接在控制台打印收到的最原始字符串！看看到底长什么样！
+            Debug.Log($"📦 收到原始数据: {jsonData}");
             ProcessControlCommand(jsonData);
         }
 
-        // 如果没连上，直接退出 Update 的网络部分，让车子保持现有状态
         if (!isConnected) return;
 
-        // 定时发送数据到 ROS2
+        // 2. 定时发送状态
         if (Time.time - lastSendTime > 1f / sendRate)
         {
             SendVehicleState();
             lastSendTime = Time.time;
         }
 
-        // 应用 ROS 控制指令
-        if (useRosControl && carController != null)
+        // 3. 应用控制
+        if (useRosControl)
         {
-            if (autoDrive != null && autoDrive.enabled)
+            if (autoDrive != null && autoDrive.enabled) autoDrive.enabled = false; 
+
+            if (carController != null)
             {
-                autoDrive.enabled = false; 
-                Debug.Log("🤖 已将车辆控制权完全移交给 ROS2 网络！");
+                carController.autoMode = true; 
+                float maxSpd = carController.maxSpeed > 0 ? carController.maxSpeed : 20f;
+                float targetThrottle = Mathf.Clamp(rosLinearVelocity / maxSpd, -1f, 1f);
+                float targetSteering = Mathf.Clamp(-rosAngularVelocity / 1.5f, -1f, 1f);
+
+                // 正常下发给汽车底盘脚本
+                carController.SetAutoControl(targetThrottle, targetSteering);
             }
 
-            float targetThrottle = Mathf.Clamp(rosLinearVelocity / carController.maxSpeed, -1f, 1f);
-            float targetSteering = Mathf.Clamp(-rosAngularVelocity / 1.5f, -1f, 1f);
-
-            carController.SetAutoControl(targetThrottle, targetSteering);
+          
+            
         }
     }
-
    void SendVehicleState()
     {
         if (!isConnected || stream == null || !stream.CanWrite) return;
@@ -209,18 +214,29 @@ public class ROS2BridgeV2 : MonoBehaviour
         }
     }
 
-    void ProcessControlCommand(string jsonData)
+  void ProcessControlCommand(string jsonData)
     {
         try
         {
+            // 清除多余换行符，防止 JSON 解析器报错罢工
+            jsonData = jsonData.Trim(); 
+            
             ControlCommand cmd = JsonUtility.FromJson<ControlCommand>(jsonData);
-            rosLinearVelocity = cmd.linear_velocity;
-            rosAngularVelocity = cmd.angular_velocity;
-            if (cmd.enable_control) useRosControl = true;
+            if (cmd != null)
+            {
+                rosLinearVelocity = cmd.linear_velocity;
+                rosAngularVelocity = cmd.angular_velocity;
+                
+                // 霸道逻辑：无视其他状态，只要 ROS2 发来了数据，无脑强行接管方向盘！
+                useRosControl = true; 
+            }
         }
-        catch (Exception) { /* 忽略解析错误 */ }
+        catch (Exception e) 
+        { 
+            // 如果解析失败，在控制台静默提示，绝不卡死
+            Debug.LogWarning($"JSON 解析异常: {e.Message} | 数据: {jsonData}");
+        }
     }
-
     void OnApplicationQuit()
     {
         isConnected = false;
