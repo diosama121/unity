@@ -83,6 +83,7 @@ public class ProceduralRoadBuilder : MonoBehaviour
 
         // --- 主路面 ---
         GameObject roadObj = new GameObject("Road_Segment");
+        roadObj.layer = 2;
         roadObj.transform.SetParent(meshRoot.transform);
         roadObj.transform.position = center + Vector3.up * roadHeightOffset;
         roadObj.transform.rotation = Quaternion.LookRotation(dir);
@@ -126,6 +127,7 @@ public class ProceduralRoadBuilder : MonoBehaviour
     {
         float inset = roadWidth / 2f;
         GameObject intObj = new GameObject($"Intersection_{node.id}");
+       intObj.layer = 2;
         intObj.transform.SetParent(meshRoot.transform);
         intObj.transform.position = node.position + Vector3.up * (roadHeightOffset + 0.005f);
 
@@ -183,6 +185,7 @@ public class ProceduralRoadBuilder : MonoBehaviour
             float wallLength = gapDist;
 
             GameObject wall = new GameObject($"Intersection_Wall_{node.id}_{i}");
+           wall.layer = 2;
             wall.transform.SetParent(intObj.transform);
             // 挡墙位置：路口本地坐标，抬高半个sidewalkHeight
             wall.transform.position = intObj.transform.position + wallCenter + Vector3.up * (sidewalkHeight / 2f);
@@ -190,13 +193,9 @@ public class ProceduralRoadBuilder : MonoBehaviour
 
             var mf = wall.AddComponent<MeshFilter>();
             mf.mesh = BuildWallMesh(wallLength, sidewalkWidth * 0.5f, sidewalkHeight);
-            MeshCollider mc = intObj.AddComponent<MeshCollider>();
-mc.sharedMesh = roadMesh;
-mc.convex = true; // 设为凸包
-mc.isTrigger = true; // 关键：设为触发器，车轮不会再陷入其中
-            var bc = wall.AddComponent<BoxCollider>();
-            bc.size = new Vector3(sidewalkWidth * 0.5f, sidewalkHeight, wallLength);
-            bc.center = Vector3.zero;
+          var bc = wall.AddComponent<BoxCollider>();
+bc.size = new Vector3(sidewalkWidth * 0.5f, sidewalkHeight, wallLength);
+bc.center = Vector3.zero;
         }
     }
 
@@ -330,6 +329,7 @@ mc.isTrigger = true; // 关键：设为触发器，车轮不会再陷入其中
         Vector3 center = (start + end) / 2f;
 
         GameObject sw = new GameObject($"Sidewalk_{(isLeft ? "L" : "R")}");
+        sw.layer = 2;
         sw.transform.SetParent(parent);
 
         // 直接用世界坐标，避免受父物体旋转影响

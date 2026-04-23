@@ -64,7 +64,7 @@ public class RaycastSensor : MonoBehaviour
         float minDistance = forwardDetectionRange;
         bool hitSomething = false;
 
-        int layerMask = detectionMask.value != 0 ? detectionMask.value : ~0;
+       int layerMask = (detectionMask.value != 0 ? detectionMask.value : ~0) & ~(1 << 2);
 
         // ===== 主探测：SphereCast =====
         RaycastHit hit;
