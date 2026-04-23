@@ -288,42 +288,47 @@ public class SimpleAutoDrive : MonoBehaviour
     {
         if (path == null || currentWaypointIndex >= path.Count) return;
 
+        // ========== 新增：动态预瞄插值 (平滑过弯) ==========
         Vector3 targetWaypoint = path[currentWaypointIndex];
-        targetWaypoint.y = transform.position.y;
-
-        Vector3 localTarget = transform.InverseTransformPoint(targetWaypoint);
-        float angle = Mathf.Atan2(localTarget.x, localTarget.z) * Mathf.Rad2Deg;
-        float absAngle = Mathf.Abs(angle);
-        float steering = Mathf.Clamp(angle / 45f, -1f, 1f);
-
-        // 【优化】向心力补偿限速逻辑
-        float lookAheadAngle = absAngle;
         
-        // 只有当距离下一个路点小于 8 米时，才开始为下个弯道减速
-        if (distanceToNextWaypoint < 8f && currentWaypointIndex + lookAheadStep < path.Count)
+        // 如果距离当前节点小于 8 米，且存在下一个节点，提前把目光“拉”向下一个节点
+        if (distanceToNextWaypoint < 8f && currentWaypointIndex + 1 < path.Count)
         {
-            Vector3 currentDir = (targetWaypoint - transform.position).normalized;
-            Vector3 nextDir = (path[currentWaypointIndex + lookAheadStep] - targetWaypoint).normalized;
-            currentDir.y = 0; nextDir.y = 0;
-            
-            float curveAngle = Vector3.Angle(currentDir, nextDir);
-            
-            // 距离越近，弯道曲率的权重越大，实现平滑减速过渡
-            float weight = 1f - (distanceToNextWaypoint / 8f);
-            lookAheadAngle = Mathf.Max(absAngle, curveAngle * weight); 
+            Vector3 nextWaypoint = path[currentWaypointIndex + 1];
+            // 距离越近，视线越靠近下一个节点 (权重 t 从 0 平滑过渡到 1)
+            float lookAheadWeight = 1f - (distanceToNextWaypoint / 8f);
+            targetWaypoint = Vector3.Lerp(path[currentWaypointIndex], nextWaypoint, lookAheadWeight);
         }
 
-        // 放宽角度限制，防止在微小弯道（路点随机偏移）频繁急刹车
-        float speedFactor = 1f;
-        if (lookAheadAngle > 75f)      speedFactor = 0.3f;   // 急弯
-        else if (lookAheadAngle > 45f) speedFactor = 0.6f;   // 中弯
-        else if (lookAheadAngle > 20f) speedFactor = 0.9f;   // 微弯/修正
+        targetWaypoint.y = transform.position.y;
 
-        // 终点平滑刹车
+        // 坐标转换与转向计算
+        Vector3 localTarget = transform.InverseTransformPoint(targetWaypoint);
+        float angle = Mathf.Atan2(localTarget.x, localTarget.z) * Mathf.Rad2Deg;
+        
+        // 增加方向盘阻尼，防止高速猛打方向
+        float steering = Mathf.Clamp(angle / 30f, -1f, 1f); // 从45改为30，让转向稍微敏锐一点
+
+        // ========== 保留你原有的速度控制逻辑 ==========
+        float lookAheadAngle = Mathf.Abs(angle);
+        if (distanceToNextWaypoint < 8f && currentWaypointIndex + lookAheadStep < path.Count)
+        {
+            Vector3 currentDir = (path[currentWaypointIndex] - transform.position).normalized;
+            Vector3 nextDir = (path[currentWaypointIndex + lookAheadStep] - path[currentWaypointIndex]).normalized;
+            currentDir.y = 0; nextDir.y = 0;
+            float curveAngle = Vector3.Angle(currentDir, nextDir);
+            float weight = 1f - (distanceToNextWaypoint / 8f);
+            lookAheadAngle = Mathf.Max(Mathf.Abs(angle), curveAngle * weight); 
+        }
+
+        float speedFactor = 1f;
+        if (lookAheadAngle > 75f)      speedFactor = 0.3f;   
+        else if (lookAheadAngle > 45f) speedFactor = 0.6f;   
+        else if (lookAheadAngle > 20f) speedFactor = 0.9f;   
+
         if (currentWaypointIndex == path.Count - 1 && distanceToNextWaypoint < 15f)
             speedFactor *= Mathf.Max(distanceToNextWaypoint / 15f, 0.15f);
 
-        // 输出油门和转向
         float throttle = (targetSpeed * speedFactor) / carController.maxSpeed;
         carController.SetAutoControl(throttle, steering);
     }

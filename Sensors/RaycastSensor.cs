@@ -11,13 +11,13 @@ public class RaycastSensor : MonoBehaviour
     [Header("传感器配置")]
     [Tooltip("前方检测距离 (米)")]
     public float forwardDetectionRange = 30f;
-    
+
     [Tooltip("侧向检测距离 (米)")]
     public float sideDetectionRange = 10f;
-    
+
     [Tooltip("多射线传感器：射线数量")]
     public int rayCount = 7;
-    
+
     [Tooltip("多射线传感器：扫描角度范围")]
     public float scanAngle = 120f;
 
@@ -30,6 +30,7 @@ public class RaycastSensor : MonoBehaviour
     public float leftObstacleDistance = -1f;
     public float rightObstacleDistance = -1f;
     public LayerMask detectionMask;
+
     // 多射线检测结果
     public List<RayHitInfo> rayHits = new List<RayHitInfo>();
 
@@ -53,57 +54,93 @@ public class RaycastSensor : MonoBehaviour
     /// <summary>
     /// 检测前方障碍物
     /// </summary>
-  /// <summary>
-    /// 检测前方障碍物
-    /// </summary>
     void DetectFrontObstacle()
     {
-        // 【修复1：抬高雷达】将起点从 0.6f 抬高到 1.0f，大致在引擎盖的高度
-        Vector3 origin = transform.position + transform.forward * 2.2f + Vector3.up * 1.0f;  
-        Vector3 direction = transform.forward;
+        frontObstacleDistance = -1f;
 
-        RaycastHit hit;
-        
-        // 【修复2：缩小球体 & 启用层级过滤】
-        // 1. 半径从 1.0f 改为 0.4f（直径0.8米，完全足够覆盖车头，且不会扫到地）
-        // 2. 加上 detectionMask，如果是纯物理测试，默认传 ~0 (检测所有层)
+        Vector3 origin = transform.position + transform.forward * 2.2f + Vector3.up * 1.0f;
+        Vector3 forward = transform.forward;
+
+        float minDistance = forwardDetectionRange;
+        bool hitSomething = false;
+
         int layerMask = detectionMask.value != 0 ? detectionMask.value : ~0;
 
-        if (Physics.SphereCast(origin, 0.4f, direction, out hit, forwardDetectionRange, layerMask))
+        // ===== 主探测：SphereCast =====
+        RaycastHit hit;
+        if (Physics.SphereCast(origin, 0.4f, forward, out hit, forwardDetectionRange, layerMask))
         {
-            // 【修复3】排除自己！确保射线碰到的不是自己的车壳或车轮
             if (hit.collider.transform.root != transform.root)
             {
-                // 【终极防误触】：哪怕真的擦到了一点点地面，只要碰撞点的法线是朝上的(平地)，就忽略它！
-                if (Vector3.Dot(hit.normal, Vector3.up) > 0.8f) 
+                if (Vector3.Dot(hit.normal, Vector3.up) <= 0.5f)
                 {
-                    frontObstacleDistance = -1f; // 忽略平坦的地面
-                }
-                else
-                {
-                    frontObstacleDistance = hit.distance;
-                    if (showRays) Debug.DrawLine(origin, hit.point, Color.red);
-                    return; // 成功检测到真正的垂直障碍物，直接结束
+                    hitSomething = true;
+                    minDistance = hit.distance;
+                    if (showRays)
+                        Debug.DrawLine(origin, hit.point, Color.red);
                 }
             }
         }
-        
-        // 没有碰到障碍物，或者只碰到了自己/地面
-        frontObstacleDistance = -1f;
-        
-        if (showRays)
+
+        // ===== 辅助探测：扇形 Raycast（含抬高高度的射线）=====
+        int rayCountLocal = 3;
+        float rayAngle = 25f;
+
+        for (int i = 0; i < rayCountLocal; i++)
         {
-            // 在 Scene 窗口画出安全的绿色探测线
-            Debug.DrawRay(origin, direction * forwardDetectionRange, Color.green);
+            float angle = -rayAngle / 2f + (rayAngle / (rayCountLocal - 1)) * i;
+            Vector3 dir = Quaternion.Euler(0, angle, 0) * forward;
+
+            // 标准高度射线
+            if (Physics.Raycast(origin, dir, out hit, forwardDetectionRange, layerMask))
+            {
+                if (hit.collider.transform.root == transform.root)
+                    continue;
+                if (Vector3.Dot(hit.normal, Vector3.up) > 0.5f)
+                    continue;
+
+                hitSomething = true;
+                if (hit.distance < minDistance)
+                    minDistance = hit.distance;
+                if (showRays)
+                    Debug.DrawLine(origin, hit.point, Color.yellow);
+            }
+            else
+            {
+                if (showRays)
+                    Debug.DrawRay(origin, dir * forwardDetectionRange, Color.green);
+            }
+
+            // 抬高高度的射线（避免坡道遮挡障碍物）
+            Vector3 highOrigin = origin + Vector3.up * 0.5f;
+            if (Physics.Raycast(highOrigin, dir, out hit, forwardDetectionRange, layerMask))
+            {
+                if (hit.collider.transform.root == transform.root)
+                    continue;
+                if (Vector3.Dot(hit.normal, Vector3.up) > 0.5f)
+                    continue;
+
+                hitSomething = true;
+                if (hit.distance < minDistance)
+                    minDistance = hit.distance;
+                if (showRays)
+                    Debug.DrawLine(highOrigin, hit.point, Color.cyan);
+            }
+        }
+
+        if (hitSomething)
+        {
+            frontObstacleDistance = minDistance;
         }
     }
+
     /// <summary>
     /// 检测侧向障碍物
     /// </summary>
     void DetectSideObstacles()
     {
         Vector3 origin = transform.position + Vector3.up * 0.5f;
-        
+
         // 左侧
         Vector3 leftDirection = -transform.right;
         RaycastHit leftHit;
@@ -139,7 +176,7 @@ public class RaycastSensor : MonoBehaviour
     void PerformMultiRayScan()
     {
         rayHits.Clear();
-        
+
         Vector3 origin = transform.position + Vector3.up * 0.5f;
         float angleStep = scanAngle / (rayCount - 1);
         float startAngle = -scanAngle / 2f;
@@ -206,38 +243,40 @@ public class RaycastSensor : MonoBehaviour
         return rayHits;
     }
 
-
-   public bool DetectTrafficLight(out string lightState, float maxDistance = 20f)
-{
-    lightState = "None";
-    Vector3 origin = transform.position + Vector3.up * 1f;
-
-    // 扇形5条射线，覆盖前方左右各30度
-    float[] angles = { -30f, -15f, 0f, 15f, 30f };
-
-    foreach (float angle in angles)
+    /// <summary>
+    /// 检测前方交通灯状态
+    /// </summary>
+    public bool DetectTrafficLight(out string lightState, float maxDistance = 20f)
     {
-        Vector3 dir = Quaternion.Euler(0, angle, 0) * transform.forward;
-        RaycastHit hit;
+        lightState = "None";
+        Vector3 origin = transform.position + Vector3.up * 1f;
 
-        if (showRays)
-            Debug.DrawRay(origin, dir * maxDistance, Color.magenta);
+        // 扇形5条射线，覆盖前方左右各30度
+        float[] angles = { -30f, -15f, 0f, 15f, 30f };
 
-        if (Physics.Raycast(origin, dir, out hit, maxDistance))
+        foreach (float angle in angles)
         {
-            // 先检查自身及父物体
-            var trafficLight = hit.collider.GetComponent<TrafficLightController>();
-            if (trafficLight == null)
-                trafficLight = hit.collider.GetComponentInParent<TrafficLightController>();
+            Vector3 dir = Quaternion.Euler(0, angle, 0) * transform.forward;
+            RaycastHit hit;
 
-            if (trafficLight != null)
+            if (showRays)
+                Debug.DrawRay(origin, dir * maxDistance, Color.magenta);
+
+            if (Physics.Raycast(origin, dir, out hit, maxDistance))
             {
-                lightState = trafficLight.GetCurrentState();
-                return true;
+                // 先检查自身及父物体
+                var trafficLight = hit.collider.GetComponent<TrafficLightController>();
+                if (trafficLight == null)
+                    trafficLight = hit.collider.GetComponentInParent<TrafficLightController>();
+
+                if (trafficLight != null)
+                {
+                    lightState = trafficLight.GetCurrentState();
+                    return true;
+                }
             }
         }
-    }
 
-    return false;
-}
+        return false;
+    }
 }

@@ -7,7 +7,7 @@ using UnityEngine;
 public class SimpleCarController : MonoBehaviour
 {
     [Header("车辆参数")]
-    public float maxSpeed = 25f;
+    public float maxSpeed = 30f;
     public float acceleration = 4f;
     public float brakeDeceleration = 10f;
     public float steeringSpeed = 80f;
