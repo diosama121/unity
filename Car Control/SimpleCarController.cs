@@ -23,9 +23,7 @@ public class SimpleCarController : MonoBehaviour
 
     [Header("物理环境")]
     public float slipFactor = 0.5f;
-    [Header("🛡️ 主动安全系统 (AEB)")]
-    public bool enableAEB = true;
-    public float emergencyBrakeDistance = 2.5f;
+   
     private RaycastSensor sensor;
     // 内部变量
     private Rigidbody rb;
@@ -57,67 +55,70 @@ public class SimpleCarController : MonoBehaviour
         rb.drag = 0.5f;
         rb.angularDrag = 3f;
         rb.interpolation = RigidbodyInterpolation.Interpolate;
-        rb.constraints = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
 
-        
+        // 🚨【核心修改】：在乡村模式下，必须允许 X 和 Z 轴旋转，车才能爬坡
+        // 将原本的 RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ 改为 None
+rb.constraints = RigidbodyConstraints.None;
+// 用大阻尼防翻车代替约束
+rb.angularDrag = 8f;
+
         sensor = GetComponent<RaycastSensor>();
-        
+
         this.enabled = true;
     }
 
-  void Update()
+    void Update()
     {
         // 1. 获取驾驶意图 (WASD 或 ROS2/AI)
-        if (autoMode) HandleAutoDrive();
-        else HandleManualControl();
+      currentSpeed = Vector3.Dot(rb.velocity, transform.forward);
+    
+    if (autoMode) HandleAutoDrive();
+    else HandleManualControl();
 
-        // 🌟 2. 核心：全局 AEB 墙体防御 🌟
-        // 无论上面获取到的 targetSpeed 有多快，只要要撞墙了，一票否决！
-        if (enableAEB && sensor != null)
-        {
-            float dist = sensor.GetFrontDistance();
-            
-            // 只要扫到障碍物（dist>0），且进入危险距离，且车子正打算往前开（targetSpeed > 0.1f）
-            if (dist > 0 && dist < emergencyBrakeDistance && targetSpeed > 0.1f)
-            {
-                targetSpeed = 0f;    // 抹杀目标动力
-                currentSpeed = 0f;   // 抹杀当前动力
-                
-                // 物理引擎直接定死（保留Y轴重力防止悬空，彻底清零X和Z轴前进动力）
-                if (rb != null)
-                {
-                    rb.velocity = new Vector3(0, rb.velocity.y, 0);
-                }
-                
-                Debug.LogWarning($"🛑 AEB 触发！距离障碍物 {dist:F1}m，物理动力已切断！");
-            }
-        }
+    
 
         // 3. 更新面板显示
         currentSpeed = Vector3.Dot(rb.velocity, transform.forward);
         currentSteeringAngle = targetSteering;
     }
 
-    void FixedUpdate()
+ void FixedUpdate()
+{
+    if (rb == null) return;
+
+    currentSpeed = Mathf.Lerp(currentSpeed, targetSpeed, Time.fixedDeltaTime * 3f);
+
+    RaycastHit hit;
+    bool isGrounded = Physics.Raycast(
+        transform.position + Vector3.up * 0.3f,
+        Vector3.down, out hit, 2.0f
+    );
+
+    if (isGrounded)
     {
-        if (rb == null) return;
-
-        // 1. 平滑过渡到目标速度
-        currentSpeed = Mathf.Lerp(currentSpeed, targetSpeed, Time.fixedDeltaTime * 3f);
-
-        // 2. 赋予刚体速度 (严格保留Y轴重力)
-        Vector3 newVelocity = transform.forward * currentSpeed;
-        newVelocity.y = rb.velocity.y;
-        rb.velocity = newVelocity;
-
-        // 3. 转向逻辑
-        ApplySteering();
-
-        // 4. 防侧滑
-        Vector3 localVel = transform.InverseTransformDirection(rb.velocity);
-        localVel.x *= slipFactor;
-        rb.velocity = transform.TransformDirection(localVel);
+        Quaternion slopeRot = Quaternion.LookRotation(
+            Vector3.ProjectOnPlane(transform.forward, hit.normal).normalized,
+            hit.normal
+        );
+        rb.MoveRotation(Quaternion.Slerp(rb.rotation, slopeRot, Time.fixedDeltaTime * 8f));
     }
+
+    // ✅ 转向先做，rotation 到位之后再算速度方向
+    ApplySteering();
+
+    // ✅ 用最新的 transform.forward 算速度，不会有一帧误差
+    Vector3 moveDir = isGrounded
+        ? Vector3.ProjectOnPlane(transform.forward, hit.normal).normalized
+        : transform.forward;
+
+    Vector3 newVelocity = moveDir * currentSpeed;
+    if (!isGrounded) newVelocity.y = rb.velocity.y;
+
+    // ✅ 防侧滑在赋速度之前做，不要赋完再改
+    Vector3 localVel = transform.InverseTransformDirection(newVelocity);
+    localVel.x *= slipFactor;
+    rb.velocity = transform.TransformDirection(localVel);
+}
 
     void HandleManualControl()
     {

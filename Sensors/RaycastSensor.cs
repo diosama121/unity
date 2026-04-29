@@ -54,86 +54,71 @@ public class RaycastSensor : MonoBehaviour
     /// <summary>
     /// 检测前方障碍物
     /// </summary>
-    void DetectFrontObstacle()
+  void DetectFrontObstacle()
+{
+    frontObstacleDistance = -1f;
+
+    Vector3 origin = transform.position + transform.forward * 2.2f + Vector3.up * 1.0f;
+    Vector3 forward = transform.forward;
+
+    float minDistance = forwardDetectionRange;
+    bool hitSomething = false;
+
+    int layerMask = (detectionMask.value != 0 ? detectionMask.value : ~0) & ~(1 << 2);
+
+    RaycastHit hit;
+
+    // ===== 扇形 Raycast 探测 =====
+    int rayCountLocal = 3;
+    float rayAngle = 15f;
+
+    for (int i = 0; i < rayCountLocal; i++)
     {
-        frontObstacleDistance = -1f;
+        float angle = -rayAngle / 2f + (rayAngle / (rayCountLocal - 1)) * i;
+        Vector3 dir = Quaternion.Euler(0, angle, 0) * forward;
 
-        Vector3 origin = transform.position + transform.forward * 2.2f + Vector3.up * 1.0f;
-        Vector3 forward = transform.forward;
-
-        float minDistance = forwardDetectionRange;
-        bool hitSomething = false;
-
-       int layerMask = (detectionMask.value != 0 ? detectionMask.value : ~0) & ~(1 << 2);
-
-        // ===== 主探测：SphereCast =====
-        RaycastHit hit;
-        if (Physics.SphereCast(origin, 0.4f, forward, out hit, forwardDetectionRange, layerMask))
+        // 标准高度射线
+        if (Physics.Raycast(origin, dir, out hit, forwardDetectionRange, layerMask))
         {
-            if (hit.collider.transform.root != transform.root)
-            {
-                if (Vector3.Dot(hit.normal, Vector3.up) <= 0.5f)
-                {
-                    hitSomething = true;
-                    minDistance = hit.distance;
-                    if (showRays)
-                        Debug.DrawLine(origin, hit.point, Color.red);
-                }
-            }
+            if (hit.collider.transform.root == transform.root)
+                continue;
+            if (Vector3.Dot(hit.normal, Vector3.up) > 0.7f)
+                continue;
+
+            hitSomething = true;
+            if (hit.distance < minDistance)
+                minDistance = hit.distance;
+            if (showRays)
+                Debug.DrawLine(origin, hit.point, Color.yellow);
+        }
+        else
+        {
+            if (showRays)
+                Debug.DrawRay(origin, dir * forwardDetectionRange, Color.green);
         }
 
-        // ===== 辅助探测：扇形 Raycast（含抬高高度的射线）=====
-        int rayCountLocal = 3;
-        float rayAngle = 25f;
-
-        for (int i = 0; i < rayCountLocal; i++)
+        // 抬高射线（避免坡道遮挡障碍物）
+        Vector3 highOrigin = origin + Vector3.up * 0.5f;
+        if (Physics.Raycast(highOrigin, dir, out hit, forwardDetectionRange, layerMask))
         {
-            float angle = -rayAngle / 2f + (rayAngle / (rayCountLocal - 1)) * i;
-            Vector3 dir = Quaternion.Euler(0, angle, 0) * forward;
+            if (hit.collider.transform.root == transform.root)
+                continue;
+            if (Vector3.Dot(hit.normal, Vector3.up) > 0.7f)
+                continue;
 
-            // 标准高度射线
-            if (Physics.Raycast(origin, dir, out hit, forwardDetectionRange, layerMask))
-            {
-                if (hit.collider.transform.root == transform.root)
-                    continue;
-                if (Vector3.Dot(hit.normal, Vector3.up) > 0.5f)
-                    continue;
-
-                hitSomething = true;
-                if (hit.distance < minDistance)
-                    minDistance = hit.distance;
-                if (showRays)
-                    Debug.DrawLine(origin, hit.point, Color.yellow);
-            }
-            else
-            {
-                if (showRays)
-                    Debug.DrawRay(origin, dir * forwardDetectionRange, Color.green);
-            }
-
-            // 抬高高度的射线（避免坡道遮挡障碍物）
-            Vector3 highOrigin = origin + Vector3.up * 0.5f;
-            if (Physics.Raycast(highOrigin, dir, out hit, forwardDetectionRange, layerMask))
-            {
-                if (hit.collider.transform.root == transform.root)
-                    continue;
-                if (Vector3.Dot(hit.normal, Vector3.up) > 0.5f)
-                    continue;
-
-                hitSomething = true;
-                if (hit.distance < minDistance)
-                    minDistance = hit.distance;
-                if (showRays)
-                    Debug.DrawLine(highOrigin, hit.point, Color.cyan);
-            }
-        }
-
-        if (hitSomething)
-        {
-            frontObstacleDistance = minDistance;
+            hitSomething = true;
+            if (hit.distance < minDistance)
+                minDistance = hit.distance;
+            if (showRays)
+                Debug.DrawLine(highOrigin, hit.point, Color.cyan);
         }
     }
 
+    if (hitSomething)
+    {
+        frontObstacleDistance = minDistance;
+    }
+}
     /// <summary>
     /// 检测侧向障碍物
     /// </summary>

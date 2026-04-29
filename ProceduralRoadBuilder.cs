@@ -122,14 +122,15 @@ public class ProceduralRoadBuilder : MonoBehaviour
 
     // ==========================================
     // 模块二：带有高度自适应的完美端点缝合路口
+
     // ==========================================
     void BuildPerfectIntersection(RoadNetworkGenerator.WaypointNode node)
     {
         float inset = roadWidth / 2f;
         GameObject intObj = new GameObject($"Intersection_{node.id}");
-       intObj.layer = 2;
+        intObj.layer = 2;
         intObj.transform.SetParent(meshRoot.transform);
-        intObj.transform.position = node.position + Vector3.up * (roadHeightOffset + 0.005f);
+        intObj.transform.position = node.position + Vector3.up * (roadHeightOffset);
 
         // 1. 收集方向并排序
         List<Vector3> dirs = new List<Vector3>();
@@ -143,25 +144,36 @@ public class ProceduralRoadBuilder : MonoBehaviour
 
         // 2. 路面顶点（保持不变）
         List<Vector3> roadVerts = new List<Vector3>();
-        roadVerts.Add(Vector3.zero);
+
+        // 先收集所有边缘顶点，计算平均高度作为中心点高度
+        List<Vector3> edgeVerts = new List<Vector3>();
         foreach (var dir in dirs)
         {
             Vector3 right = Vector3.Cross(Vector3.up, dir).normalized;
             float slopeY = GetSlopeY(node, dir, inset);
-            roadVerts.Add(dir * inset - right * (roadWidth / 2f) + Vector3.up * slopeY);
-            roadVerts.Add(dir * inset + right * (roadWidth / 2f) + Vector3.up * slopeY);
+            edgeVerts.Add(dir * inset - right * (roadWidth / 2f) + Vector3.up * slopeY);
+            edgeVerts.Add(dir * inset + right * (roadWidth / 2f) + Vector3.up * slopeY);
         }
+
+        // 中心点高度 = 所有边缘顶点高度均值，消除尖锐折角
+        float centerY = 0f;
+        foreach (var v in edgeVerts) centerY += v.y;
+        centerY /= edgeVerts.Count;
+
+        roadVerts.Add(new Vector3(0, centerY, 0));
+        foreach (var v in edgeVerts) roadVerts.Add(v);
         Mesh roadMesh = CreateFanMesh(roadVerts);
         intObj.AddComponent<MeshFilter>().mesh = roadMesh;
         intObj.AddComponent<MeshRenderer>().material = roadMaterial;
-        intObj.AddComponent<MeshCollider>().sharedMesh = roadMesh;
+
+
+        BuildIntersectionColliders(intObj, node, dirs, inset);
 
         // 3. 人行道：只在相邻两条路之间的"缺口"处生成挡墙
         if (!generateSidewalk) return;
 
         for (int i = 0; i < dirs.Count; i++)
         {
-            // 当前方向的右侧边缘点，和下一个方向的左侧边缘点之间就是缺口
             Vector3 dirA = dirs[i];
             Vector3 dirB = dirs[(i + 1) % dirs.Count];
 
@@ -175,9 +187,12 @@ public class ProceduralRoadBuilder : MonoBehaviour
             Vector3 cornerA = dirA * inset + rightA * (roadWidth / 2f) + Vector3.up * slopeA;
             Vector3 cornerB = dirB * inset - rightB * (roadWidth / 2f) + Vector3.up * slopeB;
 
-            // 缺口宽度，太大说明是真实缺口，太小说明两条路紧贴（不需要挡墙）
             float gapDist = Vector3.Distance(cornerA, cornerB);
-            if (gapDist < 1.5f) continue;
+
+            // 🚨【核心修复 2：解决人行道缺失】🚨
+            // 原本阈值是 1.5f，导致十字路口稍微有些锐角/斜交，护栏就被判定为“不需要生成”而跳过。
+            // 将阈值缩小到 0.5f
+            if (gapDist < 0.3f) continue;
 
             // 在缺口处生成一段挡墙
             Vector3 wallCenter = (cornerA + cornerB) / 2f;
@@ -185,17 +200,22 @@ public class ProceduralRoadBuilder : MonoBehaviour
             float wallLength = gapDist;
 
             GameObject wall = new GameObject($"Intersection_Wall_{node.id}_{i}");
-           wall.layer = 2;
+
+            // 🚨【核心修复 3：解决传感器误判】🚨
+            wall.layer = 2; // 强制设为 Ignore Raycast 层，保证不挡住主车的射线雷达
+
             wall.transform.SetParent(intObj.transform);
-            // 挡墙位置：路口本地坐标，抬高半个sidewalkHeight
             wall.transform.position = intObj.transform.position + wallCenter + Vector3.up * (sidewalkHeight / 2f);
             wall.transform.rotation = Quaternion.LookRotation(wallDir);
 
             var mf = wall.AddComponent<MeshFilter>();
             mf.mesh = BuildWallMesh(wallLength, sidewalkWidth * 0.5f, sidewalkHeight);
-          var bc = wall.AddComponent<BoxCollider>();
-bc.size = new Vector3(sidewalkWidth * 0.5f, sidewalkHeight, wallLength);
-bc.center = Vector3.zero;
+
+            // 🚨【核心修复 4：解决挡墙入侵车道导致的隐形空气墙】🚨
+            // 原代码给护栏加了一个厚实的 BoxCollider。一旦车辆切弯压线，就会撞上空气墙停下。
+            // 解决方案：直接不给路口护栏加物理 Collider，仅作为视觉挡墙，依靠雷达避障即可。
+            // 注释掉下面这两行：
+            // var bc = wall.AddComponent<BoxCollider>();
         }
     }
 
@@ -320,27 +340,42 @@ bc.center = Vector3.zero;
     // ==========================================
     // 底层网格工具函数
     // ==========================================
-    void CreateSidewalkWithCollider(Vector3 start, Vector3 end, Transform parent, bool isLeft)
-    {
-        Vector3 dir = (end - start).normalized;
-        Vector3 right = Vector3.Cross(Vector3.up, dir);
-        float sideOffset = (roadWidth / 2f + sidewalkWidth / 2f) * (isLeft ? -1f : 1f);
-        float length = Vector3.Distance(start, end);
-        Vector3 center = (start + end) / 2f;
+   void CreateSidewalkWithCollider(Vector3 start, Vector3 end, Transform parent, bool isLeft)
+{
+    Vector3 dir = (end - start).normalized;
+    Vector3 right = Vector3.Cross(Vector3.up, dir);
+    float sideSign = isLeft ? -1f : 1f;
+    
+    // ✅ 全部基于 roadWidth 动态计算，不写死任何数值
+    float sideOffset = (roadWidth / 2f + sidewalkWidth / 2f) * sideSign;
+    float length = Vector3.Distance(start, end);
 
-        GameObject sw = new GameObject($"Sidewalk_{(isLeft ? "L" : "R")}");
-        sw.layer = 2;
-        sw.transform.SetParent(parent);
+    Vector3 swStart = start + right * sideOffset;
+    Vector3 swEnd   = end   + right * sideOffset;
+    Vector3 swCenter = (swStart + swEnd) / 2f;
 
-        // 直接用世界坐标，避免受父物体旋转影响
-        sw.transform.position = center + right * sideOffset + Vector3.up * (roadHeightOffset + sidewalkHeight);
-        sw.transform.rotation = Quaternion.LookRotation(dir); // 和路段朝向一致
+    GameObject sw = new GameObject($"Sidewalk_{(isLeft ? "L" : "R")}");
+    sw.layer = 2;
+    sw.transform.SetParent(parent);
+    sw.transform.position = swCenter + Vector3.up * (roadHeightOffset + sidewalkHeight);
+    sw.transform.rotation = Quaternion.LookRotation(dir);
 
-        MeshFilter mf = sw.AddComponent<MeshFilter>();
-        mf.mesh = BuildTiledQuadMesh(length, sidewalkWidth);
-        sw.AddComponent<MeshRenderer>().material = sidewalkMaterial;
-        sw.AddComponent<MeshCollider>().sharedMesh = mf.mesh;
-    }
+    MeshFilter mf = sw.AddComponent<MeshFilter>();
+    mf.mesh = BuildTiledQuadMesh(length, sidewalkWidth);
+    sw.AddComponent<MeshRenderer>().material = sidewalkMaterial;
+
+    GameObject barrier = new GameObject("Barrier");
+    barrier.layer = 0;
+    barrier.transform.SetParent(sw.transform);
+    barrier.transform.localPosition = Vector3.zero;
+    barrier.transform.localRotation = Quaternion.identity;
+
+    BoxCollider bc = barrier.AddComponent<BoxCollider>();
+    // ✅ 宽度和位置全部跟着 roadWidth/sidewalkWidth 动态算
+    bc.size   = new Vector3(sidewalkWidth * 0.8f, sidewalkHeight * 2f, length);
+    // ✅ 向外偏移半个 sidewalkWidth，确保不压进车道
+    bc.center = new Vector3(sidewalkWidth * 0.1f * sideSign, 0f, 0f);
+}
 
     Mesh CreateFanMesh(List<Vector3> verts)
     {
@@ -389,9 +424,54 @@ bc.center = Vector3.zero;
 
     public void ClearRoads()
     {
-        foreach (var obj in generatedObjects) if (obj != null) DestroyImmediate(obj);
-        generatedObjects.Clear();
-    }
+       foreach (var obj in generatedObjects)
+        if (obj != null) DestroyImmediate(obj);
+    generatedObjects.Clear();
 
+    // ✅ 再按名字兜底清除，防止残留
+    var leftover = GameObject.Find("Procedural_Road_System");
+    if (leftover != null) DestroyImmediate(leftover);
+    }
+    void BuildIntersectionColliders(GameObject parent, RoadNetworkGenerator.WaypointNode node, List<Vector3> dirs, float inset)
+{
+    int gridRes = 6;
+    float halfSize = roadWidth;
+
+    for (int xi = 0; xi < gridRes; xi++)
+    {
+        for (int zi = 0; zi < gridRes; zi++)
+        {
+            float x = Mathf.Lerp(-halfSize, halfSize, (xi + 0.5f) / gridRes);
+            float z = Mathf.Lerp(-halfSize, halfSize, (zi + 0.5f) / gridRes);
+
+            // 用距离权重插值计算该格子的高度
+            float slopeY = 0f;
+            float totalWeight = 0f;
+            foreach (var dir in dirs)
+            {
+                float sy = GetSlopeY(node, dir, inset);
+                float dist = Vector3.Distance(
+                    new Vector3(x, 0, z),
+                    new Vector3(dir.x * inset, 0, dir.z * inset)
+                );
+                float w = 1f / (dist + 0.1f);
+                slopeY += sy * w;
+                totalWeight += w;
+            }
+            float localY = slopeY / totalWeight;
+
+            GameObject cell = new GameObject($"IntCell_{xi}_{zi}");
+            cell.layer = 0;
+            cell.transform.SetParent(parent.transform);
+            float cellSize = halfSize * 2f / gridRes;
+            cell.transform.localPosition = new Vector3(x, localY, z);
+
+            BoxCollider bc = cell.AddComponent<BoxCollider>();
+            bc.size = new Vector3(cellSize*1.1f, 0.3f, cellSize*1.1f);
+          bc.center = new Vector3(0, -0.15f, 0); // 向下偏移，保证表面贴合
+            bc.center = Vector3.zero;
+        }
+    }
+}
     void Start() { roadGen = GetComponent<RoadNetworkGenerator>(); }
 }
