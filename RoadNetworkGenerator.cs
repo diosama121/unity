@@ -15,6 +15,7 @@ public float cellSize = 80f;
 [Header("=== 随机偏移 ===")]
 public float randomOffset = 5f;
 public int seed = 42;
+public float countrysideHeightScale = 5f;  
 
 [Range(0f, 0.4f)]
 public float connectionRemoveRate = 0.1f;
@@ -160,7 +161,7 @@ float bz = z * cellSize;
 float elevation = 0f;
 if (isCountryside)
 {
-elevation = Mathf.PerlinNoise(bx * 0.05f, bz * 0.05f) * 5f;
+elevation = Mathf.PerlinNoise(bx * 0.05f, bz * 0.05f) * countrysideHeightScale;
 }
 
 float ox = 0f, oz = 0f;
