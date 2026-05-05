@@ -46,6 +46,14 @@ public class ProceduralRoadBuilder : MonoBehaviour
     public Material terrainBaseMaterial;
     public float terrainBaseHeightOffset = -0.1f;
 
+    [Header("=== 城镇模式参数 ===")]
+    public bool generateCity = true;                // 是否生成城市建筑与人行道
+    public float buildingHeight = 10f;             // 建筑拉伸高度
+    public Material buildingMaterial;              // 建筑材质
+    public float sidewalkWidth = 2f;               // 人行道宽度
+    public Material sidewalkMaterial;              // 人行道材质
+    public float sidewalkHeight = 0.2f;            // 人行道台阶高度
+
     [Header("=== 调试可视化 ===")]
     public bool showSplineGizmos = false;
 
@@ -55,6 +63,20 @@ public class ProceduralRoadBuilder : MonoBehaviour
     private float[] nodeUnifiedHeight;
 
     private enum RoadDirection { Horizontal, Vertical, Diagonal }
+
+    // ================================================================
+    // 统一高度获取（V2.0 架构：优先 TerrainGridSystem）
+    // ================================================================
+    private float GetHeightAt(float worldX, float worldZ)
+    {
+        if (TerrainGridSystem.Instance != null)
+            return TerrainGridSystem.Instance.GetHeightAt(worldX, worldZ);
+        // 降级到旧逻辑（兼容无 TerrainGridSystem 的情况）
+        Terrain terrain = Terrain.activeTerrain;
+        if (terrain != null)
+            return terrain.SampleHeight(new Vector3(worldX, 0f, worldZ));
+        return 0f;
+    }
 
     public void BuildRoads()
     {
@@ -100,9 +122,7 @@ public class ProceduralRoadBuilder : MonoBehaviour
             Vector3 posB = GetUnifiedNodePosition(idB);
             if (Vector3.Distance(posA, posB) < 0.5f) continue;
 
-            // 方向规范化：确保 (posA, posB) 的 UV 方向稳定（避免镜像）
             (posA, posB) = NormalizeEdgeDirection(posA, posB);
-
             Spline spline = BuildSimpleSpline(posA, posB);
             if (spline == null) continue;
             List<Vector3> centerLine = SampleSpline(spline, meshResolution);
@@ -135,7 +155,7 @@ public class ProceduralRoadBuilder : MonoBehaviour
             return;
         }
 
-        // ── 2. 构建 JunctionInfo 列表（保留原始多边形） ──
+        // ── 2. 构建 JunctionInfo 列表 ──
         List<RoadUVProjector.JunctionInfo> junctionInfos = new List<RoadUVProjector.JunctionInfo>();
         List<Vector3[]> junctionPolysForUnion = new List<Vector3[]>();
 
@@ -162,9 +182,7 @@ public class ProceduralRoadBuilder : MonoBehaviour
             foreach (var v in verts) center += v;
             center /= verts.Length;
 
-            // 主方向计算前先对邻居按极角排序，消除顺序依赖
             float mainAngle = RoadUVProjector.ComputeJunctionMainAngle(nodePos, neighborPositions);
-
             junctionInfos.Add(new RoadUVProjector.JunctionInfo
             {
                 poly = verts,
@@ -186,41 +204,30 @@ public class ProceduralRoadBuilder : MonoBehaviour
             return;
         }
 
-        // ── 4. 一体化网格生成（含精确分类） ──
+        // ── 4. 一体化道路网格生成（含精确分类） ──
         Mesh roadMesh = BuildUnifiedMesh(finalRoadUnion, edgeInfos, junctionInfos);
         if (roadMesh == null) return;
 
         Material[] materials = BuildMaterialArray(fallbackMat);
         CreateRoadObject("Road_Union_Mesh", roadMesh, materials, roadLayer, meshRoot.transform);
-        Debug.Log($"[ProceduralRoadBuilder] ✅ 道路网格生成完成（顶点 {roadMesh.vertexCount}，三角形 {roadMesh.triangles.Length / 3}）");
+        Debug.Log($"[ProceduralRoadBuilder] ✅ 道路网格生成完成（顶点 {roadMesh.vertexCount}）");
 
+        // ── 5. 生成地表（带道路洞） ──
         if (generateTerrainBase)
-        {
-            // 打印 finalRoadUnion 层级信息
-            for (int i = 0; i < finalRoadUnion.Count; i++)
-            {
-                double area = Clipper.Area(finalRoadUnion[i]);
-                Debug.Log($"[RoadHole] 路径{i} 顶点数:{finalRoadUnion[i].Count} 面积:{area / 1e6:F2}m² 方向:{(area > 0 ? "正(外轮廓)" : "负(洞/岛)")}");
-            }
             GenerateTerrainBase(finalRoadUnion);
-        }
-    }
-    /// <summary>
-    /// 统一道路方向：确保 UV 起始方向一致，消除镜像。
-    /// 规则：比较起点和终点的 X 坐标，若 start.x > end.x 则交换。
-    /// </summary>
-    private (Vector3 start, Vector3 end) NormalizeEdgeDirection(Vector3 posA, Vector3 posB)
-    {
-        if (posA.x > posB.x + 0.001f)   // 统一按 X 轴排序（可扩展为字典序）
-            return (posB, posA);
-        return (posA, posB);
+
+        // ── 6. 城镇模式：生成建筑与人行道 ──
+        if (generateCity && !roadGen.isCountryside)
+            GenerateCityFromRoads(finalRoadUnion);
     }
 
+    // ================================================================
+    // 道路网格构建（应用地形高度）
+    // ================================================================
     private Mesh BuildUnifiedMesh(Paths64 roadUnion,
                                   List<RoadUVProjector.EdgeRoadInfo> edgeInfos,
                                   List<RoadUVProjector.JunctionInfo> junctionInfos)
     {
-        // 三角剖分（同前）
         Polygon polygon = new Polygon();
         foreach (var path in roadUnion)
         {
@@ -236,10 +243,6 @@ public class ProceduralRoadBuilder : MonoBehaviour
         List<int>[] subTris = new List<int>[6];
         for (int i = 0; i < 6; i++) subTris[i] = new List<int>();
 
-        // 预先为每个 junction 和 edge 构建 2D 线段列表用于包含性判断
-        var junctionPolygons2D = junctionInfos.Select(j => j.poly.Select(v => new Vector2(v.x, v.z)).ToList()).ToList();
-        var edgePolygons2D = edgeInfos.Select(e => e.poly.Select(v => new Vector2(v.x, v.z)).ToList()).ToList();
-
         foreach (var tri in mesh.Triangles)
         {
             Vector3 a_raw = new Vector3((float)tri.GetVertex(0).X, 0f, (float)tri.GetVertex(0).Y);
@@ -247,13 +250,12 @@ public class ProceduralRoadBuilder : MonoBehaviour
             Vector3 c_raw = new Vector3((float)tri.GetVertex(2).X, 0f, (float)tri.GetVertex(2).Y);
             Vector3 center = (a_raw + b_raw + c_raw) / 3f;
 
-            // 使用包含判定优先分类（Junction > Edge）
-            RoadUVProjector.TriangleRegionInfo info = RoadUVProjector.ClassifyTriangle(
-      center, edgeInfos, junctionInfos);
+            RoadUVProjector.TriangleRegionInfo info = RoadUVProjector.ClassifyTriangle(center, edgeInfos, junctionInfos);
 
-            Vector3 a = new Vector3(a_raw.x, SampleTerrainHeight(a_raw.x, a_raw.z) + roadHeightOffset, a_raw.z);
-            Vector3 b = new Vector3(b_raw.x, SampleTerrainHeight(b_raw.x, b_raw.z) + roadHeightOffset, b_raw.z);
-            Vector3 c = new Vector3(c_raw.x, SampleTerrainHeight(c_raw.x, c_raw.z) + roadHeightOffset, c_raw.z);
+            // 使用新的高度查询
+            Vector3 a = new Vector3(a_raw.x, GetHeightAt(a_raw.x, a_raw.z) + roadHeightOffset, a_raw.z);
+            Vector3 b = new Vector3(b_raw.x, GetHeightAt(b_raw.x, b_raw.z) + roadHeightOffset, b_raw.z);
+            Vector3 c = new Vector3(c_raw.x, GetHeightAt(c_raw.x, c_raw.z) + roadHeightOffset, c_raw.z);
 
             int idx0 = vertices.Count; vertices.Add(a);
             int idx1 = vertices.Count; vertices.Add(b);
@@ -277,8 +279,7 @@ public class ProceduralRoadBuilder : MonoBehaviour
 
             uvList.Add(uvA); uvList.Add(uvB); uvList.Add(uvC);
 
-            // 材质分配：junction 使用 3~5，edge 使用 0~2，确保 junction 优先
-            int subIdx = info.subMeshIndex;   // 已经是 0~5 的最终子网格索引
+            int subIdx = info.subMeshIndex;
             subTris[subIdx].Add(idx2);
             subTris[subIdx].Add(idx1);
             subTris[subIdx].Add(idx0);
@@ -297,201 +298,295 @@ public class ProceduralRoadBuilder : MonoBehaviour
         return roadMesh;
     }
 
+    // ================================================================
+    // 地表生成（法线已修正）
+    // ================================================================
+    private void GenerateTerrainBase(Paths64 roadUnion)
+    {
+        Paths64 cleanUnion = CleanRoadUnion(roadUnion);
+        Bounds bounds = GetNetworkBounds();
+        float margin = 20f;
+        float minX = bounds.min.x - margin;
+        float minZ = bounds.min.z - margin;
+        float maxX = bounds.max.x + margin;
+        float maxZ = bounds.max.z + margin;
+
+        Path64 groundRect = new Path64
+        {
+            new Point64((long)(minX * 1000.0), (long)(minZ * 1000.0)),
+            new Point64((long)(maxX * 1000.0), (long)(minZ * 1000.0)),
+            new Point64((long)(maxX * 1000.0), (long)(maxZ * 1000.0)),
+            new Point64((long)(minX * 1000.0), (long)(maxZ * 1000.0))
+        };
+
+        // 寻找最大正面积为洞，其余为岛
+        int roadHoleIndex = -1;
+        double maxPositiveArea = 0;
+        List<int> islandIndices = new List<int>();
+        for (int i = 0; i < cleanUnion.Count; i++)
+        {
+            double area = Clipper.Area(cleanUnion[i]);
+            if (area > 0 && area > maxPositiveArea)
+            {
+                maxPositiveArea = area;
+                roadHoleIndex = i;
+            }
+        }
+        for (int i = 0; i < cleanUnion.Count; i++)
+        {
+            if (i == roadHoleIndex) continue;
+            double area = Clipper.Area(cleanUnion[i]);
+            if (area < 0) islandIndices.Add(i);
+        }
+
+        Polygon poly = new Polygon();
+        var groundVerts = groundRect.Select(pt => new Vertex((double)pt.X / 1000.0, (double)pt.Y / 1000.0)).ToList();
+        poly.Add(new Contour(groundVerts));
+
+        if (roadHoleIndex >= 0)
+        {
+            Path64 holePath = new Path64(cleanUnion[roadHoleIndex]);
+            holePath.Reverse();
+            var holeVerts = holePath.Select(pt => new Vertex((double)pt.X / 1000.0, (double)pt.Y / 1000.0)).ToList();
+            poly.Add(new Contour(holeVerts), true);
+            // 添加种子点
+            if (holeVerts.Count >= 3)
+            {
+                double sx = 0, sy = 0;
+                int seedCount = Mathf.Min(3, holeVerts.Count);
+                for (int s = 0; s < seedCount; s++)
+                { sx += holeVerts[s].X; sy += holeVerts[s].Y; }
+                poly.Holes.Add(new Point(sx / seedCount, sy / seedCount));
+            }
+        }
+
+        foreach (int islandIdx in islandIndices)
+        {
+            Path64 islandPath = new Path64(cleanUnion[islandIdx]);
+            islandPath.Reverse();
+            var islandVerts = islandPath.Select(pt => new Vertex((double)pt.X / 1000.0, (double)pt.Y / 1000.0)).ToList();
+            poly.Add(new Contour(islandVerts));
+        }
+
+        GenericMesher m = new GenericMesher();
+        var tMesh = m.Triangulate(poly);
+
+        List<Vector3> vertsList = new List<Vector3>();
+        List<int> triList = new List<int>();
+        Dictionary<int, int> map = new Dictionary<int, int>();
+        int idx = 0;
+        foreach (var v in tMesh.Vertices)
+        {
+            float x = (float)v.X, z = (float)v.Y;
+            float y = GetHeightAt(x, z) + terrainBaseHeightOffset;
+            vertsList.Add(new Vector3(x, y, z));
+            map[v.ID] = idx++;
+        }
+
+        // ★ 法线修正：三角形顺序改为 0,2,1
+        foreach (var tri in tMesh.Triangles)
+        {
+            triList.Add(map[tri.GetVertex(0).ID]);
+            triList.Add(map[tri.GetVertex(2).ID]);
+            triList.Add(map[tri.GetVertex(1).ID]);
+        }
+
+        Mesh terrainMesh = new Mesh();
+        terrainMesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+        terrainMesh.SetVertices(vertsList);
+        terrainMesh.SetTriangles(triList, 0);
+        terrainMesh.RecalculateNormals();
+        terrainMesh.RecalculateBounds();
+
+        if (terrainBaseMaterial != null || roadMaterial != null)
+        {
+            Material mat = terrainBaseMaterial ? terrainBaseMaterial : roadMaterial;
+            mat.renderQueue = 1999;
+            GameObject go = new GameObject("Terrain_Base");
+            go.transform.SetParent(terrainRoot.transform, false);
+            go.layer = LayerMask.NameToLayer("Default");
+            go.AddComponent<MeshFilter>().sharedMesh = terrainMesh;
+            MeshRenderer mr = go.AddComponent<MeshRenderer>();
+            mr.sharedMaterial = mat;
+            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            mr.receiveShadows = true;
+            Debug.Log($"[Terrain] 地表生成完成，顶点 {vertsList.Count}");
+        }
+    }
+
+    // ================================================================
+    // 城镇模式：建筑与人行道（V2.0 数学拉伸）
+    // ================================================================
+    private void GenerateCityFromRoads(Paths64 roadUnion)
+    {
+        ExtrudeBuildingsFromIslands(roadUnion);
+        GenerateSidewalks(roadUnion);
+        Debug.Log("[City] 城市建筑与人行道生成完成。");
+    }
+
+    private void ExtrudeBuildingsFromIslands(Paths64 roadUnion)
+    {
+        if (buildingMaterial == null) return;
+
+        GameObject buildingRoot = new GameObject("City_Buildings");
+        buildingRoot.transform.SetParent(transform, false);
+
+        foreach (var path in roadUnion)
+        {
+            double area = Clipper.Area(path);
+            if (area >= 0) continue;   // 只取负面积岛屿（内部地块）
+
+            Path64 island = new Path64(path);
+            island.Reverse();          // 变为顺时针（正面积）
+            if (Clipper.Area(island) <= 0) continue;
+
+            List<Vector3> baseVerts = island.Select(pt =>
+                new Vector3((float)pt.X / 1000.0, 0, (float)pt.Y / 1000.0)).ToList();
+
+            // 应用地形高度
+            for (int i = 0; i < baseVerts.Count; i++)
+            {
+                var v = baseVerts[i];
+                v.y = GetHeightAt(v.x, v.z);
+                baseVerts[i] = v;
+            }
+
+            Mesh buildingMesh = ExtrudePolygon(baseVerts, buildingHeight);
+            if (buildingMesh == null) continue;
+
+            GameObject buildingObj = new GameObject("Building");
+            buildingObj.transform.SetParent(buildingRoot.transform, false);
+            buildingObj.AddComponent<MeshFilter>().sharedMesh = buildingMesh;
+            buildingObj.AddComponent<MeshRenderer>().sharedMaterial = buildingMaterial;
+            // 简单碰撞体（可选）
+            // buildingObj.AddComponent<MeshCollider>().sharedMesh = buildingMesh;
+        }
+    }
+
+    private Mesh ExtrudePolygon(List<Vector3> baseVerts, float height)
+    {
+        if (baseVerts.Count < 3) return null;
+
+        int n = baseVerts.Count;
+        List<Vector3> verts = new List<Vector3>();
+        List<int> tris = new List<int>();
+
+        // 底面（忽略，只做顶面和侧面）
+        // 顶面顶点
+        List<Vector3> topVerts = new List<Vector3>();
+        foreach (var v in baseVerts)
+            topVerts.Add(v + Vector3.up * height);
+
+        // 侧面：每一边两个三角形
+        for (int i = 0; i < n; i++)
+        {
+            int j = (i + 1) % n;
+            Vector3 aRect = baseVerts[i];
+            Vector3 bRect = baseVerts[j];
+            Vector3 cRect = topVerts[i];
+            Vector3 dRect = topVerts[j];
+
+            int vi = verts.Count;
+            verts.Add(aRect);
+            verts.Add(bRect);
+            verts.Add(cRect);
+            verts.Add(dRect);
+
+            tris.Add(vi);
+            tris.Add(vi + 2);
+            tris.Add(vi + 1);
+            tris.Add(vi + 2);
+            tris.Add(vi + 3);
+            tris.Add(vi + 1);
+        }
+
+        // 顶面：使用多边形三角剖分（简单凸多边形风扇法）
+        // 将 topVerts 加入，并生成三角形
+        int topStart = verts.Count;
+        verts.AddRange(topVerts);
+        for (int i = 1; i < n - 1; i++)
+        {
+            tris.Add(topStart);
+            tris.Add(topStart + i);
+            tris.Add(topStart + i + 1);
+        }
+
+        Mesh mesh = new Mesh();
+        mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+        mesh.SetVertices(verts);
+        mesh.SetTriangles(tris, 0);
+        mesh.RecalculateNormals();
+        mesh.RecalculateBounds();
+        return mesh;
+    }
+
+   private void GenerateSidewalks(Paths64 roadUnion)
+{
+    if (sidewalkMaterial == null) return;
+
+    ClipperOffset co = new ClipperOffset();
+    foreach (var path in roadUnion)
+    {
+        if (Clipper.Area(path) > 0)
+            co.AddPath(path, JoinType.Round, EndType.Joined);
+    }
+
+    long expandDelta = (long)(sidewalkWidth * 1000.0);
+
+    // ★ 修复：Execute 无返回值，需传入已有容器
+    Paths64 expanded = new Paths64();
+    co.Execute(expanded, expandDelta);
+
+    Paths64 sidewalkPaths = Clipper.Difference(expanded, roadUnion, FillRule.NonZero);
+    if (sidewalkPaths.Count == 0) return;
+
+    GameObject sidewalkRoot = new GameObject("Sidewalks");
+    sidewalkRoot.transform.SetParent(transform, false);
+
+    foreach (var sp in sidewalkPaths)
+    {
+        if (sp.Count < 3) continue;
+
+        // ★ 修复：显式转为 float
+        var verts = sp.Select(pt => new Vector3((float)(pt.X / 1000.0), 0, (float)(pt.Y / 1000.0))).ToList();
+
+        for (int i = 0; i < verts.Count; i++)
+        {
+            var v = verts[i];
+            v.y = GetHeightAt(v.x, v.z);
+            verts[i] = v;
+        }
+
+        Mesh sidewalkMesh = ExtrudePolygon(verts, sidewalkHeight);
+        if (sidewalkMesh == null) continue;
+
+        GameObject sidewalkObj = new GameObject("Sidewalk");
+        sidewalkObj.transform.SetParent(sidewalkRoot.transform, false);
+        sidewalkObj.AddComponent<MeshFilter>().sharedMesh = sidewalkMesh;
+        sidewalkObj.AddComponent<MeshRenderer>().sharedMaterial = sidewalkMaterial;
+    }
+}
+
+    // ================================================================
+    // 辅助方法（多数保持原样）
+    // ================================================================
+    private (Vector3 start, Vector3 end) NormalizeEdgeDirection(Vector3 posA, Vector3 posB)
+    {
+        if (posA.x > posB.x + 0.001f) return (posB, posA);
+        return (posA, posB);
+    }
+
     private RoadDirection ClassifyDirection(Vector3 posA, Vector3 posB)
     {
         Vector3 dir = (posB - posA).normalized;
         float angle = Mathf.Atan2(dir.x, dir.z) * Mathf.Rad2Deg;
         if (angle < 0) angle += 360;
-
         if ((angle >= 0 && angle < 30) || (angle >= 150 && angle < 210) || (angle >= 330 && angle <= 360))
             return RoadDirection.Horizontal;
         if ((angle >= 60 && angle < 120) || (angle >= 240 && angle < 300))
             return RoadDirection.Vertical;
         return RoadDirection.Diagonal;
     }
-
-    private Material[] BuildMaterialArray(Material fallback)
-    {
-        Material[] mats = new Material[6];
-        if (useCountrysideUniformMaterials)
-        {
-            for (int i = 0; i < 3; i++) mats[i] = countrysideRoadMaterial ? countrysideRoadMaterial : fallback;
-            for (int i = 3; i < 6; i++) mats[i] = countrysideJunctionMaterial ? countrysideJunctionMaterial : fallback;
-        }
-        else
-        {
-            mats[0] = horizontalRoadMaterial ? horizontalRoadMaterial : fallback;
-            mats[1] = verticalRoadMaterial ? verticalRoadMaterial : fallback;
-            mats[2] = diagonalRoadMaterial ? diagonalRoadMaterial : fallback;
-            mats[3] = tJunctionMaterial ? tJunctionMaterial : fallback;
-            mats[4] = crossJunctionMaterial ? crossJunctionMaterial : fallback;
-            mats[5] = complexJunctionMaterial ? complexJunctionMaterial : fallback;
-        }
-        return mats;
-    }
-
-    // ================================================================
-    // 地表生成 —— 第二阶段重构：主地块 + 道路洞剖分法
-    // ================================================================
-  private void GenerateTerrainBase(Paths64 roadUnion)
-{
-    // 1. 净化道路轮廓
-    Paths64 cleanUnion = CleanRoadUnion(roadUnion);
-
-    // 2. 建立主地块矩形
-    Bounds bounds = GetNetworkBounds();
-    float margin = 20f;
-    float minX = bounds.min.x - margin;
-    float minZ = bounds.min.z - margin;
-    float maxX = bounds.max.x + margin;
-    float maxZ = bounds.max.z + margin;
-
-    Path64 groundRect = new Path64
-    {
-        new Point64((long)(minX * 1000.0), (long)(minZ * 1000.0)),
-        new Point64((long)(maxX * 1000.0), (long)(minZ * 1000.0)),
-        new Point64((long)(maxX * 1000.0), (long)(maxZ * 1000.0)),
-        new Point64((long)(minX * 1000.0), (long)(maxZ * 1000.0))
-    };
-
-    // 3. 从 roadUnion 中识别层级：面积最大正路径 = 一级道路洞，负路径 = 二级陆地岛
-    int roadHoleIndex = -1;
-    double maxPositiveArea = 0;
-    List<int> islandIndices = new List<int>();
-
-    for (int i = 0; i < cleanUnion.Count; i++)
-    {
-        double area = Clipper.Area(cleanUnion[i]);
-        if (area > 0 && area > maxPositiveArea)
-        {
-            maxPositiveArea = area;
-            roadHoleIndex = i;
-        }
-    }
-
-    // 收集所有负面积路径作为内部保留岛
-    for (int i = 0; i < cleanUnion.Count; i++)
-    {
-        if (i == roadHoleIndex) continue;
-        double area = Clipper.Area(cleanUnion[i]);
-        if (area < 0)
-            islandIndices.Add(i);
-    }
-
-    Debug.Log($"[Terrain] 一级道路洞索引:{roadHoleIndex} 面积:{maxPositiveArea / 1e6:F2}m² 二级岛数量:{islandIndices.Count}");
-
-    // 4. 构建 Triangle.NET Polygon（保留原始层级）
-    Polygon poly = new Polygon();
-
-    // 主外轮廓：groundRect
-    var groundVerts = groundRect.Select(pt =>
-        new Vertex((double)pt.X / 1000.0, (double)pt.Y / 1000.0)).ToList();
-    poly.Add(new Contour(groundVerts));
-
-    // 一级洞：道路整体占地区
-    // 一级洞：道路整体占地区
-if (roadHoleIndex >= 0)
-{
-    // 洞需要逆时针（Clipper正面积为顺时针，反转后为逆时针）
-    Path64 holePath = new Path64(cleanUnion[roadHoleIndex]);
-    holePath.Reverse();
-    var holeVerts = holePath.Select(pt =>
-        new Vertex((double)pt.X / 1000.0, (double)pt.Y / 1000.0)).ToList();
-
-    var holeContour = new Contour(holeVerts);
-    poly.Add(holeContour, true);   // 作为洞添加
-
-    // 为洞添加内部种子点（Triangle.NET需要以此识别洞区域）
-    if (holeVerts.Count >= 3)
-    {
-        // 取前N个顶点的平均位置作为种子点
-        double sx = 0, sy = 0;
-        int seedCount = Mathf.Min(3, holeVerts.Count);
-        for (int s = 0; s < seedCount; s++)
-        {
-            sx += holeVerts[s].X;
-            sy += holeVerts[s].Y;
-        }
-        poly.Holes.Add(new Point(sx / seedCount, sy / seedCount));
-    }
-
-    // 二级岛：道路内部的保留地块
-    foreach (int islandIdx in islandIndices)
-    {
-        var islandPath = cleanUnion[islandIdx];
-        // 负面积路径逆时针，岛需顺时针，反转
-        Path64 islandClockwise = new Path64(islandPath);
-        islandClockwise.Reverse();
-        var islandVerts = islandClockwise.Select(pt =>
-            new Vertex((double)pt.X / 1000.0, (double)pt.Y / 1000.0)).ToList();
-        poly.Add(new Contour(islandVerts));   // 岛，不是洞
-    }
-}
-
-    // 5. 三角剖分
-    GenericMesher m = new GenericMesher();
-    var tMesh = m.Triangulate(poly);
-
-    List<Vector3> vertsList = new List<Vector3>();
-    List<int> triList = new List<int>();
-    Dictionary<int, int> map = new Dictionary<int, int>();
-    int idx = 0;
-    foreach (var v in tMesh.Vertices)
-    {
-        float x = (float)v.X, z = (float)v.Y;
-        float y = SampleTerrainHeight(x, z) + terrainBaseHeightOffset;
-        vertsList.Add(new Vector3(x, y, z));
-        map[v.ID] = idx++;
-    }
-    foreach (var tri in tMesh.Triangles)
-    {
-     triList.Add(map[tri.GetVertex(0).ID]);
-        triList.Add(map[tri.GetVertex(2).ID]); 
-        triList.Add(map[tri.GetVertex(1).ID]);
-    }
-
-    Mesh terrainMesh = new Mesh();
-    terrainMesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
-    terrainMesh.SetVertices(vertsList);
-    terrainMesh.SetTriangles(triList, 0);
-    terrainMesh.RecalculateNormals();
-
-    if (terrainBaseMaterial != null || roadMaterial != null)
-    {
-        Material mat = terrainBaseMaterial ? terrainBaseMaterial : roadMaterial;
-        mat.renderQueue = 1999;
-        GameObject go = new GameObject("Terrain_Base");
-        go.transform.SetParent(terrainRoot.transform, false);
-        go.layer = LayerMask.NameToLayer("Default");
-        go.AddComponent<MeshFilter>().sharedMesh = terrainMesh;
-        MeshRenderer mr = go.AddComponent<MeshRenderer>();
-        mr.sharedMaterial = mat;
-        mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-        mr.receiveShadows = true;
-        Debug.Log($"[Terrain] 地表生成完成，顶点 {vertsList.Count}");
-    }
-}
-
-    // 辅助：净化道路轮廓（保留自旧版）
-    private Paths64 CleanRoadUnion(Paths64 roadUnion)
-    {
-        Paths64 cleanUnion = new Paths64();
-        foreach (var p in roadUnion)
-            cleanUnion.Add(new Path64(p));
-
-        cleanUnion = Clipper.SimplifyPaths(cleanUnion, 2.0);
-        Paths64 trimmedUnion = new Paths64();
-        foreach (var path in cleanUnion)
-            trimmedUnion.Add(Clipper.TrimCollinear(path, false));
-        cleanUnion = trimmedUnion;
-
-        cleanUnion = Clipper.InflatePaths(cleanUnion, 1.0, JoinType.Round, EndType.Polygon);
-        cleanUnion = Clipper.InflatePaths(cleanUnion, -1.0, JoinType.Round, EndType.Polygon);
-        return cleanUnion;
-    }
-
-    // 删除的旧方法：FilterTerrainPaths / NormalizePathDirection / Difference 流程
-    // 不再需要。
 
     private void PrecomputeUnifiedHeights()
     {
@@ -514,33 +609,6 @@ if (roadHoleIndex >= 0)
         Vector3 pos = roadGen.nodes[nodeId].position;
         pos.y = nodeUnifiedHeight[nodeId] + roadHeightOffset;
         return pos;
-    }
-
-    private float SampleTerrainHeight(float worldX, float worldZ)
-    {
-        if (roadGen != null && roadGen.isCountryside)
-            return Mathf.PerlinNoise(worldX * terrainNoiseFrequency, worldZ * terrainNoiseFrequency)
-                   * roadGen.countrysideHeightScale;
-        Terrain terrain = Terrain.activeTerrain;
-        if (terrain != null)
-            return terrain.SampleHeight(new Vector3(worldX, 0f, worldZ));
-        return 0f;
-    }
-
-    private Bounds GetNetworkBounds()
-    {
-        if (roadGen.nodes == null || roadGen.nodes.Count == 0)
-            return new Bounds(Vector3.zero, Vector3.one * 100);
-        Vector3 min = roadGen.nodes[0].position;
-        Vector3 max = roadGen.nodes[0].position;
-        foreach (var n in roadGen.nodes)
-        {
-            min = Vector3.Min(min, n.position);
-            max = Vector3.Max(max, n.position);
-        }
-        Bounds b = new Bounds();
-        b.SetMinMax(min, max);
-        return b;
     }
 
     private Spline BuildSimpleSpline(Vector3 posA, Vector3 posB)
@@ -570,6 +638,56 @@ if (roadHoleIndex >= 0)
             points.Add((Vector3)spline.EvaluatePosition(t));
         }
         return points;
+    }
+
+    private Material[] BuildMaterialArray(Material fallback)
+    {
+        Material[] mats = new Material[6];
+        if (useCountrysideUniformMaterials)
+        {
+            for (int i = 0; i < 3; i++) mats[i] = countrysideRoadMaterial ? countrysideRoadMaterial : fallback;
+            for (int i = 3; i < 6; i++) mats[i] = countrysideJunctionMaterial ? countrysideJunctionMaterial : fallback;
+        }
+        else
+        {
+            mats[0] = horizontalRoadMaterial ? horizontalRoadMaterial : fallback;
+            mats[1] = verticalRoadMaterial ? verticalRoadMaterial : fallback;
+            mats[2] = diagonalRoadMaterial ? diagonalRoadMaterial : fallback;
+            mats[3] = tJunctionMaterial ? tJunctionMaterial : fallback;
+            mats[4] = crossJunctionMaterial ? crossJunctionMaterial : fallback;
+            mats[5] = complexJunctionMaterial ? complexJunctionMaterial : fallback;
+        }
+        return mats;
+    }
+
+    private Paths64 CleanRoadUnion(Paths64 roadUnion)
+    {
+        Paths64 cleanUnion = new Paths64();
+        foreach (var p in roadUnion) cleanUnion.Add(new Path64(p));
+        cleanUnion = Clipper.SimplifyPaths(cleanUnion, 2.0);
+        Paths64 trimmedUnion = new Paths64();
+        foreach (var path in cleanUnion)
+            trimmedUnion.Add(Clipper.TrimCollinear(path, false));
+        cleanUnion = trimmedUnion;
+        cleanUnion = Clipper.InflatePaths(cleanUnion, 1.0, JoinType.Round, EndType.Polygon);
+        cleanUnion = Clipper.InflatePaths(cleanUnion, -1.0, JoinType.Round, EndType.Polygon);
+        return cleanUnion;
+    }
+
+    private Bounds GetNetworkBounds()
+    {
+        if (roadGen.nodes == null || roadGen.nodes.Count == 0)
+            return new Bounds(Vector3.zero, Vector3.one * 100);
+        Vector3 min = roadGen.nodes[0].position;
+        Vector3 max = roadGen.nodes[0].position;
+        foreach (var n in roadGen.nodes)
+        {
+            min = Vector3.Min(min, n.position);
+            max = Vector3.Max(max, n.position);
+        }
+        Bounds b = new Bounds();
+        b.SetMinMax(min, max);
+        return b;
     }
 
     private void CreateRoadObject(string name, Mesh mesh, Material[] materials, int layer, Transform parent)
