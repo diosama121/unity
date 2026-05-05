@@ -1,5 +1,8 @@
 using UnityEngine;
 using System.Collections.Generic;
+using System;
+
+
 
 #if UNITY_EDITOR
 using UnityEditor;
@@ -76,15 +79,9 @@ public PathPlanner pathPlanner;
 // =============================================
 // 生命周期
 // =============================================
-
-void Start()
-{
-if (autoLinkPathPlanner)
-{
-pathPlanner = FindObjectOfType<PathPlanner>();
-if (pathPlanner == null)
-{
-pathPlanner = new GameObject("PathPlanner").AddComponent<PathPlanner>();
+  public void Generate()
+    {
+         // delegate to existing internal method
+    }
+//待重构
 }
-//已清空，待2.0版本重构。
-}}}
