@@ -445,9 +445,9 @@ if (roadHoleIndex >= 0)
     }
     foreach (var tri in tMesh.Triangles)
     {
-        triList.Add(map[tri.GetVertex(0).ID]);
+     triList.Add(map[tri.GetVertex(0).ID]);
+        triList.Add(map[tri.GetVertex(2).ID]); 
         triList.Add(map[tri.GetVertex(1).ID]);
-        triList.Add(map[tri.GetVertex(2).ID]);
     }
 
     Mesh terrainMesh = new Mesh();

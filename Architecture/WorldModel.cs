@@ -21,7 +21,8 @@ public class WorldModel : MonoBehaviour
     [Header("系统挂载 (V2.0 核心组件)")]
     public RoadNetworkGenerator roadGenerator; 
     public TerrainGridSystem terrainGrid;      
-
+    public ProceduralRoadBuilder roadBuilder;
+    public TrafficLightManager trafficLightManager;
     private Dictionary<int, RoadNode> _graph = new Dictionary<int, RoadNode>();
     private KDTree _spatialIndex;
 
@@ -29,26 +30,32 @@ public class WorldModel : MonoBehaviour
     public int NodeCount => _graph.Count;
     public IEnumerable<RoadNode> Nodes => _graph.Values;
 
-    void Awake()
+   void Awake()
     {
         if (Instance == null) Instance = this;
         else Destroy(gameObject);
 
-        // 初始化时序必须严格遵守！
-        // 1. 原始拓扑生成
+        // V2.0 终极启动流水线 (严格保序)
         if (roadGenerator != null)
         {
+            // 1. 纯数据拓扑生成
             roadGenerator.Generate();
-            IngestGraph(roadGenerator);
-        }
 
-        // 2. 地形烘焙 (a1 交付完毕，解开封印)
-        if (terrainGrid != null && roadGenerator != null)
-        {
-            // 注意：真实环境中需要传入路网多边形用于剔除道路下方网格
-            // 这里假定外部 ProceduralRoadBuilder 生成时会处理，先初始化基础网格
-            Bounds bounds = new Bounds(Vector3.zero, new Vector3(roadGenerator.gridWidth * roadGenerator.cellSize, 100, roadGenerator.gridHeight * roadGenerator.cellSize));
-            terrainGrid.Initialize(bounds);
+            // 2. 地形高度图初始化
+            if (terrainGrid != null)
+            {
+                Bounds bounds = new Bounds(Vector3.zero, new Vector3(roadGenerator.gridWidth * roadGenerator.cellSize, 100, roadGenerator.gridHeight * roadGenerator.cellSize));
+                terrainGrid.Initialize(bounds);
+            }
+
+            // 3. 摄入语义图 (建构真理层)
+            IngestGraph(roadGenerator);
+
+            // 4. 生成路网实体视觉与地表
+            if (roadBuilder != null) roadBuilder.BuildRoads();
+
+            // 5. 生成红绿灯实体并开启语义同步
+            if (trafficLightManager != null) trafficLightManager.PlaceTrafficLights();
         }
     }
 

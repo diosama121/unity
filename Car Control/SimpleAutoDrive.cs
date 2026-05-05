@@ -159,15 +159,40 @@ public class SimpleAutoDrive : MonoBehaviour
             return;
         }
 
+        // 【a4 补丁 2】：无限生命周期路由
         if (currentT >= 1.0f)
         {
-            currentState = DriveState.Idle;
-            currentSpline = null;
-            carController.SetAutoControl(0f, 0f);
+            RequestNewRandomPath();
             return;
         }
 
         FollowPath();
+    }
+
+    // 在脚本下方新增此方法：向 a2 申请新的随机目标点
+    void RequestNewRandomPath()
+    {
+        if (WorldModel.Instance != null && pathPlanner != null)
+        {
+            // 随机抽取一个新的节点 ID
+            int randTargetId = Random.Range(0, WorldModel.Instance.NodeCount);
+            RoadNode targetNode = WorldModel.Instance.GetNode(randTargetId);
+            
+            if (targetNode != null)
+            {
+                CatmullRomSpline newSpline = pathPlanner.PlanPath(transform.position, targetNode.WorldPos);
+                if (newSpline != null && newSpline.TotalLength > 0)
+                {
+                    // 无缝衔接下一段轨道
+                    SetSplinePath(newSpline, targetNode.Id);
+                    return;
+                }
+            }
+        }
+        // 只有在寻路彻底失败时才停车
+        currentState = DriveState.Idle;
+        currentSpline = null;
+        carController.SetAutoControl(0f, 0f);
     }
 
     void HandleAvoidingState()

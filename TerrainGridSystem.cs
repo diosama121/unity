@@ -110,6 +110,7 @@ public class TerrainGridSystem : MonoBehaviour
     /// </summary>
     public float SampleHeight(Vector2 worldXZ)
     {
+        if (_heightMap == null) return 0f;
         // 映射到网格空间，注意 Vector2.y 对应世界 Z 轴
         float fx = (worldXZ.x - _minX) / cellSize;
         float fz = (worldXZ.y - _minZ) / cellSize;

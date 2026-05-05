@@ -36,9 +36,6 @@ public class RoadNetworkGenerator : MonoBehaviour
     public Color edgeColor = Color.white;
     public float nodeSphereSize = 1f;
 
-    private bool pendingGenerate = false;
-    private bool pendingRandomGenerate = false;
-
     // =============================================
     // 数据结构：Road优先
     // =============================================
@@ -67,12 +64,7 @@ public class RoadNetworkGenerator : MonoBehaviour
     private int[,] grid;
 
     // UI
-    private bool uiExpanded = true;
-    private string uiSeed = "42";
-    private string uiWidth = "5";
-    private string uiHeight = "5";
-    private string uiCellSize = "20";
-    private string uiOffset = "5";
+
 
     public PathPlanner pathPlanner;
 
