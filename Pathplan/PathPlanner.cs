@@ -1,9 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace AutonomousSim.Navigation
-{
-  
+
     public class PathPlanner : MonoBehaviour
     {
         // A* 算法内部使用的临时节点结构
@@ -261,4 +259,3 @@ namespace AutonomousSim.Navigation
             return 1f;
         }
     }
-}

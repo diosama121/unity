@@ -3,6 +3,10 @@ using System.IO;
 using System.Text;
 using System.Collections.Generic;
 
+/// <summary>
+/// V2.0 数据管理：基于 a2 PathPlanner 真实字段重构
+/// 真实字段：Id / WorldPos / NeighborIds
+/// </summary>
 public class SystemDataManager : MonoBehaviour
 {
     [Header("=== 车辆遥测数据 (生成CSV供Excel画图) ===")]
@@ -21,37 +25,34 @@ public class SystemDataManager : MonoBehaviour
 
     void Start()
     {
-        csvPath = Application.dataPath + "/VehicleTelemetry.csv";
-        jsonPath = Application.dataPath + "/RoadMapData.json";
+        csvPath = Application.dataPath + "/VehicleTelemetry_V2.0.csv";
+        jsonPath = Application.dataPath + "/RoadMapData_V2.0.json";
         
-        // 每次启动重置并写入表头
         csvData.Clear();
-        csvData.AppendLine("Timestamp,PosX,PosZ,Speed(km_h),AI_State,Obstacle_Detected");
+        csvData.AppendLine("Timestamp,PosX,PosZ,Speed(km_h),AI_State,Obstacle_Detected,NodeID,NodeType");
         
         if (roadGen == null) roadGen = FindObjectOfType<RoadNetworkGenerator>();
     }
 
     void Update()
     {
-        // 【按 F9】 开始/停止 录制
         if (Input.GetKeyDown(KeyCode.F9))
         {
             isRecording = !isRecording;
             
             if (isRecording) 
             {
-                // 按下录制时，强制再次寻找场景里的车！
                 if (targetCar == null) targetCar = FindObjectOfType<SimpleCarController>();
                 if (targetAI == null) targetAI = FindObjectOfType<SimpleAutoDrive>();
 
                 if (targetCar == null)
                 {
-                    Debug.LogError("❌ 找不到主车！数据录制失败。请确保场景中有挂载 SimpleCarController 的车。");
+                    Debug.LogError("❌ 找不到主车！数据录制失败。");
                     isRecording = false;
                 }
                 else
                 {
-                    Debug.Log("🔴 开始录制车辆数据... (每0.2秒记录一次)");
+                    Debug.Log("🔴 开始录制车辆数据... (含语义标签)");
                 }
             }
             else 
@@ -66,7 +67,6 @@ public class SystemDataManager : MonoBehaviour
             ExportRoadMap();
         }
 
-        // 定时记录车辆数据
         if (isRecording && targetCar != null)
         {
             timer += Time.deltaTime;
@@ -83,15 +83,44 @@ public class SystemDataManager : MonoBehaviour
         string aiState = targetAI != null ? targetAI.currentState.ToString() : "Manual";
         bool hasObs = targetAI != null ? targetAI.obstacleDetected : false;
         
-        // 暴力获取物理真实速度，绝对不会报错
         Rigidbody rb = targetCar.GetComponent<Rigidbody>();
         float speedKmh = rb != null ? rb.velocity.magnitude * 3.6f : 0f;
+
+        // ======================
+        // V2.0 语义数据（基于 a2 真实字段）
+        // ======================
+        Vector3 carPos = targetCar.transform.position;
+        RoadNode currentNode = WorldModel.Instance.GetNearestNode(carPos);
+        
+        int nodeID = -1;
+        string nodeType = "未知";
+        if (currentNode != null)
+        {
+            // 真实字段：Id (大写I)
+            nodeID = currentNode.Id;
+            
+            // 真实字段：NeighborIds (大写N/I，List<int>)
+            if (currentNode.NeighborIds != null)
+            {
+                if (currentNode.NeighborIds.Count >= 3)
+                {
+                    nodeType = "路口";
+                }
+                else if (currentNode.NeighborIds.Count == 2)
+                {
+                    nodeType = "路段";
+                }
+                else
+                {
+                    nodeType = "端点";
+                }
+            }
+        }
         
         csvData.AppendLine($"{Time.time:F2},{targetCar.transform.position.x:F2},{targetCar.transform.position.z:F2}," +
-                           $"{speedKmh:F2},{aiState},{hasObs}");
+                           $"{speedKmh:F2},{aiState},{hasObs},{nodeID},{nodeType}");
                            
-        // 在控制台打印提示，让你知道数据确实正在被写入
-        Debug.Log($"正在记录 -> 车速: {speedKmh:F1} km/h, 状态: {aiState}");
+        Debug.Log($"正在记录 -> 车速: {speedKmh:F1} km/h | 节点ID: {nodeID} | 类型: {nodeType}");
     }
 
     void ExportRoadMap()

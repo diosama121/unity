@@ -24,7 +24,7 @@ public class TerrainGridSystem : MonoBehaviour
     public Material terrainMaterial;
     public float terrainHeightOffset = 0f;      // 可整体微调高度
     public string terrainLayerName = "Default";
-public TerrainGridSystem terrainGrid;       
+
     // 内部数据
     private float[,] _heightMap;                // 高度场，尺寸 [dimX, dimZ]
     private bool[,] _roadMask;                  // 道路遮罩，尺寸 [dimX-1, dimZ-1]
@@ -57,12 +57,7 @@ public TerrainGridSystem terrainGrid;
         GenerateHeightMap(bounds);
         GenerateTerrainMesh();
     }
-public float GetTerrainHeight(Vector2 worldXZ)
-{
-    if (terrainGrid != null)
-        return terrainGrid.SampleHeight(worldXZ);
-    return 0f; // 如果地形还没加载好，返回0作为兜底
-}
+
     /// <summary>
     /// 传入道路多边形列表（世界坐标下的 Vector3[]，XZ 平面），
     /// 标记每个单元格是否被道路覆盖，并重新生成地形网格。
