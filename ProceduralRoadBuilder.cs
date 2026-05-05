@@ -441,7 +441,7 @@ public class ProceduralRoadBuilder : MonoBehaviour
             if (Clipper.Area(island) <= 0) continue;
 
             List<Vector3> baseVerts = island.Select(pt =>
-                new Vector3((float)pt.X / 1000.0, 0, (float)pt.Y / 1000.0)).ToList();
+                new Vector3((float)((float)pt.X / 1000.0), 0, (float)((float)pt.Y / 1000.0))).ToList();
 
             // 应用地形高度
             for (int i = 0; i < baseVerts.Count; i++)
@@ -535,7 +535,7 @@ public class ProceduralRoadBuilder : MonoBehaviour
 
     // ★ 修复：Execute 无返回值，需传入已有容器
     Paths64 expanded = new Paths64();
-    co.Execute(expanded, expandDelta);
+co.Execute(expandDelta, expanded); 
 
     Paths64 sidewalkPaths = Clipper.Difference(expanded, roadUnion, FillRule.NonZero);
     if (sidewalkPaths.Count == 0) return;
