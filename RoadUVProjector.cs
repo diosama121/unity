@@ -1,16 +1,19 @@
 using System.Collections.Generic;
 using UnityEngine;
+using System.Linq;
 
 /// <summary>
-/// 道路 UV 投影工具类（三角形级局部投影）
-/// 负责三角形归属分类、局部坐标系 UV 计算
+/// 道路 UV 投影工具类（三角形级局部投影，第二阶段重构版）
+/// 改动：
+/// 1. ClassifyTriangle → 多边形包含判定优先 (Junction > Edge > 兜底)
+/// 2. ComputeJunctionMainAngle → 邻居极角排序后计算主方向
 /// </summary>
 public static class RoadUVProjector
 {
     // ── 数据结构 ──
     public struct TriangleRegionInfo
     {
-        public int subMeshIndex;      // 0~5
+        public int subMeshIndex;      // 最终子网格索引 0~5
         public bool isJunction;
         public int edgeIndex;
         public int junctionIndex;
@@ -18,21 +21,21 @@ public static class RoadUVProjector
 
     public class EdgeRoadInfo
     {
-        public Vector3[] poly;
+        public Vector3[] poly;        // 原始多边形顶点（世界坐标）
         public Vector3 start;
         public Vector3 end;
         public Vector3 forward;       // (end - start).normalized
         public Vector3 right;         // Cross(Vector3.up, forward).normalized
         public Vector3 origin;        // start
-        public int targetSubMesh;     // 0/1/2
+        public int targetSubMesh;     // 预期子网格 0/1/2
     }
 
     public class JunctionInfo
     {
-        public Vector3[] poly;
-        public int degree;
+        public Vector3[] poly;        // 原始路口多边形顶点（世界坐标）
+        public int degree;            // 相连道路数
         public Vector3 center;
-        public float mainAngle;       // 弧度，贴图旋转角
+        public float mainAngle;       // 弧度，贴图旋转主方向
     }
 
     // ── UV 投影函数 ──
@@ -63,15 +66,16 @@ public static class RoadUVProjector
         return new Vector2(v.x * c - v.y * s, v.x * s + v.y * c);
     }
 
-    // ── 三角形分类 ──
+    // ── 三角形分类（第二阶段重构：Junction > Edge > 最近距离兜底） ──
     /// <summary>
-    /// 根据三角形中心点、所有直路边与路口信息，返回完整归属
+    /// 根据三角形中心点、所有直路边与路口信息，返回完整归属。
+    /// 优先级：路口包含判定 > 直路边包含判定 > 最近道路兜底。
     /// </summary>
     public static TriangleRegionInfo ClassifyTriangle(Vector3 center,
                                                       List<EdgeRoadInfo> edges,
                                                       List<JunctionInfo> junctions)
     {
-        // 先检测路口多边形
+        // 1. 优先检测路口多边形
         for (int j = 0; j < junctions.Count; j++)
         {
             if (PointInPolygonXZ(center, junctions[j].poly))
@@ -91,9 +95,39 @@ public static class RoadUVProjector
             }
         }
 
-        // 直路边：选择距离最近的边多边形
+        // 2. 检测直路边多边形
+        for (int e = 0; e < edges.Count; e++)
+        {
+            if (PointInPolygonXZ(center, edges[e].poly))
+            {
+                return new TriangleRegionInfo
+                {
+                    subMeshIndex = edges[e].targetSubMesh,
+                    isJunction = false,
+                    edgeIndex = e
+                };
+            }
+        }
+
+        // 3. 兜底：不属于任何多边形时，选择距离最近的边（保留原逻辑）
         float minDist = float.MaxValue;
         int bestEdge = 0;
+        bool isJunction = false;
+        int bestJunction = -1;
+
+        // 检查所有路口中心距离
+        for (int j = 0; j < junctions.Count; j++)
+        {
+            float d = Vector3.Distance(center, junctions[j].center);
+            if (d < minDist)
+            {
+                minDist = d;
+                bestJunction = j;
+                isJunction = true;
+            }
+        }
+
+        // 检查所有直路边多边形距离
         for (int e = 0; e < edges.Count; e++)
         {
             float d = PointToPolygonDistXZ(center, edges[e].poly);
@@ -101,15 +135,34 @@ public static class RoadUVProjector
             {
                 minDist = d;
                 bestEdge = e;
+                isJunction = false;
             }
         }
 
-        return new TriangleRegionInfo
+        if (isJunction)
         {
-            subMeshIndex = edges[bestEdge].targetSubMesh,
-            isJunction = false,
-            edgeIndex = bestEdge
-        };
+            int sub = junctions[bestJunction].degree switch
+            {
+                3 => 3,
+                4 => 4,
+                _ => 5
+            };
+            return new TriangleRegionInfo
+            {
+                subMeshIndex = sub,
+                isJunction = true,
+                junctionIndex = bestJunction
+            };
+        }
+        else
+        {
+            return new TriangleRegionInfo
+            {
+                subMeshIndex = edges[bestEdge].targetSubMesh,
+                isJunction = false,
+                edgeIndex = bestEdge
+            };
+        }
     }
 
     // ── 几何辅助 ──
@@ -157,18 +210,23 @@ public static class RoadUVProjector
         return Mathf.Sqrt(dx * dx + dz * dz);
     }
 
-    // ── 路口主方向角计算（改进的平均角度法） ──
+    // ── 路口主方向角计算（第二阶段增强：极角排序消除顺序依赖性） ──
     /// <summary>
-    /// 计算路口纹理主方向角（弧度），基于所有相邻道路方向的角度平均值。
-    /// 避免了向量平均在对称方向上抵消为零的问题。
+    /// 计算路口纹理主方向角（弧度）。
+    /// 先对邻居按极角排序，再以向量平均法求主方向，保证同一路口方向稳定。
     /// </summary>
     public static float ComputeJunctionMainAngle(Vector3 nodePos, List<Vector3> neighborPositions)
     {
         if (neighborPositions == null || neighborPositions.Count == 0)
             return 0f;
 
+        // 按极角排序（相对于路口中心）
+        var sortedNeighbors = neighborPositions
+            .OrderBy(n => Mathf.Atan2(n.x - nodePos.x, n.z - nodePos.z))
+            .ToList();
+
         float sumSin = 0f, sumCos = 0f;
-        foreach (var nbPos in neighborPositions)
+        foreach (var nbPos in sortedNeighbors)
         {
             Vector3 dir = (nbPos - nodePos).normalized;
             float angle = Mathf.Atan2(dir.x, dir.z);
@@ -176,6 +234,6 @@ public static class RoadUVProjector
             sumCos += Mathf.Cos(angle);
         }
 
-        return Mathf.Atan2(sumSin, sumCos); // 已自动归一化
+        return Mathf.Atan2(sumSin, sumCos); // 范围 [-π, π]
     }
 }
