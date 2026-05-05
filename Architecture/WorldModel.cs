@@ -96,4 +96,8 @@ public TerrainGridSystem terrainGrid;      // 槽位 2：地形网格系统 (手
         3 => NodeType.Merge,
         _ => NodeType.Intersection
     };
+    public virtual void SetIntersectionState(int nodeId, IntersectionState state) 
+{ 
+    // a1 的真实写入逻辑（比如更新字典等）
+}
 }

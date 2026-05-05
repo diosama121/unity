@@ -77,6 +77,9 @@ public class TrafficLightManager : MonoBehaviour
         public TrafficLightController controller;
         public Light lightComponent;
         public string currentState = "Red";
+        
+        // 【V2.0 新增】记录上次同步给 WorldModel 的状态，防止每帧重复写入浪费性能
+        public IntersectionState lastSyncedState = IntersectionState.Uncontrolled;
     }
 
     // =============================================
@@ -315,6 +318,9 @@ controller.greenColor = greenColor;
 
     void Update()
     {
+        // 如果白皮书未就绪，不执行握手
+        if (WorldModel.Instance == null) return;
+
         foreach (var tl in trafficLights)
         {
             if (tl.controller == null || tl.lightComponent == null) continue;
@@ -322,6 +328,18 @@ controller.greenColor = greenColor;
             string state = tl.controller.GetCurrentState();
             tl.currentState = state;
 
+            // 1. 将底层字符串状态转换为白皮书枚举
+            IntersectionState newState = IntersectionState.Uncontrolled;
+            if (state == "Red") newState = IntersectionState.RedLight;
+            else if (state == "Yellow") newState = IntersectionState.YellowLight;
+            else if (state == "Green") newState = IntersectionState.GreenLight;
+
+            // 2. 事件驱动：只有当红绿灯真正发生跳变时，才写入全局黑板
+            if (tl.lastSyncedState != newState)
+            {
+                WorldModel.Instance.SetIntersectionState(tl.nodeId, newState);
+                tl.lastSyncedState = newState;
+            }
         }
     }
 
@@ -343,4 +361,5 @@ controller.greenColor = greenColor;
             Gizmos.DrawWireSphere(tl.position + Vector3.up * 3f, 1f);
         }
     }
+    
 }
