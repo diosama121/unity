@@ -35,26 +35,25 @@ public class WorldModel : MonoBehaviour
         if (Instance == null) Instance = this;
         else Destroy(gameObject);
 
-        // V2.0 终极启动流水线 (严格保序)
         if (roadGenerator != null)
         {
-            // 1. 纯数据拓扑生成
+            // 1. 生成数学拓扑
             roadGenerator.Generate();
 
-            // 2. 地形高度图初始化
+            // 2. 初始化地形高程底座
             if (terrainGrid != null)
             {
                 Bounds bounds = new Bounds(Vector3.zero, new Vector3(roadGenerator.gridWidth * roadGenerator.cellSize, 100, roadGenerator.gridHeight * roadGenerator.cellSize));
                 terrainGrid.Initialize(bounds);
             }
 
-            // 3. 摄入语义图 (建构真理层)
+            // 3. 摄入图网络，确立真理层
             IngestGraph(roadGenerator);
 
-            // 4. 生成路网实体视觉与地表
+            // 4. 通知渲染层进行视觉构建 (你缺失的核心指令！)
             if (roadBuilder != null) roadBuilder.BuildRoads();
-
-            // 5. 生成红绿灯实体并开启语义同步
+            
+            // 5. 通知交通灯管理器放置实体灯
             if (trafficLightManager != null) trafficLightManager.PlaceTrafficLights();
         }
     }
