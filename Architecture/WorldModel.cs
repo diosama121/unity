@@ -121,4 +121,5 @@ public class WorldModel : MonoBehaviour
         3 => NodeType.Merge,
         _ => NodeType.Intersection
     };
+    
 }

@@ -134,5 +134,25 @@ public static class RoadBooleanUtility
 
         return result.Count > 0 ? result[0] : GenerateCirclePolygon(nodePos, roadWidth * 0.75f);
     }
-
+public void A1_InternalCheck()
+{
+    Debug.Log("=== [a1 内部自检开始] ===");
+    // 1. 检查高度图是否生成
+    if (_heightMap == null) Debug.LogError("❌ [a1] 高度图未初始化！");
+    
+    // 2. 检查路网节点是否超出地形边界
+    if (RoadNetworkGenerator.Instance != null) {
+        foreach(var node in RoadNetworkGenerator.Instance.nodes) {
+            float h = SampleHeight(new Vector2(node.position.x, node.position.z));
+            if (h == 0 && usePerlinNoise) 
+                Debug.LogWarning($"⚠️ [a1] 节点 {node.id} 采样高度为0，可能超出地形边界或噪声未生效。");
+        }
+    }
+    
+    // 3. 检查道路遮罩烘焙状态
+    int maskedCells = 0;
+    foreach(bool b in _roadMask) if(b) maskedCells++;
+    Debug.Log($"ℹ️ [a1] 道路遮罩单元格数量: {maskedCells} / {_roadMask.Length}");
+    Debug.Log("=== [a1 内部自检结束] ===");
+}
 }
