@@ -322,7 +322,7 @@ public class ProceduralRoadBuilder : MonoBehaviour
             new Point64((long)(maxX * 1000.0), (long)(maxZ * 1000.0)),
             new Point64((long)(minX * 1000.0), (long)(maxZ * 1000.0))
         };
-        groundRect = Clipper.MakePath(groundRect);
+      
 
         // 差集得到土地轮廓
         Paths64 terrainPaths = Clipper.Difference(
@@ -405,23 +405,30 @@ public class ProceduralRoadBuilder : MonoBehaviour
     }
 
     // ─── 新增辅助函数（第一层） ────────────────────────────
-    private Paths64 CleanRoadUnion(Paths64 roadUnion)
+   private Paths64 CleanRoadUnion(Paths64 roadUnion)
+{
+    Paths64 cleanUnion = new Paths64();
+
+    foreach (var p in roadUnion)
+        cleanUnion.Add(new Path64(p));
+
+    // 去毛刺、自交残点
+    cleanUnion = Clipper.SimplifyPaths(cleanUnion, 2.0);
+
+    // 去除共线冗余点（逐条处理）
+    Paths64 trimmedUnion = new Paths64();
+    foreach (var path in cleanUnion)
     {
-        Paths64 cleanUnion = new Paths64();
-        foreach (var p in roadUnion)
-            cleanUnion.Add(Clipper.MakePath(p));
-
-        // 去毛刺、自交残点
-        cleanUnion = Clipper.SimplifyPaths(cleanUnion, 2.0);
-        // 去除共线冗余点
-        cleanUnion = Clipper.TrimCollinear(cleanUnion, true);
-
-        // 可选：轮廓膨胀-回缩净化（进一步消除细缝）
-        cleanUnion = Clipper.InflatePaths(cleanUnion, 1.0, JoinType.Round, EndType.Polygon);
-        cleanUnion = Clipper.InflatePaths(cleanUnion, -1.0, JoinType.Round, EndType.Polygon);
-
-        return cleanUnion;
+        trimmedUnion.Add(Clipper.TrimCollinear(path, false));
     }
+    cleanUnion = trimmedUnion;
+
+    // 轮廓膨胀-回缩净化，消除细缝
+    cleanUnion = Clipper.InflatePaths(cleanUnion, 1.0, JoinType.Round, EndType.Polygon);
+    cleanUnion = Clipper.InflatePaths(cleanUnion, -1.0, JoinType.Round, EndType.Polygon);
+
+    return cleanUnion;
+}
 
     // ─── 新增辅助函数（第二层） ────────────────────────────
     private Paths64 FilterTerrainPaths(Paths64 rawPaths)
