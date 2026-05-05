@@ -1,313 +1,264 @@
-using UnityEngine;
 using System.Collections.Generic;
-using System.Linq;
-using UnityEngine.Splines; // 引入 Splines 命名空间
+using UnityEngine;
 
-/// <summary>
-/// 路径规划器 - A* 算法实现 (支持样条线后处理)
-/// </summary>
-public class PathPlanner : MonoBehaviour
+namespace AutonomousSim.Navigation
 {
-    [Header("路网配置")]
-    public GameObject waypointPrefab;
-    public bool showRoadNetwork = true;
-
-    [Header("路径平滑配置")]
-    [Tooltip("路径插值采样密度：数值越大，路径点越密集，贴合度越高")]
-    public int splineSampleCount = 10; 
-
-    [Header("路径规划结果")]
-    public List<Vector3> currentPath = new List<Vector3>();
-    public float totalPathLength = 0f;
-
-    private Dictionary<int, RoadNode> roadNetwork = new Dictionary<int, RoadNode>();
-    private int nextNodeId = 0;
-
-    [System.Serializable]
-    public class RoadNode
+  
+    public class PathPlanner : MonoBehaviour
     {
-        public int id;
-        public Vector3 position;
-        public List<int> neighbors = new List<int>(); 
-        public Dictionary<int, float> edgeCosts = new Dictionary<int, float>(); 
-        
-        // 【新增】存储到邻居节点的 SplineContainer 引用
-        public Dictionary<int, SplineContainer> edgeSplines = new Dictionary<int, SplineContainer>(); 
-
-        public float gCost = float.MaxValue; 
-        public float hCost = 0f;
-        public float fCost => gCost + hCost; 
-        public int parentId = -1;
-
-        public RoadNode(int id, Vector3 position)
+        // A* 算法内部使用的临时节点结构
+        private class PathNode
         {
-            this.id = id;
-            this.position = position;
-        }
-    }
+            public int NodeId;
+            public int ParentId;
+            public float GCost; // 从起点到当前点的实际代价
+            public float HCost; // 从当前点到终点的预估代价
+            public float FCost => GCost + HCost;
 
-    // ========== 路网构建 ==========
-
-    public int AddWaypoint(Vector3 position)
-    {
-        int id = nextNodeId++;
-        RoadNode node = new RoadNode(id, position);
-        roadNetwork[id] = node;
-        return id;
-    }
-
-    /// <summary>
-    /// 连接两个路点，并保存它们之间的 Spline 信息
-    /// </summary>
-    public void ConnectWaypoints(int nodeA, int nodeB, float cost = -1f, SplineContainer spline = null)
-    {
-        if (!roadNetwork.ContainsKey(nodeA) || !roadNetwork.ContainsKey(nodeB))
-        {
-            Debug.LogError("节点不存在！");
-            return;
-        }
-
-        if (cost < 0)
-        {
-            cost = Vector3.Distance(roadNetwork[nodeA].position, roadNetwork[nodeB].position);
-        }
-
-        // 双向连接
-        if (!roadNetwork[nodeA].neighbors.Contains(nodeB))
-        {
-            roadNetwork[nodeA].neighbors.Add(nodeB);
-            roadNetwork[nodeA].edgeCosts[nodeB] = cost;
-            roadNetwork[nodeA].edgeSplines[nodeB] = spline; // 保存 A->B 的样条线
-        }
-
-        if (!roadNetwork[nodeB].neighbors.Contains(nodeA))
-        {
-            roadNetwork[nodeB].neighbors.Add(nodeA);
-            roadNetwork[nodeB].edgeCosts[nodeA] = cost;
-            roadNetwork[nodeB].edgeSplines[nodeA] = spline; // 保存 B->A 的样条线
-        }
-    }
-
-    // (BuildRoadNetworkFromScene 方法保持原有逻辑，但在自动连接时建议传入对应的 SplineContainer)
-
-    // ========== A* 路径规划 ==========
-
-    public List<Vector3> PlanPath(Vector3 startPos, Vector3 goalPos)
-    {
-        int startNodeId = FindNearestNode(startPos);
-        int goalNodeId = FindNearestNode(goalPos);
-
-        if (startNodeId == -1 || goalNodeId == -1)
-        {
-            Debug.LogError("无法找到起点或终点节点！");
-            return new List<Vector3>();
-        }
-
-        return PlanPath(startNodeId, goalNodeId);
-    }
-
-    public List<Vector3> PlanPath(int startNodeId, int goalNodeId)
-    {
-        if (!roadNetwork.ContainsKey(startNodeId) || !roadNetwork.ContainsKey(goalNodeId))
-        {
-            Debug.LogError("起点或终点节点不存在！");
-            return new List<Vector3>();
-        }
-
-        // 重置所有节点状态
-        foreach (var node in roadNetwork.Values)
-        {
-            node.gCost = float.MaxValue;
-            node.hCost = 0f;
-            node.parentId = -1;
-        }
-
-        List<int> openList = new List<int>();
-        HashSet<int> closedList = new HashSet<int>();
-
-        RoadNode startNode = roadNetwork[startNodeId];
-        startNode.gCost = 0f;
-        startNode.hCost = Vector3.Distance(startNode.position, roadNetwork[goalNodeId].position);
-        openList.Add(startNodeId);
-
-        while (openList.Count > 0)
-        {
-            int currentId = openList.OrderBy(id => roadNetwork[id].fCost).First();
-            RoadNode currentNode = roadNetwork[currentId];
-
-            if (currentId == goalNodeId)
+            public PathNode(int id)
             {
-                // 【核心修改】使用带样条线插值的重构方法
-                return ReconstructPathWithSpline(goalNodeId);
+                NodeId = id;
+                ParentId = -1;
+                GCost = float.MaxValue;
+                HCost = 0;
+            }
+        }
+
+        /// <summary>
+        /// 全局路径规划接口 (V2.0 升级版)
+        /// </summary>
+        /// <param name="startPos">世界坐标起点</param>
+        /// <param name="targetPos">世界坐标终点</param>
+        /// <returns>平滑的 CatmullRomSpline 样条线对象</returns>
+        public CatmullRomSpline PlanPath(Vector3 startPos, Vector3 targetPos)
+        {
+            // 1. 极速接入路网：调用 WorldModel 的 O(log N) 接口，告别暴力遍历
+            int startNodeId = WorldModel.Instance.GetNearestNode(startPos).Id;
+            int targetNodeId = WorldModel.Instance.GetNearestNode(targetPos).Id;
+
+            if (startNodeId == -1 || targetNodeId == -1)
+            {
+                Debug.LogWarning("[PathPlanner] 无法在路网中找到有效的起点或终点！");
+                return null;
             }
 
-            openList.Remove(currentId);
-            closedList.Add(currentId);
+            // 2. 执行 A* 算法，获取路点 ID 序列
+            List<int> pathIds = RunAStar(startNodeId, targetNodeId);
+            if (pathIds == null || pathIds.Count == 0) return null;
 
-            foreach (int neighborId in currentNode.neighbors)
+            // 3. 将 ID 序列转换为世界坐标序列
+            List<Vector3> pathPoints = new List<Vector3>();
+            foreach (int id in pathIds)
             {
-                if (closedList.Contains(neighborId)) continue;
+                // 向 WorldModel 请求节点的世界坐标
+                Vector3 nodePos = WorldModel.Instance.GetNode(id).WorldPos; 
+                pathPoints.Add(nodePos);
+            }
 
-                RoadNode neighbor = roadNetwork[neighborId];
-                float tentativeGCost = currentNode.gCost + currentNode.edgeCosts[neighborId];
+            // 4. 生成并返回平滑的 Catmull-Rom 样条线
+            return new CatmullRomSpline(pathPoints);
+        }
 
-                if (tentativeGCost < neighbor.gCost)
+        // 经典的 A* 启发式图搜索算法
+        private List<int> RunAStar(int startId, int targetId)
+        {
+            List<PathNode> openSet = new List<PathNode>();
+            HashSet<int> closedSet = new HashSet<int>();
+            Dictionary<int, PathNode> allNodes = new Dictionary<int, PathNode>();
+
+            PathNode startNode = new PathNode(startId);
+            startNode.GCost = 0;
+            startNode.HCost = GetDistance(startId, targetId);
+            openSet.Add(startNode);
+            allNodes[startId] = startNode;
+
+            while (openSet.Count > 0)
+            {
+                // 找出 FCost 最小的节点
+                PathNode currentNode = openSet[0];
+                int currentIndex = 0;
+                for (int i = 1; i < openSet.Count; i++)
                 {
-                    neighbor.parentId = currentId;
-                    neighbor.gCost = tentativeGCost;
-                    neighbor.hCost = Vector3.Distance(neighbor.position, roadNetwork[goalNodeId].position);
-
-                    if (!openList.Contains(neighborId))
+                    if (openSet[i].FCost < currentNode.FCost)
                     {
-                        openList.Add(neighborId);
+                        currentNode = openSet[i];
+                        currentIndex = i;
+                    }
+                }
+
+                openSet.RemoveAt(currentIndex);
+                closedSet.Add(currentNode.NodeId);
+
+                // 到达终点，重构路径
+                if (currentNode.NodeId == targetId)
+                {
+                    return ReconstructPath(currentNode, allNodes);
+                }
+
+                // 获取邻接节点 (向 WorldModel 请求拓扑结构)
+                int[] neighbors = WorldModel.Instance.GetNode(currentNode.NodeId).NeighborIds.ToArray();
+                
+                foreach (int neighborId in neighbors)
+                {
+                    if (closedSet.Contains(neighborId)) continue;
+
+                    float tentativeGCost = currentNode.GCost + GetDistance(currentNode.NodeId, neighborId);
+
+                    PathNode neighborNode;
+                    if (!allNodes.ContainsKey(neighborId))
+                    {
+                        neighborNode = new PathNode(neighborId);
+                        allNodes[neighborId] = neighborNode;
+                        openSet.Add(neighborNode);
+                    }
+                    else
+                    {
+                        neighborNode = allNodes[neighborId];
+                    }
+
+                    if (tentativeGCost < neighborNode.GCost)
+                    {
+                        neighborNode.ParentId = currentNode.NodeId;
+                        neighborNode.GCost = tentativeGCost;
+                        neighborNode.HCost = GetDistance(neighborId, targetId);
                     }
                 }
             }
+
+            return null; // 无路可走
         }
 
-        Debug.LogWarning("未找到路径！");
-        return new List<Vector3>();
+        // 路径重构
+        private List<int> ReconstructPath(PathNode endNode, Dictionary<int, PathNode> allNodes)
+        {
+            List<int> path = new List<int>();
+            PathNode current = endNode;
+            while (current != null)
+            {
+                path.Add(current.NodeId);
+                current = allNodes.ContainsKey(current.ParentId) ? allNodes[current.ParentId] : null;
+            }
+            path.Reverse();
+            return path;
+        }
+
+        // 辅助函数：计算两点间的欧几里得距离 (作为 HCost 启发值和 GCost 增量)
+        private float GetDistance(int idA, int idB)
+        {
+            Vector3 posA = WorldModel.Instance.GetNode(idA).WorldPos;
+            Vector3 posB = WorldModel.Instance.GetNode(idB).WorldPos;
+            return Vector3.Distance(posA, posB);
+        }
     }
-
-    /// <summary>
-    /// 【新增】重构路径并进行样条线密集采样
-    /// </summary>
-    private List<Vector3> ReconstructPathWithSpline(int goalNodeId)
+      public class CatmullRomSpline
     {
-        List<Vector3> smoothPath = new List<Vector3>();
-        List<int> nodeIdPath = new List<int>();
+        public List<Vector3> ControlPoints { get; private set; }
+        public float TotalLength { get; private set; }
         
-        // 1. 先回溯得到节点ID序列
-        int currentId = goalNodeId;
-        while (currentId != -1)
+        // 预烘焙的累积长度表，用于车辆根据行驶距离反推曲线上的位置
+        private List<float> _cumulativeLengths;
+        private const int SAMPLES_PER_SEGMENT = 10; // 每段控制点的采样密度
+
+        public CatmullRomSpline(List<Vector3> controlPoints)
         {
-            nodeIdPath.Add(currentId);
-            currentId = roadNetwork[currentId].parentId;
+            ControlPoints = controlPoints;
+            BakeCurve();
         }
-        nodeIdPath.Reverse(); // 此时为：起点 -> ... -> 终点
 
-        if (nodeIdPath.Count < 2) return smoothPath;
-
-        float totalLength = 0f;
-
-        // 2. 遍历每一段路段，进行样条线采样
-        for (int i = 0; i < nodeIdPath.Count - 1; i++)
+        // 预烘焙：计算曲线总长并建立“距离-t值”映射表
+        private void BakeCurve()
         {
-            int fromId = nodeIdPath[i];
-            int toId = nodeIdPath[i + 1];
+            if (ControlPoints == null || ControlPoints.Count < 2) return;
+
+            _cumulativeLengths = new List<float> { 0f };
+            TotalLength = 0f;
+            Vector3 lastPoint = GetPoint(0f);
             
-            RoadNode fromNode = roadNetwork[fromId];
-            RoadNode toNode = roadNetwork[toId];
-
-            // 获取这段路对应的 SplineContainer
-            SplineContainer container = fromNode.edgeSplines[toId];
-
-            if (container != null && container.Spline != null && container.Spline.Count > 0)
+            // 遍历每一段进行高频采样，累加逼近真实弧长
+            for (int i = 0; i < ControlPoints.Count - 1; i++)
             {
-                Spline spline = container.Spline;
-                
-                // 获取该路段在 Spline 中的索引 (假设是双向连接的第一个有效路段)
-                // 实际项目中，建议在 ConnectWaypoints 时直接记录 splineIndex
-                int splineIndex = 0; 
-                
-                // 计算方向一致性：检查 Spline 的起点是否更接近 fromNode
-                Vector3 splineStart = spline[0].Position;
-                Vector3 splineEnd = spline[spline.Count - 1].Position;
-                
-                bool isForward = Vector3.Distance(splineStart, fromNode.position) < Vector3.Distance(splineEnd, fromNode.position);
-
-                // 密集采样
-                for (int s = 0; s < splineSampleCount; s++)
+                for (int j = 1; j <= SAMPLES_PER_SEGMENT; j++)
                 {
-                    float t = (float)s / (splineSampleCount - 1);
+                    float tSegment = (float)j / SAMPLES_PER_SEGMENT;
+                    // 将局部 t 映射到全局 t
+                    float globalT = (i + tSegment) / (ControlPoints.Count - 1);
                     
-                    // 根据方向调整 t 值
-                    float evalT = isForward ? t : (1 - t);
+                    Vector3 currentPoint = GetPoint(globalT);
+                    float segmentLen = Vector3.Distance(lastPoint, currentPoint);
                     
-                    Vector3 sampledPos = container.EvaluatePosition(splineIndex, evalT);
+                    TotalLength += segmentLen;
+                    _cumulativeLengths.Add(TotalLength);
                     
-                    // 避免重复点（上一段的终点是下一段的起点）
-                    if (smoothPath.Count > 0 && Vector3.Distance(smoothPath[smoothPath.Count - 1], sampledPos) < 0.01f)
-                        continue;
-                        
-                    smoothPath.Add(sampledPos);
+                    lastPoint = currentPoint;
                 }
-                
-                // 累加真实曲线长度（近似）
-                totalLength += Vector3.Distance(fromNode.position, toNode.position); 
-            }
-            else
-            {
-                // 如果没有样条线，退化为直线连接
-                smoothPath.Add(fromNode.position);
-                totalLength += Vector3.Distance(fromNode.position, toNode.position);
             }
         }
 
-        // 确保添加终点
-        smoothPath.Add(roadNetwork[nodeIdPath[nodeIdPath.Count - 1]].position);
+        /// <summary>
+        /// 获取样条线上 t (0~1) 处的世界坐标
+        /// </summary>
+        public Vector3 GetPoint(float t)
+        {
+            int numPoints = ControlPoints.Count;
+            t = Mathf.Clamp01(t);
+            
+            // 映射 t 到具体的线段索引
+            float scaledT = t * (numPoints - 1);
+            int segmentIndex = Mathf.FloorToInt(scaledT);
+            
+            // 边界保护
+            if (segmentIndex >= numPoints - 1) return ControlPoints[numPoints - 1];
+            
+            float localT = scaledT - segmentIndex;
 
-        currentPath = smoothPath;
-        totalPathLength = totalLength;
+            // 获取四个控制点 (P0, P1, P2, P3)，边界采用钳制策略
+            int p0 = Mathf.Max(0, segmentIndex - 1);
+            int p1 = segmentIndex;
+            int p2 = segmentIndex + 1;
+            int p3 = Mathf.Min(numPoints - 1, segmentIndex + 2);
+
+            return CalculateCatmullRom(
+                ControlPoints[p0], 
+                ControlPoints[p1], 
+                ControlPoints[p2], 
+                ControlPoints[p3], 
+                localT
+            );
+        }
+
+        // 标准的 Catmull-Rom 插值数学公式
+        private Vector3 CalculateCatmullRom(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t)
+        {
+            float t2 = t * t;
+            float t3 = t2 * t;
+
+            return 0.5f * (
+                (2f * p1) +
+                (-p0 + p2) * t +
+                (2f * p0 - 5f * p1 + 4f * p2 - p3) * t2 +
+                (-p0 + 3f * p1 - 3f * p2 + p3) * t3
+            );
+        }
         
-        Debug.Log($"路径规划成功（样条线版）：{smoothPath.Count} 个密集采样点，总长度 {totalLength:F2} 米");
-        return smoothPath;
-    }
-
-    // (FindNearestNode, OnDrawGizmos, GetRoadNetwork 等其他方法保持不变)
-    private int FindNearestNode(Vector3 position)
-    {
-        if (roadNetwork.Count == 0) return -1;
-        int nearestId = -1;
-        float minDistance = float.MaxValue;
-        foreach (var node in roadNetwork.Values)
+        /// <summary>
+        /// 根据实际行驶距离 s 获取归一化 t 值 (用于车辆恒速控制)
+        /// </summary>
+        public float GetTFromLength(float length)
         {
-            float distance = Vector3.Distance(position, node.position);
-            if (distance < minDistance)
+            if (TotalLength <= 0) return 0;
+            length = Mathf.Clamp(length, 0, TotalLength);
+            
+            // 在累积长度表中查找对应的位置
+            for (int i = 0; i < _cumulativeLengths.Count - 1; i++)
             {
-                minDistance = distance;
-                nearestId = node.id;
-            }
-        }
-        return nearestId;
-    }
-
-    void OnDrawGizmos()
-    {
-        if (!showRoadNetwork) return;
-        Gizmos.color = Color.blue;
-        foreach (var node in roadNetwork.Values)
-        {
-            Gizmos.DrawSphere(node.position, 1f);
-        }
-        Gizmos.color = Color.cyan;
-        foreach (var node in roadNetwork.Values)
-        {
-            foreach (int neighborId in node.neighbors)
-            {
-                if (roadNetwork.ContainsKey(neighborId))
+                if (_cumulativeLengths[i+1] >= length)
                 {
-                    Gizmos.DrawLine(node.position, roadNetwork[neighborId].position);
+                    float segmentLen = _cumulativeLengths[i+1] - _cumulativeLengths[i];
+                    float localT = (length - _cumulativeLengths[i]) / segmentLen;
+                    return (i + localT) / (_cumulativeLengths.Count - 1);
                 }
             }
+            return 1f;
         }
-        if (currentPath.Count > 1)
-        {
-            Gizmos.color = Color.green;
-            for (int i = 0; i < currentPath.Count - 1; i++)
-            {
-                Gizmos.DrawLine(currentPath[i], currentPath[i + 1]);
-            }
-        }
-    }
-
-    public Dictionary<int, RoadNode> GetRoadNetwork() { return roadNetwork; }
-    public List<Vector3> GetCurrentPath() { return currentPath; }
-    public void ResetNetwork()
-    {
-        roadNetwork.Clear();
-        currentPath.Clear();
-        nextNodeId = 0;
-        totalPathLength = 0f;
     }
 }
