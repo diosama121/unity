@@ -78,7 +78,16 @@ public class SceneManager_AutoDrive : MonoBehaviour
         }
         else
         {
-            pathPlanner.BuildRoadNetworkFromScene();
+            ProceduralRoadBuilder roadBuilder = GetComponent<ProceduralRoadBuilder>();
+roadBuilder.BuildRoads(); // 调用 a1 的核心函数
+
+// 2. a2: 路径规划准备 - PathPlanner 读取已生成的图数据
+// (注意：此处 PathPlanner 不生成 Mesh，只读取数据)
+PathPlanner pathPlanner = GetComponent<PathPlanner>();
+
+
+// 3. a3: 性能收口 - 在确认 a2 已读取数据后，执行合批
+RoadMeshCombiner.CombineRoadMeshes(roadBuilder.transform); 
         }
 
         SpawnVehicle();

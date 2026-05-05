@@ -42,7 +42,6 @@ public class SimpleAutoDrive : MonoBehaviour
     private float startupDelay = 0f;
     private bool isReversing = false;
     private float reverseTimer = 0f;
-    private float reverseDuration = 1.5f;
 
     // 防卡死
     private float stuckTimer = 0.3f;
