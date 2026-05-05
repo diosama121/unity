@@ -72,108 +72,72 @@ public class RoadNetworkGenerator : MonoBehaviour
     // 生命周期
     // =============================================
 
-    public void Generate()
+   public void Generate()
     {
-        // 初始化随机种子，确保可重复生成
-        UnityEngine.Random.InitState(seed);
-
-        // 1. 清空现有数据
+        // 1. 初始化与清空脏数据
         nodes.Clear();
         edges.Clear();
         roadSegments.Clear();
+        
+        // 【a4 核心修复】：消除命名空间歧义，绝对激活 V1.0 的种子系统！
+        UnityEngine.Random.InitState(seed);
 
-        // 2. 生成网格节点
-        for (int row = 0; row < gridHeight; row++)
+        // 2. 生成纯数学节点 (Nodes)
+        for (int z = 0; z < gridHeight; z++)
         {
-            for (int col = 0; col < gridWidth; col++)
+            for (int x = 0; x < gridWidth; x++)
             {
-                // 基础坐标：列 -> X轴，行 -> Z轴（即世界坐标 XZ 平面）
-                float baseX = col * cellSize;
-                float baseZ = row * cellSize;
-
-                // 随机偏移
                 float offsetX = UnityEngine.Random.Range(-randomOffset, randomOffset);
                 float offsetZ = UnityEngine.Random.Range(-randomOffset, randomOffset);
+                
+                // 边缘节点不加偏移，保证路网外围是个整齐的矩形
+                if (x == 0 || x == gridWidth - 1) offsetX = 0;
+                if (z == 0 || z == gridHeight - 1) offsetZ = 0;
 
-                Vector3 position = new Vector3(baseX + offsetX, 0f, baseZ + offsetZ);
-
-                WaypointNode node = new WaypointNode
-                {
-                    id = nodes.Count,
-                    position = position,
-                    neighbors = new List<int>()
-                };
+                Vector3 pos = new Vector3(x * cellSize + offsetX, 0, z * cellSize + offsetZ);
+                
+                WaypointNode node = new WaypointNode();
+                node.id = nodes.Count; // 严格按顺序分配 ID
+                node.position = pos;
+                node.neighbors = new List<int>();
                 nodes.Add(node);
             }
         }
 
-        // 3. 建立边（四邻域：右、下）
-        for (int row = 0; row < gridHeight; row++)
+        // 3. 生成拓扑连线 (Edges) 与邻居关系 (Neighbors)
+        for (int z = 0; z < gridHeight; z++)
         {
-            for (int col = 0; col < gridWidth; col++)
+            for (int x = 0; x < gridWidth; x++)
             {
-                int currentId = row * gridWidth + col;
+                int currentIndex = z * gridWidth + x;
 
-                // 连接右边节点
-                if (col < gridWidth - 1)
+                // 向右侧连线 (防越界：x < gridWidth - 1)
+                if (x < gridWidth - 1)
                 {
-                    int rightId = row * gridWidth + (col + 1);
-                    AddEdge(currentId, rightId);
+                    int rightIndex = z * gridWidth + (x + 1);
+                    if (UnityEngine.Random.value > connectionRemoveRate) // 随机挖空机制
+                    {
+                        nodes[currentIndex].neighbors.Add(rightIndex);
+                        nodes[rightIndex].neighbors.Add(currentIndex);
+                        edges.Add((currentIndex, rightIndex));
+                    }
                 }
 
-                // 连接下方节点
-                if (row < gridHeight - 1)
+                // 向上方连线 (防越界：z < gridHeight - 1)
+                if (z < gridHeight - 1)
                 {
-                    int downId = (row + 1) * gridWidth + col;
-                    AddEdge(currentId, downId);
+                    int topIndex = (z + 1) * gridWidth + x;
+                    if (UnityEngine.Random.value > connectionRemoveRate)
+                    {
+                        nodes[currentIndex].neighbors.Add(topIndex);
+                        nodes[topIndex].neighbors.Add(currentIndex);
+                        edges.Add((currentIndex, topIndex));
+                    }
                 }
             }
         }
 
-        // 4. 随机移除部分边（维护连通性不做保证，仅用于视觉多样性）
-        if (connectionRemoveRate > 0f && edges.Count > 0)
-        {
-            int removeCount = Mathf.RoundToInt(edges.Count * connectionRemoveRate);
-            if (removeCount > 0)
-            {
-                // 打乱现有边列表的索引
-                List<int> edgeIndices = new List<int>(edges.Count);
-                for (int i = 0; i < edges.Count; i++) edgeIndices.Add(i);
-                ShuffleList(edgeIndices);
-
-                // 移除前 removeCount 条边
-                for (int i = 0; i < removeCount; i++)
-                {
-                    int idx = edgeIndices[i];
-                    var edge = edges[idx];
-                    RemoveEdge(edge.Item1, edge.Item2);
-                }
-
-                // 清理 edges 中被标记为无效的条目（在 RemoveEdge 中已经移除，但为了安全重新构建 edges 列表）
-                edges.RemoveAll(e => !nodes[e.Item1].neighbors.Contains(e.Item2));
-            }
-        }
-
-        // 5. 构建 RoadSegment 列表（便于后续道路生成）
-        foreach (var edge in edges)
-        {
-            RoadSegment seg = new RoadSegment
-            {
-                start = nodes[edge.Item1].position,
-                end = nodes[edge.Item2].position,
-                startNodeId = edge.Item1,
-                endNodeId = edge.Item2
-            };
-            roadSegments.Add(seg);
-        }
-
-        // 6. （可选）自动连接 PathPlanner —— 保留原有逻辑但不强制依赖
-        if (autoLinkPathPlanner && pathPlanner != null)
-        {
-          //待实现。
-        }
-
-        Debug.Log($"[RoadNetworkGenerator] 路网生成完毕：节点 {nodes.Count}，边 {edges.Count}");
+        Debug.Log($"[RoadNetworkGenerator] 🟢 拓扑生成完毕! 节点数: {nodes.Count}, 边数: {edges.Count}");
     }
 
     // =============================================
@@ -224,7 +188,6 @@ public class RoadNetworkGenerator : MonoBehaviour
 
     void Start()
     {
-        if (generateOnStart) Generate();
     }
 
     void OnValidate()
