@@ -356,7 +356,8 @@ controller.greenColor = greenColor;
             Color c = tl.currentState == "Red" ? Color.red :
                       tl.currentState == "Yellow" ? Color.yellow :
                       tl.currentState == "Green" ? Color.green : Color.white;
-
+ 
+ 
             Gizmos.color = c;
             Gizmos.DrawWireSphere(tl.position + Vector3.up * 3f, 1f);
         }
