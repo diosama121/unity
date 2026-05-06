@@ -85,4 +85,34 @@ public static class RoadMeshUtility
         mesh.RecalculateNormals();
         return mesh;
     }
+    public static Mesh BuildRoadMesh(List<Vector3[]> allQuads)
+{
+    if (allQuads == null || allQuads.Count == 0) return null;
+
+    List<Vector3> verts = new List<Vector3>();
+    List<int> tris = new List<int>();
+
+    foreach (var quad in allQuads)
+    {
+        // quad 顺序：左前, 右前, 右后, 左后
+        if (quad.Length != 4) continue;
+        int startIdx = verts.Count;
+        verts.AddRange(quad);
+
+        // 两个三角形：0-1-2, 0-2-3
+        tris.Add(startIdx + 0);
+        tris.Add(startIdx + 1);
+        tris.Add(startIdx + 2);
+        tris.Add(startIdx + 0);
+        tris.Add(startIdx + 2);
+        tris.Add(startIdx + 3);
+    }
+
+    Mesh mesh = new Mesh();
+    mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+    mesh.SetVertices(verts);
+    mesh.SetTriangles(tris, 0);
+    mesh.RecalculateNormals();
+    return mesh;
+}
 }

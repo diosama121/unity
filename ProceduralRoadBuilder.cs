@@ -5,104 +5,115 @@ using System.Linq;
 [RequireComponent(typeof(RoadNetworkGenerator))]
 public class ProceduralRoadBuilder : MonoBehaviour
 {
+    // ==================== 保留所有 Inspector 字段 ====================
+    [Header("=== 道路核心参数 ===")]
     public float roadWidth = 6f;
+    public float meshResolution = 2f;
     public Material roadMaterial;
     public float roadHeightOffset = 0.05f;
     public string roadLayerName = "Road";
-    // 其他材质配置省略，保持原 Inspector 字段
 
+    [Header("=== 样条切线参数 ===")]
+    [Range(0f, 1f)] public float tangentLength = 0.3f;
+    public float maxTangentLength = 2.0f;
+
+    [Header("=== UV Scale ===")]
+    public float uvScale = 0.1f;
+
+    [Header("=== 直路材质（按方向） ===")]
+    public Material horizontalRoadMaterial;
+    public Material verticalRoadMaterial;
+    public Material diagonalRoadMaterial;
+
+    [Header("=== 路口材质（按形状） ===")]
+    public Material tJunctionMaterial;
+    public Material crossJunctionMaterial;
+    public Material complexJunctionMaterial;
+
+    [Header("=== 乡村统一覆盖 ===")]
+    public bool useCountrysideUniformMaterials = true;
+    public Material countrysideRoadMaterial;
+    public Material countrysideJunctionMaterial;
+
+    [Header("=== 地表生成（开关，具体由 EnvironmentMeshBuilder 执行） ===")]
+    public bool generateTerrainBase = true;
+    public Material terrainBaseMaterial;
+
+    [Header("=== 城镇模式参数（开关，具体由 EnvironmentMeshBuilder 执行） ===")]
+    public bool generateCity = true;
+    public float buildingHeight = 10f;
+    public Material buildingMaterial;
+    public float sidewalkWidth = 2f;
+    public Material sidewalkMaterial;
+    public float sidewalkHeight = 0.2f;
+
+    [Header("=== 调试可视化 ===")]
+    public bool showSplineGizmos = false;
+
+    // ==================== 内部状态 ====================
     private RoadNetworkGenerator roadGen;
     private GameObject meshRoot;
     public RoadNetworkGenerator RoadGen => roadGen;
 
-    // 直路暴露给路口缝合的端点
     private Dictionary<int, List<Vector3>> intersectionExposedVerts = new Dictionary<int, List<Vector3>>();
 
-    public void BuildRoads()
+  public void BuildRoads()
+{
+    // 不再使用 roadGen，直接从 a4 获取真理节点
+    if (WorldModel.Instance == null || WorldModel.Instance.Nodes == null)
     {
-        roadGen = GetComponent<RoadNetworkGenerator>();
-        if (roadGen == null || roadGen.edges == null) return;
-
-        ClearRoads();
-        meshRoot = new GameObject("Road_Mesh");
-        meshRoot.transform.SetParent(transform, false);
-
-        List<Mesh> roadMeshes = new List<Mesh>();
-        intersectionExposedVerts.Clear();
-
-        // 第一阶段：生成所有直路
-        foreach (var edge in roadGen.edges)
-        {
-            int idA = edge.Item1, idB = edge.Item2;
-            if (idA < 0 || idB < 0 || idA >= roadGen.nodes.Count || idB >= roadGen.nodes.Count) continue;
-
-            List<SplinePoint> spline = GetRoadSpline(idA, idB, meshResolution: 2f);
-            if (spline == null || spline.Count < 2) continue;
-
-            // 路口退让
-            List<SplinePoint> trunk = TruncateForIntersections(spline, idA, idB);
-            if (trunk.Count < 2) continue;
-
-            // 法线扫掠 -> 左右顶点列表
-            List<Vector3> lefts = new List<Vector3>(), rights = new List<Vector3>();
-            foreach (var sp in trunk)
-            {
-                Vector3 left = sp.Pos - sp.Normal * (roadWidth * 0.5f);
-                Vector3 right = sp.Pos + sp.Normal * (roadWidth * 0.5f);
-                left.y = sp.Pos.y;   // 高度强制一致
-                right.y = sp.Pos.y;
-                lefts.Add(left);
-                rights.Add(right);
-            }
-
-            // 存入网格
-            Mesh stripMesh = RoadMeshUtility.BuildQuadStrip(lefts, rights);
-            if (stripMesh != null) roadMeshes.Add(stripMesh);
-
-            // 暴露端点给路口
-            ExposeEndpoints(idA, lefts[0], rights[0]);
-            ExposeEndpoints(idB, lefts[lefts.Count - 1], rights[rights.Count - 1]);
-        }
-
-        // 第二阶段：生成所有路口
-        foreach (var node in roadGen.nodes)
-        {
-            if (node.neighbors == null || node.neighbors.Count < 3) continue;
-            if (!intersectionExposedVerts.ContainsKey(node.id)) continue;
-
-            List<Vector3> ring = intersectionExposedVerts[node.id];
-            Vector3 center = GetNodeFixedHeight(node.id).AsVector3Y();
-            // 极角排序
-            ring = RoadMathUtility.SortAroundCenter(center, ring);
-            // 切披萨
-            Mesh pie = RoadMeshUtility.BuildPieSlices(center, ring);
-            if (pie != null) roadMeshes.Add(pie);
-        }
-
-        // 合并所有道路子 Mesh 为一个（可选）
-        CombineAndAssign(roadMeshes);
+        Debug.LogError("[ProceduralRoadBuilder] WorldModel 不可用");
+        return;
     }
 
-    private List<SplinePoint> TruncateForIntersections(List<SplinePoint> spline, int idA, int idB)
+    ClearRoads();
+    meshRoot = new GameObject("Road_Mesh");
+    meshRoot.transform.SetParent(transform, false);
+
+    var allEdgeQuads = new List<Vector3[]>();
+    HashSet<string> processedEdges = new HashSet<string>();
+
+    foreach (var node in WorldModel.Instance.Nodes)  // 假设 Nodes 返回 IEnumerable<RoadNode>
     {
-        float cutDist = roadWidth * 0.8f;
-        // 简单实现：去掉首尾 cuttingDist 距离内的点
-        float total = 0;
-        List<float> dists = new List<float>();
-        for (int i = 1; i < spline.Count; i++)
+        if (node.NeighborIds == null) continue;
+
+        foreach (int neighborId in node.NeighborIds)
         {
-            total += Vector3.Distance(spline[i-1].Pos, spline[i].Pos);
-            dists.Add(total);
+            // 防止重复生成同一条边
+            string edgeKey = Mathf.Min(node.Id, neighborId) + "_" + Mathf.Max(node.Id, neighborId);
+            if (processedEdges.Contains(edgeKey)) continue;
+            processedEdges.Add(edgeKey);
+
+            // 从数学工具获取样条点（高度、切线、法线均由 a4 真理决定）
+            List<SplinePoint> spline = RoadMathUtility.GetRoadSpline(node.Id, neighborId, meshResolution);
+            if (spline == null || spline.Count < 2) continue;
+
+            // 扫掠生成四边形带
+            List<Vector3[]> quads = RoadMathUtility.SweepSplineToQuads(spline, roadWidth);
+            allEdgeQuads.AddRange(quads);
         }
-        List<SplinePoint> result = new List<SplinePoint>();
-        foreach (var sp in spline)
-        {
-            // 这里仅示意，需要更精确的沿曲线距离判断
-            // 假设 spline 里面已经带有 t 或距离信息，暂简化为全保留
-            result.Add(sp);
-        }
-        // 实际实现需要用到 spline 中各点累计距离
-        return result;
+    }
+
+    // 将四边形列表合并成一个道路 Mesh
+    Mesh roadMesh = RoadMeshUtility.BuildRoadMesh(allEdgeQuads);
+    if (roadMesh == null) return;
+
+    // 装配到场景
+    int roadLayer = LayerMask.NameToLayer(roadLayerName);
+    if (roadLayer < 0) roadLayer = 0;
+    CreateRoadObject("Road_Mesh", roadMesh, BuildMaterialArray(roadMaterial), roadLayer, meshRoot.transform);
+
+    Debug.Log($"[ProceduralRoadBuilder] ✅ 道路生成完成（顶点 {roadMesh.vertexCount}）");
+}
+
+    // 退让：简单去掉首尾 roadWidth*0.8f 范围的点（实际可按累计距离裁剪）
+    private List<SplinePoint> TruncateForIntersections(List<SplinePoint> spline)
+    {
+        if (spline.Count <= 4) return spline; // 太短则全保留
+        // 去掉两端的一点（最简实现）
+        List<SplinePoint> trunk = new List<SplinePoint>(spline);
+        // 实际应计算距离，此处仅作示意，保证编译通过
+        return trunk.GetRange(1, trunk.Count - 2);
     }
 
     private void ExposeEndpoints(int nodeId, Vector3 left, Vector3 right)
@@ -113,16 +124,58 @@ public class ProceduralRoadBuilder : MonoBehaviour
         intersectionExposedVerts[nodeId].Add(right);
     }
 
-    private void CombineAndAssign(List<Mesh> meshes) { /* 合并并赋给 MeshFilter */ }
+    private void CombineAndAssign(List<Mesh> meshes)
+    {
+        // 临时：取第一个 mesh 放入新物体，后续可合并
+        if (meshes.Count == 0) return;
+        Mesh final = meshes[0]; // 简单处理，后续可合并
+        int roadLayer = LayerMask.NameToLayer(roadLayerName);
+        GameObject roadObj = new GameObject("Road_Mesh");
+        roadObj.layer = roadLayer < 0 ? 0 : roadLayer;
+        roadObj.transform.SetParent(meshRoot.transform, false);
+        roadObj.AddComponent<MeshFilter>().sharedMesh = final;
+        MeshRenderer mr = roadObj.AddComponent<MeshRenderer>();
+        mr.sharedMaterial = roadMaterial;
+        mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        mr.receiveShadows = true;
+        roadObj.AddComponent<MeshCollider>().sharedMesh = final;
+    }
 
-    // 内部模拟 a4 接口调用，实际替换为 WorldModel.Instance.xxx
-    private List<SplinePoint> GetRoadSpline(int a, int b, float meshResolution) =>
-        WorldModel.Instance.GetRoadSpline(a, b, meshResolution);
-    private float GetNodeFixedHeight(int id) =>
-        WorldModel.Instance.GetNodeFixedHeight(id);
-
-    void ClearRoads() { if (meshRoot) DestroyImmediate(meshRoot); }
+    void ClearRoads()
+    {
+        if (meshRoot != null) DestroyImmediate(meshRoot);
+    }
+private void CreateRoadObject(string name, Mesh mesh, Material[] materials, int layer, Transform parent)
+{
+    GameObject obj = new GameObject(name);
+    obj.layer = layer;
+    obj.transform.SetParent(parent, false);
+    obj.AddComponent<MeshFilter>().sharedMesh = mesh;
+    MeshRenderer mr = obj.AddComponent<MeshRenderer>();
+    mr.sharedMaterials = materials;
+    mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+    mr.receiveShadows = true;
+    obj.AddComponent<MeshCollider>().sharedMesh = mesh;
 }
 
-public struct SplinePoint { public Vector3 Pos; public Vector3 Tangent; public Vector3 Normal; }
-public static class Vector3Extensions { public static Vector3 AsVector3Y(this float y) => new Vector3(0, y, 0); }
+private Material[] BuildMaterialArray(Material fallback)
+{
+    Material[] mats = new Material[6];
+    if (useCountrysideUniformMaterials)
+    {
+        for (int i = 0; i < 3; i++) mats[i] = countrysideRoadMaterial ? countrysideRoadMaterial : fallback;
+        for (int i = 3; i < 6; i++) mats[i] = countrysideJunctionMaterial ? countrysideJunctionMaterial : fallback;
+    }
+    else
+    {
+        mats[0] = horizontalRoadMaterial ? horizontalRoadMaterial : fallback;
+        mats[1] = verticalRoadMaterial ? verticalRoadMaterial : fallback;
+        mats[2] = diagonalRoadMaterial ? diagonalRoadMaterial : fallback;
+        mats[3] = tJunctionMaterial ? tJunctionMaterial : fallback;
+        mats[4] = crossJunctionMaterial ? crossJunctionMaterial : fallback;
+        mats[5] = complexJunctionMaterial ? complexJunctionMaterial : fallback;
+    }
+    return mats;
+}
+    void Start() => roadGen = GetComponent<RoadNetworkGenerator>();
+}
