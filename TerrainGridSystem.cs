@@ -33,13 +33,13 @@ public class TerrainGridSystem : MonoBehaviour
     private MeshFilter _meshFilter;
     private MeshRenderer _meshRenderer;
 
-   private void Awake()
-{
-    if (cellSize > 2.0f)
+    private void Awake()
     {
-        Debug.LogWarning($"[TerrainGrid] cellSize {cellSize} 过大，强制设为 2.0m 以保证道路插值精度。");
-        cellSize = 2.0f;
-    }
+        if (cellSize > 2.0f)
+        {
+            Debug.LogWarning($"[TerrainGrid] cellSize {cellSize} 过大，强制设为 2.0m 以保证道路插值精度。");
+            cellSize = 2.0f;
+        }
         if (Instance != null)
         {
             Destroy(gameObject);
@@ -55,11 +55,26 @@ public class TerrainGridSystem : MonoBehaviour
     }
 
     /// <summary>
-    /// 根据路网包围盒初始化地形网格（不含道路遮罩）。
+    /// 根据路网包围盒初始化地形网格（强制扩展安全边距）
     /// </summary>
     public void Initialize(Bounds bounds)
     {
+        // ==========================================
+        // 【a1 地形真理防线】强制扩大包围盒，防止边缘道路膨胀后越界
+        // ==========================================
+        bounds.Expand(100f); // 四周各外扩50米的安全冗余
         GenerateHeightMap(bounds);
+        GenerateTerrainMesh();
+    }
+
+    /// <summary>
+    /// 重新初始化（同样应用安全边距）
+    /// </summary>
+    public void Reinitialize(Bounds bounds)
+    {
+        bounds.Expand(100f); // 安全冗余
+        GenerateHeightMap(bounds);
+        _roadMask = new bool[_dimX - 1, _dimZ - 1];   // 清空遮罩
         GenerateTerrainMesh();
     }
 
@@ -82,7 +97,6 @@ public class TerrainGridSystem : MonoBehaviour
         {
             for (int j = 0; j < cellCountZ; j++)
             {
-                // 单元格中心点
                 float cx = _minX + (i + 0.5f) * cellSize;
                 float cz = _minZ + (j + 0.5f) * cellSize;
                 Vector2 point = new Vector2(cx, cz);
@@ -116,7 +130,6 @@ public class TerrainGridSystem : MonoBehaviour
     public float SampleHeight(Vector2 worldXZ)
     {
         if (_heightMap == null) return 0f;
-        // 映射到网格空间，注意 Vector2.y 对应世界 Z 轴
         float fx = (worldXZ.x - _minX) / cellSize;
         float fz = (worldXZ.y - _minZ) / cellSize;
 
@@ -142,9 +155,6 @@ public class TerrainGridSystem : MonoBehaviour
         return Mathf.Lerp(h0, h1, tz);
     }
 
-    /// <summary>
-    /// 便捷方法，供 WorldModel 直接使用 (float, float) 参数。
-    /// </summary>
     public float GetHeightAt(float worldX, float worldZ)
     {
         return SampleHeight(new Vector2(worldX, worldZ));
@@ -178,7 +188,6 @@ public class TerrainGridSystem : MonoBehaviour
             }
         }
 
-        // 道路遮罩对应单元格数量 (dimX-1) x (dimZ-1)
         _roadMask = new bool[_dimX - 1, _dimZ - 1];
     }
 
@@ -195,9 +204,8 @@ public class TerrainGridSystem : MonoBehaviour
         {
             for (int j = 0; j < cellCountZ; j++)
             {
-                if (_roadMask[i, j]) continue;   // 道路区域不生成面
+                if (_roadMask[i, j]) continue;
 
-                // 四个顶点
                 float x0 = _minX + i * cellSize;
                 float z0 = _minZ + j * cellSize;
                 float x1 = _minX + (i + 1) * cellSize;
@@ -219,7 +227,6 @@ public class TerrainGridSystem : MonoBehaviour
                 uvs.Add(new Vector2(0, 1));
                 uvs.Add(new Vector2(1, 1));
 
-                // 两个三角形：0-1-2, 1-3-2
                 triangles.Add(vi);
                 triangles.Add(vi + 1);
                 triangles.Add(vi + 2);
@@ -232,14 +239,12 @@ public class TerrainGridSystem : MonoBehaviour
         Mesh mesh = new Mesh();
         if (vertices.Count > 65535)
             mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
-
         mesh.SetVertices(vertices);
         mesh.SetTriangles(triangles, 0);
         mesh.SetUVs(0, uvs);
         mesh.RecalculateNormals();
         mesh.RecalculateBounds();
 
-        // 创建或更新网格渲染对象
         if (_meshFilter == null)
         {
             GameObject terrainObj = new GameObject("TerrainGrid");
@@ -253,9 +258,6 @@ public class TerrainGridSystem : MonoBehaviour
         _meshFilter.sharedMesh = mesh;
     }
 
-    /// <summary>
-    /// XZ 平面上的点是否在多边形内部（射线法）。
-    /// </summary>
     private bool PointInPolygonXZ(Vector2 point, List<Vector2> polygon)
     {
         bool inside = false;
@@ -271,22 +273,4 @@ public class TerrainGridSystem : MonoBehaviour
         }
         return inside;
     }
-    public void Reinitialize(Bounds bounds)
-{
-    GenerateHeightMap(bounds);
-    _roadMask = new bool[_dimX - 1, _dimZ - 1];   // 清空遮罩
-    GenerateTerrainMesh();
 }
-}
-
-// ================================================================
-// 【附录：你可以调用的 V2.0 WorldModel 全局接口】
-// 高度查询
-// public float GetTerrainHeight(Vector2 worldXZ);
-// 最近节点查询
-// public RoadNode GetNearestNode(Vector3 worldPos);
-// 节点详情查询
-// public RoadNode GetNode(int id);
-// 路口语义查询 (返回: Uncontrolled, GreenLight, RedLight, YellowLight)
-// public IntersectionState GetIntersectionState(int nodeId);
-// ================================================================

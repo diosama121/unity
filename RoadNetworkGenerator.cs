@@ -68,11 +68,13 @@ public class RoadNetworkGenerator : MonoBehaviour
 
     public PathPlanner pathPlanner;
 
+    public int nodeCount { get; internal set; }
+
     // =============================================
     // 生命周期
     // =============================================
 
-   public void Generate()
+    public void Generate()
     {
         // 1. 初始化与清空脏数据
         nodes.Clear();

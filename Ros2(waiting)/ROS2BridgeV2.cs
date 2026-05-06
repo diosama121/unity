@@ -17,8 +17,6 @@ public class ROS2BridgeV2 : MonoBehaviour
     [Header("Vehicle Components")]
     public SimpleCarController carController;
     public SimpleAutoDrive autoDrive;
-    public RaycastSensor sensor;
-
     [Header("发送频率")]
     public float sendRate = 10f;
     [Header("安全与降级策略")]
@@ -81,8 +79,7 @@ public class ROS2BridgeV2 : MonoBehaviour
         if (autoDrive == null && carController != null)
             autoDrive = carController.GetComponent<SimpleAutoDrive>();
 
-        if (sensor == null && carController != null)
-            sensor = carController.GetComponent<RaycastSensor>();
+      
 
         // 4. 状态汇报
         if (carController == null)
@@ -205,7 +202,6 @@ public class ROS2BridgeV2 : MonoBehaviour
                 velocity = carController != null ? carController.GetSpeed() : 0f,
                 steering_angle = carController != null ? carController.currentSteeringAngle : 0f,
                 auto_drive_state = (autoDrive != null && autoDrive.enabled) ? autoDrive.GetCurrentState().ToString() : "ROS2_Controlled",
-                front_obstacle_distance = sensor != null ? sensor.GetFrontDistance() : -1f,
                 timestamp = Time.time
             };
 

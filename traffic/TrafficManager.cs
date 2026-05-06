@@ -47,7 +47,7 @@ public class TrafficManager : MonoBehaviour
     {
         if (npcVehiclePrefab == null) { Debug.LogError("TrafficManager: 缺少 NPC Prefab!"); return; }
         if (roadGen.nodes.Count < 2) { Debug.LogWarning("TrafficManager: 路网节点不足，无法生成 NPC"); return; }
-        if (pathPlanner == null) { Debug.LogError("TrafficManager: 缺少 PathPlanner!"); return; }
+       //等着修复，现在先做地形部分。 if (pathPlanner == null) { Debug.LogError("TrafficManager: 缺少 PathPlanner!"); return; }
 
         // 随机打乱节点池，从中抽取不重复的出生点
         List<RoadNetworkGenerator.WaypointNode> shuffledNodes = new List<RoadNetworkGenerator.WaypointNode>(roadGen.nodes);
@@ -86,7 +86,7 @@ public class TrafficManager : MonoBehaviour
             SimpleAutoDrive autoDrive = npcObj.GetComponent<SimpleAutoDrive>();
             if (autoDrive != null)
             {
-                CatmullRomSpline spline = pathPlanner.PlanPath(startNode.position, targetNode.position);
+             /*   CatmullRomSpline spline = pathPlanner.PlanPath(startNode.position, targetNode.position);
                 if (spline != null && spline.TotalLength > 0)
                 {
                     // 将样条曲线与目标路口语义 ID 喂给底层执行器
@@ -102,8 +102,8 @@ public class TrafficManager : MonoBehaviour
             else
             {
                 Destroy(npcObj);
-            }
-        }
+            }*/
+        }}
         Debug.Log($"✅ TrafficManager: 成功生成 {spawnedCount} 辆纯数学轨道 NPC");
     }
 

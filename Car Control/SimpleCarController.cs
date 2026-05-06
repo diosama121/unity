@@ -29,7 +29,7 @@ public class SimpleCarController : MonoBehaviour
     [Header("物理环境")]
     public float slipFactor = 0.5f;
    
-    private RaycastSensor sensor;
+   // private RaycastSensor sensor;
     private Rigidbody rb;
     private float targetSpeed = 0f;
     private float targetSteering = 0f;
@@ -77,7 +77,7 @@ public class SimpleCarController : MonoBehaviour
             rb.isKinematic = true;
         }
 
-        sensor = GetComponent<RaycastSensor>();
+      //  sensor = GetComponent<RaycastSensor>();
         this.enabled = true;
     }
 
