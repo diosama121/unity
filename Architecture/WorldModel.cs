@@ -1,14 +1,20 @@
 using System.Collections.Generic;
 using UnityEngine;
+using System.Linq;
 
-// 语义定义
+// ==========================================
+// 【V2.2 核心语义定义】
+// ==========================================
 public enum NodeType { Endpoint, Straight, Merge, Intersection }
 public enum IntersectionState { Uncontrolled, GreenLight, RedLight, YellowLight }
 
+[System.Serializable]
 public class RoadNode
 {
     public int Id;
-    public Vector3 WorldPos;
+    public Vector3 WorldPos;      // 绝对坐标真理（包含平滑后的 Y）
+    public Vector3 Tangent;       // 前进切线（Mesh 挤出的走向基准）
+    public Vector3 Normal;        // 横向法线（Mesh 宽度的伸展基准）
     public NodeType Type;
     public List<int> NeighborIds;
     public IntersectionState State;
@@ -18,158 +24,172 @@ public class WorldModel : MonoBehaviour
 {
     public static WorldModel Instance { get; private set; }
 
-    [Header("系统挂载 (V2.0 核心组件)")]
+    [Header("系统挂载 (V2.2 核心组件)")]
     public RoadNetworkGenerator roadGenerator; 
     public TerrainGridSystem terrainGrid;      
     public ProceduralRoadBuilder roadBuilder;
     public TrafficLightManager trafficLightManager;
+    public TrafficManager trafficManager; // 新增：交通流调度
+
     private Dictionary<int, RoadNode> _graph = new Dictionary<int, RoadNode>();
     private KDTree _spatialIndex;
 
-    // 【a4 缝合点】：为 a5 观测台开放的数据面板接口
+    // 观测接口
     public int NodeCount => _graph.Count;
     public IEnumerable<RoadNode> Nodes => _graph.Values;
 
-  private void Awake()
+    private void Awake()
     {
         if (Instance == null) Instance = this;
         else Destroy(gameObject);
-        
-        // 删除了原先在这里直接调用 IngestGraph 等生成的代码
-        // 现在系统启动时是一片空白，等待总指挥按下 UI 按钮
     }
 
     /// <summary>
-    /// UI 创世按钮的最终触发接口
+    /// 【总指挥点火接口】V2.2 严密初始化序列
     /// </summary>
     public void TriggerWorldGeneration()
     {
-        Debug.Log("[WorldModel] 🚀 收到创世指令，系统点火！");
-        
-        // 1. 触发数学拓扑生成
-        FindObjectOfType<RoadNetworkGenerator>().Generate();
-        
-        // 2. 初始化地形底座 (需根据实际包围盒传入)
-        FindObjectOfType<TerrainGridSystem>().Initialize(new Bounds(Vector3.zero, new Vector3(500, 100, 500)));
-        
-        // 3. 吞入图网络，建立真理层
-        IngestGraph(FindObjectOfType<RoadNetworkGenerator>());
-        
-        // 4. a1 视觉层开始干活
-        FindObjectOfType<ProceduralRoadBuilder>().BuildRoads();
-        
-        // 5. a3 交通调度开始放红绿灯和车
-        FindObjectOfType<TrafficLightManager>()?.PlaceTrafficLights();
+        Debug.Log("[WorldModel] 🚀 创世序列启动...");
+
+        // 1. 触发图拓扑随机生成 (V1.0)
+        roadGenerator.Generate();
+
+        // 2. 动态计算地形包围盒 (给 a1 裙边预留 100m 冗余)
+        Bounds worldBounds = CalculateWorldBounds();
+        terrainGrid.Initialize(worldBounds);
+
+        // 3. 建立真理层 (核心：高度平滑 + 切线计算 + 坐标锁死)
+        IngestAndPrecomputeGraph(roadGenerator);
+
+        // 4. 通知 a1 视觉层执行 (a1 现在只需“按图填色”)
+        roadBuilder.BuildRoads();
+
+        // 5. 通知 a3 交通层执行
+        trafficLightManager?.PlaceTrafficLights();
+        trafficManager?.SpawnNPCs();
+
+        Debug.Log("[WorldModel] ✨ 世界生成完成，真理层已就绪。");
     }
 
-    public float GetTerrainHeight(Vector2 worldXZ)
+    /// <summary>
+    /// 【核心手术】吞入原始图并预计算所有几何向量
+    /// 解决 a5 提到的高程崩塌与视觉错位问题
+    /// </summary>
+    private void IngestAndPrecomputeGraph(RoadNetworkGenerator source)
     {
-        if (terrainGrid != null)
-            return terrainGrid.SampleHeight(worldXZ);
-        return 0f; 
-    }
+        _graph.Clear();
 
-    // 吞入V1.0的原始图，吐出V2.0的语义图
-    private void IngestGraph(RoadNetworkGenerator source)
-    {
+        // --- 第一步：初步摄入并校准高度 ---
         foreach (var raw in source.nodes)
         {
-            float y = GetTerrainHeight(new Vector2(raw.position.x, raw.position.z));
+            float baseY = terrainGrid.SampleHeight(new Vector2(raw.position.x, raw.position.z));
             
             _graph[raw.id] = new RoadNode
             {
                 Id = raw.id,
-                WorldPos = new Vector3(raw.position.x, y, raw.position.z),
+                WorldPos = new Vector3(raw.position.x, baseY, raw.position.z),
                 Type = ClassifyNode(raw.neighbors.Count),
                 NeighborIds = new List<int>(raw.neighbors),
                 State = IntersectionState.Uncontrolled
             };
         }
-        
+
+        // --- 第二步：高程平滑处理 (解决 a5 提到的阶跃与尖刺) ---
+        SmoothNodeHeights();
+
+        // --- 第三步：预计算切线与法线 (a4 亲自计算，严禁 a1 乱动) ---
+        foreach (var node in _graph.Values)
+        {
+            node.Tangent = CalculateNodeTangent(node);
+            node.Normal = Vector3.Cross(node.Tangent, Vector3.up).normalized;
+        }
+
         _spatialIndex = new KDTree(_graph.Values);
-        Debug.Log($"[WorldModel] 🌍 语义图谱构建完成，节点数: {_graph.Count}");
     }
 
-    // --- 供 a2 / a3 调用的核心查询接口 ---
+    // --- a4 的几何计算车间 ---
 
-    public RoadNode GetNearestNode(Vector3 worldPos)
+    private Vector3 CalculateNodeTangent(RoadNode node)
     {
-        if (_spatialIndex == null) return null;
-        int id = _spatialIndex.QueryNearest(worldPos);
-        return _graph.ContainsKey(id) ? _graph[id] : null;
-    }
-
-    public RoadNode GetNode(int id)
-    {
-        return _graph.ContainsKey(id) ? _graph[id] : null;
-    }
-
-    public IntersectionState GetIntersectionState(int nodeId)
-    {
-        return _graph.ContainsKey(nodeId) ? _graph[nodeId].State : IntersectionState.Uncontrolled;
-    }
-
-    // 【a4 缝合点】：彻底打通 a3 的红绿灯语义写入闭环
-    public void SetIntersectionState(int nodeId, IntersectionState state) 
-    { 
-        if (_graph.ContainsKey(nodeId))
-        {
-            _graph[nodeId].State = state;
-        }
-    }
-
-    private NodeType ClassifyNode(int edgeCount) => edgeCount switch
-    {
-        1 => NodeType.Endpoint,
-        2 => NodeType.Straight,
-        3 => NodeType.Merge,
-        _ => NodeType.Intersection
-    };
-    /// <summary>
-    /// 接收 a1 传回的视觉多边形中心，修正 V1 原始坐标的偏差
-    /// </summary>
-    public void UpdateNodeVisualPosition(int nodeId, Vector3 newPos)
-    {
-        if (_graph.ContainsKey(nodeId))
-        {
-            // 核心安全锁：绝不盲目信任外部的 Y 轴。
-            // 提取 a1 传来的 XZ 坐标，强制重新向地形系统索要绝对高度 Y
-            float realY = GetTerrainHeight(new Vector2(newPos.x, newPos.z));
-            _graph[nodeId].WorldPos = new Vector3(newPos.x, realY, newPos.z);
-        }
-        else
-        {
-            Debug.LogWarning($"[WorldModel] 试图更新不存在的节点视觉中心 ID: {nodeId}");
-        }
-    }
-
-    /// <summary>
-    /// 【极度重要】在 a1 汇报完所有视觉中心后，必须调用此方法重建空间索引！
-    /// 否则 a2, a3, a5 的 KDTree 查询将发生严重的“刻舟求剑”错位！
-    /// </summary>
-    public void RebuildSpatialIndex()
-    {
-        _spatialIndex = new KDTree(_graph.Values);
-        Debug.Log("[WorldModel] 🌳 视觉中心反哺对齐完毕，KDTree 空间索引已重建！");
-    }
-    
-    // ==========================================
-    // 【a4 缝合点】：供 a2 (寻路领航员) 调用的寻路代价接口
-    // ==========================================
-
-    /// <summary>
-    /// 获取拓扑图中两个节点之间的物理通行代价（真实三维距离）
-    /// 如果节点不存在，返回 float.MaxValue (不可达)
-    /// </summary>
-    public float GetEdgeCost(int fromNodeId, int toNodeId)
-    {
-        if (_graph.ContainsKey(fromNodeId) && _graph.ContainsKey(toNodeId))
-        {
-            // 以真理层记录的真实世界坐标计算距离
-            return Vector3.Distance(_graph[fromNodeId].WorldPos, _graph[toNodeId].WorldPos);
-        }
+        if (node.NeighborIds.Count == 0) return Vector3.forward;
         
-        Debug.LogWarning($"[WorldModel] 试图获取无效边的代价: {fromNodeId} -> {toNodeId}");
-        return float.MaxValue; 
+        // 取得所有邻居方向的平均向量作为该点的切线走向
+        Vector3 avgDir = Vector3.zero;
+        foreach (var nbId in node.NeighborIds)
+        {
+            avgDir += (_graph[nbId].WorldPos - node.WorldPos).normalized;
+        }
+        return (avgDir / node.NeighborIds.Count).normalized;
     }
+
+    private void SmoothNodeHeights()
+    {
+        // 简单的拉普拉斯平滑：让节点高度向邻居靠拢，消除断层
+        for (int iteration = 0; iteration < 2; iteration++)
+        {
+            foreach (var node in _graph.Values)
+            {
+                if (node.NeighborIds.Count == 0) continue;
+                float neighborAvgY = 0;
+                foreach (var nid in node.NeighborIds) neighborAvgY += _graph[nid].WorldPos.y;
+                neighborAvgY /= node.NeighborIds.Count;
+                
+                // 混合原始高度与邻居平均高度（80% 平滑度）
+                node.WorldPos.y = Mathf.Lerp(node.WorldPos.y, neighborAvgY, 0.8f);
+            }
+        }
+    }
+
+    private Bounds CalculateWorldBounds()
+    {
+        if (roadGenerator.nodes.Count == 0) return new Bounds(Vector3.zero, new Vector3(500, 100, 500));
+        Vector3 min = roadGenerator.nodes[0].position;
+        Vector3 max = roadGenerator.nodes[0].position;
+        foreach (var n in roadGenerator.nodes)
+        {
+            min = Vector3.Min(min, n.position);
+            max = Vector3.Max(max, n.position);
+        }
+        Bounds b = new Bounds();
+        b.SetMinMax(min, max);
+        b.Expand(100f); // 为 a1 的地表裙边预留空间
+        return b;
+    }
+
+    // --- 供子系统调用的原子接口 (a4 职责) ---
+public float GetTerrainHeight(Vector2 worldXZ)
+{
+    if (terrainGrid != null)
+        return terrainGrid.SampleHeight(worldXZ);
+    return 0f; 
+}
+   public RoadNode GetNearestNode(Vector3 worldPos) 
+{
+    if (_spatialIndex == null) return null;
+    // 将 QueryNearestNode 改为 QueryNearest
+    int id = _spatialIndex.QueryNearest(worldPos); 
+    return _graph.ContainsKey(id) ? _graph[id] : null;
+}
+    public RoadNode GetNode(int id) => _graph.GetValueOrDefault(id);
+    public float GetNodeFixedHeight(int id) => _graph.ContainsKey(id) ? _graph[id].WorldPos.y : 0f;
+
+    public void SetIntersectionState(int id, IntersectionState s) { if(_graph.ContainsKey(id)) _graph[id].State = s; }
+    public IntersectionState GetIntersectionState(int id) => _graph.GetValueOrDefault(id)?.State ?? IntersectionState.Uncontrolled;
+
+    public float GetEdgeCost(int a, int b) => Vector3.Distance(_graph[a].WorldPos, _graph[b].WorldPos);
+
+    private NodeType ClassifyNode(int count) => count switch { 1 => NodeType.Endpoint, 2 => NodeType.Straight, 3 => NodeType.Merge, _ => NodeType.Intersection };
+
+    /// <summary>
+    /// 【对齐接口】a1 反馈视觉重心，重塑空间真理
+    /// </summary>
+    public void UpdateNodeVisualPosition(int id, Vector3 newPos)
+    {
+        if (!_graph.ContainsKey(id)) return;
+        // 仅接受 XZ 修正，Y 轴依然锁定地形真理
+        float y = terrainGrid.SampleHeight(new Vector2(newPos.x, newPos.z));
+        _graph[id].WorldPos = new Vector3(newPos.x, y, newPos.z);
+    }
+
+    public void RebuildSpatialIndex() { _spatialIndex = new KDTree(_graph.Values); }
 }

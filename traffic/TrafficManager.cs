@@ -43,7 +43,7 @@ public class TrafficManager : MonoBehaviour
         SpawnNPCs();
     }
 
-    private void SpawnNPCs()
+    public void SpawnNPCs()
     {
         if (npcVehiclePrefab == null) { Debug.LogError("TrafficManager: 缺少 NPC Prefab!"); return; }
         if (roadGen.nodes.Count < 2) { Debug.LogWarning("TrafficManager: 路网节点不足，无法生成 NPC"); return; }

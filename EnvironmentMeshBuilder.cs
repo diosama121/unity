@@ -105,112 +105,36 @@ private bool LineSegmentsIntersect(Vector2 p1, Vector2 p2, Vector2 q1, Vector2 q
     // ==========================================
     // 地表生成（强制 Margin = 50f）
     // ==========================================
-    private void GenerateTerrainBase(Paths64 rawRoadUnion)
+   private void GenerateTerrainBase(Paths64 rawRoadUnion)
 {
-    if (rawRoadUnion == null || rawRoadUnion.Count == 0) return;
+    // 1. 调用 RoadBooleanUtility 净化多边形
+    Paths64 cleanRoads = RoadBooleanUtility.SanitizePolygons(rawRoadUnion);
+    if (cleanRoads.Count == 0) return;
 
-    // --- 防御层1：拓扑净化 ---
-    Paths64 cleanRoads = new Paths64();
-    foreach (var path in rawRoadUnion)
+    // 2. 生成外围裙边
+    Path64 outerSkirt = RoadBooleanUtility.GenerateOuterSkirt(cleanRoads, 18f);
+    if (outerSkirt.Count < 3) return;
+
+    // 3. 调用 Triangle.NET 黑盒生成二维网格
+    TriangulationUtility.RawMeshData meshData = TriangulationUtility.GenerateCDTMeshData(outerSkirt, cleanRoads);
+
+    // 4. 缝合真理层：将 2D 顶点转为 3D，Y 轴查 a4 高度服务
+    List<Vector3> verts3D = new List<Vector3>();
+    foreach (var v2 in meshData.vertices)
     {
-        if (Math.Abs(Clipper.Area(path)) < 1.0 * 1000 * 1000) continue;
-        cleanRoads.Add(path);
+        float y = TerrainGridSystem.Instance != null
+            ? TerrainGridSystem.Instance.GetHeightAt(v2.x, v2.y)
+            : 0f;
+        verts3D.Add(new Vector3(v2.x, y, v2.y));
     }
 
-    // 构建空间缓存
-    List<RoadContourCache> roadCaches = new List<RoadContourCache>();
-    List<RoadSegmentCache> roadSegmentCaches = new List<RoadSegmentCache>();
-    foreach (var path in cleanRoads)
-    {
-        roadCaches.Add(new RoadContourCache(path));
-        roadSegmentCaches.Add(new RoadSegmentCache(path));
-    }
-
-    // --- 生成外裙边（道路向外膨胀 18 米） ---
-    ClipperOffset skirtOffset = new ClipperOffset();
-    foreach (var path in cleanRoads)
-        skirtOffset.AddPath(path, JoinType.Round, EndType.Polygon);
-    Paths64 outerSkirt = new Paths64();
-    skirtOffset.Execute(18.0 * 1000.0, outerSkirt);
-    // 简化裙边以减少顶点数（可选）
-    outerSkirt = Clipper.SimplifyPaths(outerSkirt, 2.0);
-
-    // 使用裙边的第一个轮廓作为外边界，若膨胀失败则回退为动态包围盒
-    Path64 outerBoundary;
-    if (outerSkirt.Count > 0)
-    {
-        outerBoundary = outerSkirt[0];
-        // 如果膨胀结果有多个轮廓，取面积最大的
-        double maxArea = Clipper.Area(outerBoundary);
-        for (int i = 1; i < outerSkirt.Count; i++)
-        {
-            double area = Clipper.Area(outerSkirt[i]);
-            if (area > maxArea) { outerBoundary = outerSkirt[i]; maxArea = area; }
-        }
-    }
-    else
-    {
-        // 回退：基于节点包围盒扩展 50m
-        Bounds netBounds = GetNetworkBounds();
-        outerBoundary = new Path64
-        {
-            new Point64((netBounds.min.x - 50) * 1000, (netBounds.min.z - 50) * 1000),
-            new Point64((netBounds.max.x + 50) * 1000, (netBounds.min.z - 50) * 1000),
-            new Point64((netBounds.max.x + 50) * 1000, (netBounds.max.z + 50) * 1000),
-            new Point64((netBounds.min.x - 50) * 1000, (netBounds.max.z + 50) * 1000)
-        };
-    }
-
-    // --- 构建 Triangle.NET 约束多边形 ---
-    Polygon poly = new Polygon();
-
-    // 外边界（裙边）
-    var outerVerts = outerBoundary.Select(pt => new Vertex(pt.X / 1000.0, pt.Y / 1000.0)).ToList();
-    poly.Add(new Contour(outerVerts));
-
-    // 道路空洞
-    foreach (var path in cleanRoads)
-    {
-        var holeVerts = path.Select(pt => new Vertex(pt.X / 1000.0, pt.Y / 1000.0)).ToList();
-        poly.Add(new Contour(holeVerts));
-    }
-
-    // --- CDT 三角剖分（彻底关闭质量优化，零度角！）---
-    var meshParams = new ConstraintOptions { ConformingDelaunay = true };
-    // 关键：不传入 QualityOptions，或使用默认构造（相当于 MinAngle=0）
-    var triangleMesh = poly.Triangulate(meshParams); // 不传 QualityOptions
-
-    // --- 提取网格（边相交检测剔除越界三角形）---
-    List<Vector3> finalVertices = new List<Vector3>();
-    List<int> finalTriangles = new List<int>();
-    Dictionary<int, int> vertexIndexMap = new Dictionary<int, int>();
-
-    foreach (var tri in triangleMesh.Triangles)
-    {
-        // 防御层3终极版：边相交检测
-        if (IsIllegalTriangleEdgeCheck(tri, roadSegmentCaches)) continue;
-
-        for (int i = 2; i >= 0; i--)
-        {
-            var v = tri.GetVertex(i);
-            if (!vertexIndexMap.TryGetValue(v.ID, out int newIndex))
-            {
-                newIndex = finalVertices.Count;
-                float realY = GetHeightAt((float)v.X, (float)v.Y);
-                finalVertices.Add(new Vector3((float)v.X, realY, (float)v.Y));
-            }
-            finalTriangles.Add(newIndex);
-        }
-    }
-
-    // 构建 Mesh 并附到场景（与原代码一致）
+    // 5. 构建 Mesh 并赋予 GameObject（与原逻辑一致）
     Mesh terrainMesh = new Mesh();
     terrainMesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
-    terrainMesh.SetVertices(finalVertices);
-    terrainMesh.SetTriangles(finalTriangles, 0);
+    terrainMesh.SetVertices(verts3D);
+    terrainMesh.SetTriangles(meshData.triangles, 0);
     terrainMesh.RecalculateNormals();
     terrainMesh.RecalculateBounds();
-
     Material mat = paramsSource.terrainBaseMaterial ? paramsSource.terrainBaseMaterial : paramsSource.roadMaterial;
     if (mat == null) mat = new Material(Shader.Find("Standard"));
     mat.renderQueue = 1999;
@@ -229,8 +153,6 @@ private bool LineSegmentsIntersect(Vector2 p1, Vector2 p2, Vector2 q1, Vector2 q
     mr.sharedMaterial = mat;
     mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
     mr.receiveShadows = true;
-
-    Debug.Log($"[Terrain V3.1] 裙边地表生成完成，顶点 {finalVertices.Count}");
 }
 
     // ==========================================

@@ -153,4 +153,85 @@ public static class RoadBooleanUtility
         rounder.Execute(expansionOffset * SCALE, result);
         return result.Count > 0 ? result[0] : GenerateCirclePolygon(nodePos, roadWidth * 0.75f);
     }
+    public static Paths64 SanitizePolygons(Paths64 rawPaths)
+{
+    Paths64 clean = new Paths64();
+    foreach (var path in rawPaths)
+    {
+        // 过滤面积 < 1平方米² 的碎片 (1 * 1000 * 1000)
+        if (Math.Abs(Clipper.Area(path)) < 1.0 * 1000 * 1000) continue;
+        // 简化共线点，容差 2.0 世界单位
+        var simplified = Clipper.SimplifyPath(path, 2.0);
+        if (simplified.Count >= 3)
+            clean.Add(simplified);
+    }
+    return clean;
+}
+
+/// <summary>
+/// 生成道路轮廓向外膨胀的“裙边”外轮廓，用于缝合起伏地形。
+/// </summary>
+public static Path64 GenerateOuterSkirt(Paths64 roadUnion, float offsetMetres)
+{
+    ClipperOffset co = new ClipperOffset();
+    foreach (var path in roadUnion)
+        co.AddPath(path, JoinType.Round, EndType.Polygon);
+
+    Paths64 result = new Paths64();
+    co.Execute(offsetMetres * SCALE, result);
+    if (result.Count == 0) return new Path64();
+
+    // 取面积最大的轮廓作为外裙边
+    Path64 best = result[0];
+    double maxArea = Clipper.Area(best);
+    for (int i = 1; i < result.Count; i++)
+    {
+        double area = Clipper.Area(result[i]);
+        if (area > maxArea) { best = result[i]; maxArea = area; }
+    }
+    // 再简化一次以降低顶点密度
+    return Clipper.SimplifyPath(best, 2.0);
+}
+
+/// <summary>
+/// 批量点包含检测，内部使用 AABB 加速。
+/// </summary>
+public static bool IsAnyPointInsidePolygons(IEnumerable<Point64> pts, List<RoadContourCache> caches)
+{
+    foreach (var pt in pts)
+    {
+        float x = (float)(pt.X * INV_SCALE);
+        float y = (float)(pt.Y * INV_SCALE);
+        foreach (var cache in caches)
+        {
+            if (!cache.aabb.Contains(new Vector2(x, y))) continue;
+            if (Clipper.PointInPolygon(pt, cache.path) != PointInPolygonResult.IsOutside)
+                return true;
+        }
+    }
+    return false;
+}
+
+// 在 RoadBooleanUtility 类内部添加 RoadContourCache（如果不在别处定义）
+public class RoadContourCache
+{
+    public Path64 path;
+    public Rect aabb;
+    public RoadContourCache(Path64 p)
+    {
+        path = p;
+        float minX = float.MaxValue, minY = float.MaxValue;
+        float maxX = float.MinValue, maxY = float.MinValue;
+        foreach (var pt in p)
+        {
+            float x = (float)(pt.X / 1000.0);
+            float y = (float)(pt.Y / 1000.0);
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+        }
+        aabb = Rect.MinMaxRect(minX - 0.1f, minY - 0.1f, maxX + 0.1f, maxY + 0.1f);
+    }
+}
 }

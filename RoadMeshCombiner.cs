@@ -11,7 +11,7 @@ public static class RoadMeshCombiner
     /// 合并指定根节点下所有的路面网格
     /// </summary>
     /// <param name="rootTransform">路网生成的父节点</param>
-    public static void CombineRoadMeshes(Transform rootTransform)
+   /* public static void CombineRoadMeshes(Transform rootTransform)
     {
         if (rootTransform == null)
         {
@@ -141,5 +141,5 @@ public static class RoadMeshCombiner
         }
 
         Debug.Log($"[RoadMeshCombiner] 合批完成！原始网格数量: {originalObjects.Count}，合并后网格数量: {materialToCombineInstances.Count}");
-    }
+    }*/
 }
