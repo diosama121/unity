@@ -106,11 +106,12 @@ public class EnvironmentMeshBuilder : MonoBehaviour
             int a = meshData.triangles[i];
             int b = meshData.triangles[i + 1];
             int c = meshData.triangles[i + 2];
-            // 将 (a, b, c) 改为 (a, c, b)，翻转缠绕方向
             flippedTris.Add(a);
             flippedTris.Add(c);
             flippedTris.Add(b);
         }
+
+
 
         List<Vector3> verts3D = new List<Vector3>();
         foreach (var v2 in meshData.vertices)
@@ -124,10 +125,25 @@ public class EnvironmentMeshBuilder : MonoBehaviour
         Mesh terrainMesh = new Mesh();
         terrainMesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
         terrainMesh.SetVertices(verts3D);
-        terrainMesh.SetTriangles(flippedTris, 0);   // 使用翻转后的三角形索引
+        terrainMesh.SetTriangles(flippedTris, 0);
         terrainMesh.RecalculateNormals();
         terrainMesh.RecalculateBounds();
-
+        terrainMesh.RecalculateNormals();
+        Vector3[] normals = terrainMesh.normals;
+        if (normals.Length > 0 && normals[0].y < 0)
+        {
+            // 翻转所有三角形顺序
+            int[] currentTris = terrainMesh.triangles;
+            for (int i = 0; i < currentTris.Length; i += 3)
+            {
+                int tmp = currentTris[i + 1];
+                currentTris[i + 1] = currentTris[i + 2];
+                currentTris[i + 2] = tmp;
+            }
+            terrainMesh.SetTriangles(currentTris, 0);
+            terrainMesh.RecalculateNormals();
+            terrainMesh.RecalculateBounds();
+        }
         Material mat = paramsSource.terrainBaseMaterial ? paramsSource.terrainBaseMaterial : paramsSource.roadMaterial;
         if (mat == null) mat = new Material(Shader.Find("Standard"));
         mat.renderQueue = 1999;

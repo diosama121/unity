@@ -100,12 +100,13 @@ public static class RoadMeshUtility
         verts.AddRange(quad);
 
         // 两个三角形：0-1-2, 0-2-3
-        tris.Add(startIdx + 0);
-        tris.Add(startIdx + 1);
-        tris.Add(startIdx + 2);
-        tris.Add(startIdx + 0);
-        tris.Add(startIdx + 2);
-        tris.Add(startIdx + 3);
+       tris.Add(startIdx + 0);
+tris.Add(startIdx + 2);
+tris.Add(startIdx + 1);
+
+tris.Add(startIdx + 0);
+tris.Add(startIdx + 3);
+tris.Add(startIdx + 2);
     }
 
     Mesh mesh = new Mesh();
