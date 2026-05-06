@@ -52,15 +52,17 @@ public static class TriangulationUtility
         var triangles = new List<int>();
         var indexMap = new Dictionary<int, int>();
 
+        // 【修复】真正使用 0,2,1 顺序翻转法线，保证 Unity 中法线朝上
+        int[] flipOrder = { 0, 2, 1 };
+
         foreach (var tri in mesh.Triangles)
         {
             // 四点采样过滤
             if (IsTriangleInsideRoad(tri, caches)) continue;
 
-            // 【强制翻转法线】使用 0, 2, 1 顺序，绝对保证 Unity 中的法线朝上！
             for (int i = 0; i < 3; i++)
             {
-                var v = tri.GetVertex(i);
+                var v = tri.GetVertex(flipOrder[i]);
                 if (!indexMap.TryGetValue(v.ID, out int newIdx))
                 {
                     newIdx = vertices.Count;

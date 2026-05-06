@@ -178,7 +178,6 @@ public class TerrainGridSystem : MonoBehaviour
                 float x1 = _minX + (i + 1) * cellSize;
                 float z1 = _minZ + (j + 1) * cellSize;
 
-                // ✅ 修正：_heightMap 已包含 terrainHeightOffset，不再重复添加
                 Vector3 v00 = new Vector3(x0, _heightMap[i, j], z0);
                 Vector3 v10 = new Vector3(x1, _heightMap[i + 1, j], z0);
                 Vector3 v01 = new Vector3(x0, _heightMap[i, j + 1], z1);
@@ -195,12 +194,16 @@ public class TerrainGridSystem : MonoBehaviour
                 uvs.Add(new Vector2(0, 1));
                 uvs.Add(new Vector2(1, 1));
 
+                // 【修复】顺时针顺序，法线朝上
+                // 三角形1：v00 -> v01 -> v10
                 triangles.Add(vi);
-                triangles.Add(vi + 1);
                 triangles.Add(vi + 2);
                 triangles.Add(vi + 1);
+
+                // 三角形2：v10 -> v01 -> v11
+                triangles.Add(vi + 1);
+                triangles.Add(vi + 2);
                 triangles.Add(vi + 3);
-                triangles.Add(vi + 2);
             }
         }
 
@@ -241,6 +244,7 @@ public class TerrainGridSystem : MonoBehaviour
         }
         return inside;
     }
+
     public void BakeRoadMask(List<Vector3[]> roadPolygons)
     {
         if (_roadMask == null)
