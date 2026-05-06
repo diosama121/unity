@@ -35,7 +35,7 @@ public class SimpleAutoDrive : MonoBehaviour
     private SimpleCarController carController;
  //   private RaycastSensor sensor;
     
-    // 【V2.0 核心】直接持有 a2 下发的样条对象
+    // 【V4.1 核心】直接持有 a2 下发的样条对象
     private CatmullRomSpline currentSpline;
     
     private Vector3 finalDestination = Vector3.zero;
@@ -257,10 +257,10 @@ public class SimpleAutoDrive : MonoBehaviour
         Vector3 rightVector = Vector3.Cross(Vector3.up, tangent).normalized;
         Vector3 offsetTargetPos = posOnSpline + rightVector * rightLaneOffset;
 
-        // 3. 严格调用白皮书获取真实高程
+        // 3. [V4.1 并发突击] 严格调用 V4.1 统一高程真理层获取真实高程
         if (WorldModel.Instance != null)
         {
-            offsetTargetPos.y = WorldModel.Instance.GetTerrainHeight(new Vector2(offsetTargetPos.x, offsetTargetPos.z));
+            offsetTargetPos.y = WorldModel.Instance.GetUnifiedHeight(offsetTargetPos.x, offsetTargetPos.z);
         }
 
         // 4. 获取前方预瞄点
@@ -269,7 +269,7 @@ public class SimpleAutoDrive : MonoBehaviour
         
         if (WorldModel.Instance != null)
         {
-            lookAheadPos.y = WorldModel.Instance.GetTerrainHeight(new Vector2(lookAheadPos.x, lookAheadPos.z));
+            lookAheadPos.y = WorldModel.Instance.GetUnifiedHeight(lookAheadPos.x, lookAheadPos.z);
         }
 
         // 5. 将预瞄目标作为追踪点计算偏航角
@@ -295,7 +295,7 @@ public class SimpleAutoDrive : MonoBehaviour
     }}
 
     // ======================================================================
-    // 【V2.0 标准入口】直接消费 a2 下发的 CatmullRomSpline
+    // 【V4.1 标准入口】直接消费 a2 下发的 CatmullRomSpline
     // ======================================================================
     public void SetSplinePath(CatmullRomSpline spline, int destinationNodeId)
     {

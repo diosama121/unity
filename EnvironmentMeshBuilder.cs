@@ -95,12 +95,7 @@ private bool LineSegmentsIntersect(Vector2 p1, Vector2 p2, Vector2 q1, Vector2 q
         }
     }
 
-    private float GetHeightAt(float x, float z)
-    {
-        if (TerrainGridSystem.Instance != null)
-            return TerrainGridSystem.Instance.GetHeightAt(x, z);
-        return 0f;
-    }
+   
 
     // ==========================================
     // 地表生成（强制 Margin = 50f）
@@ -122,9 +117,9 @@ private bool LineSegmentsIntersect(Vector2 p1, Vector2 p2, Vector2 q1, Vector2 q
     List<Vector3> verts3D = new List<Vector3>();
     foreach (var v2 in meshData.vertices)
     {
-        float y = TerrainGridSystem.Instance != null
-            ? TerrainGridSystem.Instance.GetHeightAt(v2.x, v2.y)
-            : 0f;
+       float y = WorldModel.Instance != null
+    ? WorldModel.Instance.GetUnifiedHeight(v2.x, v2.y)
+    : 0f;
         verts3D.Add(new Vector3(v2.x, y, v2.y));
     }
 
@@ -190,8 +185,9 @@ private bool LineSegmentsIntersect(Vector2 p1, Vector2 p2, Vector2 q1, Vector2 q
             for (int i = 0; i < baseVerts.Count; i++)
             {
                 var v = baseVerts[i];
-                v.y = GetHeightAt(v.x, v.z);
-                baseVerts[i] = v;
+               v.y = WorldModel.Instance != null
+    ? WorldModel.Instance.GetUnifiedHeight(v.x, v.z)
+    : 0f;
             }
 
             Mesh buildingMesh = ExtrudePolygon(baseVerts, paramsSource.buildingHeight);
@@ -232,8 +228,9 @@ private bool LineSegmentsIntersect(Vector2 p1, Vector2 p2, Vector2 q1, Vector2 q
             for (int i = 0; i < verts.Count; i++)
             {
                 var v = verts[i];
-                v.y = GetHeightAt(v.x, v.z);
-                verts[i] = v;
+               v.y = WorldModel.Instance != null
+    ? WorldModel.Instance.GetUnifiedHeight(v.x, v.z)
+    : 0f;
             }
             Mesh sidewalkMesh = ExtrudePolygon(verts, paramsSource.sidewalkHeight);
             if (sidewalkMesh == null) continue;

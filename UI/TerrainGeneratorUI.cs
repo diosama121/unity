@@ -4,7 +4,7 @@ using UnityEngine;
 public class WorldGenUI : MonoBehaviour
 {
     [Header("窗口设置")]
-    private Rect _windowRect = new Rect(Screen.width - 220, 10, 210, 420); // 稍微加高以容纳更多控件
+    private Rect _windowRect = new Rect(Screen.width - 220, 10, 210, 450); // 稍微加高容纳新控件
     private const int WindowId = 8888;
 
     // 系统引用
@@ -22,6 +22,9 @@ public class WorldGenUI : MonoBehaviour
     private float _buildingHeight;
     private float _sidewalkWidth;
     private bool _showSplineGizmos;
+    
+    // 【新增】城乡模式变量
+    private bool _isCountryside;
 
     // 滚动条
     private Vector2 _scrollPosition;
@@ -68,6 +71,10 @@ public class WorldGenUI : MonoBehaviour
 
         // 3. 模式开关
         GUILayout.Label("【生成模式】", EditorStyles.boldLabel);
+        
+        // 【新增】核心切换：选中是乡村，不选是城镇
+        _isCountryside = GUILayout.Toggle(_isCountryside, " 🏞️ 乡村模式 (取消则为城镇)");
+        
         _useCountrysideUniformMaterials = GUILayout.Toggle(_useCountrysideUniformMaterials, " 乡村统一材质");
         _generateCity = GUILayout.Toggle(_generateCity, " 生成城镇建筑");
         
@@ -130,6 +137,23 @@ public class WorldGenUI : MonoBehaviour
         _roadBuilder.buildingHeight = _buildingHeight;
         _roadBuilder.sidewalkWidth = _sidewalkWidth;
         _roadBuilder.showSplineGizmos = _showSplineGizmos;
+        
+        // 【新增】注入城乡状态 (兼容 ProceduralRoadBuilder 或 RoadNetworkGenerator)
+        var isCountrysideField = _roadBuilder.GetType().GetField("isCountryside");
+        if (isCountrysideField != null)
+        {
+            isCountrysideField.SetValue(_roadBuilder, _isCountryside);
+        }
+        else
+        {
+            // 如果 ProceduralRoadBuilder 没有，尝试找 RoadNetworkGenerator
+            var roadGen = FindObjectOfType<RoadNetworkGenerator>();
+            if (roadGen != null)
+            {
+                var genField = roadGen.GetType().GetField("isCountryside");
+                genField?.SetValue(roadGen, _isCountryside);
+            }
+        }
 
         Debug.Log("[a5] ✅ 语义参数已同步至 a1 视觉层。");
     }
@@ -149,5 +173,25 @@ public class WorldGenUI : MonoBehaviour
         _buildingHeight = _roadBuilder.buildingHeight;
         _sidewalkWidth = _roadBuilder.sidewalkWidth;
         _showSplineGizmos = _roadBuilder.showSplineGizmos;
+        
+        // 【新增】读取城乡状态 (兼容 ProceduralRoadBuilder 或 RoadNetworkGenerator)
+        var isCountrysideField = _roadBuilder.GetType().GetField("isCountryside");
+        if (isCountrysideField != null)
+        {
+            _isCountryside = (bool)isCountrysideField.GetValue(_roadBuilder);
+        }
+        else
+        {
+            // 如果 ProceduralRoadBuilder 没有，尝试找 RoadNetworkGenerator
+            var roadGen = FindObjectOfType<RoadNetworkGenerator>();
+            if (roadGen != null)
+            {
+                var genField = roadGen.GetType().GetField("isCountryside");
+                if (genField != null)
+                {
+                    _isCountryside = (bool)genField.GetValue(roadGen);
+                }
+            }
+        }
     }
 }

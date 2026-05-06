@@ -21,11 +21,11 @@ public class RoadNode
 }
 
 // 供 a1 数学辅助类使用的样条线数据结构
-public struct SplinePoint 
-{ 
-    public Vector3 Pos; 
-    public Vector3 Tangent; 
-    public Vector3 Normal; 
+public struct SplinePoint
+{
+    public Vector3 Pos;
+    public Vector3 Tangent;
+    public Vector3 Normal;
 }
 
 public class WorldModel : MonoBehaviour
@@ -33,8 +33,8 @@ public class WorldModel : MonoBehaviour
     public static WorldModel Instance { get; private set; }
 
     [Header("系统挂载 (V2.2 核心组件)")]
-    public RoadNetworkGenerator roadGenerator; 
-    public TerrainGridSystem terrainGrid;      
+    public RoadNetworkGenerator roadGenerator;
+    public TerrainGridSystem terrainGrid;
     public ProceduralRoadBuilder roadBuilder;
     public TrafficLightManager trafficLightManager;
     public TrafficManager trafficManager;
@@ -64,6 +64,9 @@ public class WorldModel : MonoBehaviour
 
         // 2. 动态计算地形包围盒 (给 a1 裙边预留 100m 冗余)
         Bounds worldBounds = CalculateWorldBounds();
+        
+        // 【V4.1 生命周期时序锁 - 绝对起点】
+        // 必须严格排在 IngestAndPrecomputeGraph 之前！否则高度图未生成，路网全坠入 Y=0
         terrainGrid.Initialize(worldBounds);
 
         // 3. 建立真理层 (核心：高度平滑 + 切线计算 + 坐标锁死)
@@ -89,12 +92,13 @@ public class WorldModel : MonoBehaviour
         // --- 第一步：初步摄入并校准高度 ---
         foreach (var raw in source.nodes)
         {
-            float baseY = GetTerrainHeight(new Vector2(raw.position.x, raw.position.z));
+            // 【V4.1 修复】废弃 raw.position.y，强制调用统一真理接口获取 Y
+            float baseY = GetUnifiedHeight(raw.position.x, raw.position.z);
             
             _graph[raw.id] = new RoadNode
             {
                 Id = raw.id,
-                WorldPos = new Vector3(raw.position.x, baseY, raw.position.z),
+                WorldPos = new Vector3(raw.position.x, baseY, raw.position.z), // 严格使用大写 WorldPos
                 Type = ClassifyNode(raw.neighbors.Count),
                 NeighborIds = new List<int>(raw.neighbors),
                 State = IntersectionState.Uncontrolled
@@ -107,8 +111,8 @@ public class WorldModel : MonoBehaviour
         // --- 第三步：预计算切线与法线 ---
         foreach (var node in _graph.Values)
         {
-            node.Tangent = CalculateNodeTangent(node);
-            node.Normal = Vector3.Cross(node.Tangent, Vector3.up).normalized;
+            node.Tangent = CalculateNodeTangent(node); // 严格使用大写 Tangent
+            node.Normal = Vector3.Cross(node.Tangent, Vector3.up).normalized; // 严格使用大写 Normal
         }
 
         _spatialIndex = new KDTree(_graph.Values);
@@ -119,7 +123,7 @@ public class WorldModel : MonoBehaviour
     private Vector3 CalculateNodeTangent(RoadNode node)
     {
         if (node.NeighborIds.Count == 0) return Vector3.forward;
-        
+
         Vector3 avgDir = Vector3.zero;
         foreach (var nbId in node.NeighborIds)
         {
@@ -138,7 +142,7 @@ public class WorldModel : MonoBehaviour
                 float neighborAvgY = 0;
                 foreach (var nid in node.NeighborIds) neighborAvgY += _graph[nid].WorldPos.y;
                 neighborAvgY /= node.NeighborIds.Count;
-                
+
                 node.WorldPos.y = Mathf.Lerp(node.WorldPos.y, neighborAvgY, 0.8f);
             }
         }
@@ -156,37 +160,31 @@ public class WorldModel : MonoBehaviour
         }
         Bounds b = new Bounds();
         b.SetMinMax(min, max);
-        b.Expand(100f); 
+        b.Expand(100f);
         return b;
     }
 
     // --- 供子系统调用的原子接口 (a4 职责) ---
 
-    /// <summary>
-    /// 通用地形高度查询接口
-    /// </summary>
     public float GetTerrainHeight(Vector2 worldXZ)
     {
         if (terrainGrid != null) return terrainGrid.SampleHeight(worldXZ);
-        return 0f; 
+        return 0f;
     }
 
-    public RoadNode GetNearestNode(Vector3 pos) 
+    public RoadNode GetNearestNode(Vector3 pos)
     {
         if (_spatialIndex == null) return null;
         int id = _spatialIndex.QueryNearest(pos);
         return _graph.ContainsKey(id) ? _graph[id] : null;
     }
-    
+
     public RoadNode GetNode(int id) => _graph.GetValueOrDefault(id);
-    
-    /// <summary>
-    /// a1 唯一合法的高度获取接口（自带真理层 Offset）
-    /// </summary>
+
     public float GetNodeFixedHeight(int id) => _graph.ContainsKey(id) ? _graph[id].WorldPos.y : 0f;
 
-    public void SetIntersectionState(int id, IntersectionState s) { if(_graph.ContainsKey(id)) _graph[id].State = s; }
-    
+    public void SetIntersectionState(int id, IntersectionState s) { if (_graph.ContainsKey(id)) _graph[id].State = s; }
+
     public IntersectionState GetIntersectionState(int id) => _graph.GetValueOrDefault(id)?.State ?? IntersectionState.Uncontrolled;
 
     public float GetEdgeCost(int a, int b) => Vector3.Distance(_graph[a].WorldPos, _graph[b].WorldPos);
@@ -196,16 +194,26 @@ public class WorldModel : MonoBehaviour
     public void UpdateNodeVisualPosition(int id, Vector3 newPos)
     {
         if (!_graph.ContainsKey(id)) return;
-        float y = GetTerrainHeight(new Vector2(newPos.x, newPos.z));
+        float y = GetUnifiedHeight(newPos.x, newPos.z);
         _graph[id].WorldPos = new Vector3(newPos.x, y, newPos.z);
     }
 
     public void RebuildSpatialIndex() { _spatialIndex = new KDTree(_graph.Values); }
+    
     public (Vector3 worldPos, Vector3 tangent) GetNodeData(int nodeId)
-{
-    if (_graph.TryGetValue(nodeId, out RoadNode node))
-        return (node.WorldPos, node.Tangent);
-    Debug.LogError($"[WorldModel] 节点 {nodeId} 不存在");
-    return (Vector3.zero, Vector3.forward);
-}
+    {
+        if (_graph.TryGetValue(nodeId, out RoadNode node))
+            return (node.WorldPos, node.Tangent);
+        Debug.LogError($"[WorldModel] 节点 {nodeId} 不存在");
+        return (Vector3.zero, Vector3.forward);
+    }
+    
+    public float GetUnifiedHeight(float x, float z)
+    {
+        if (terrainGrid != null)
+        {
+            return terrainGrid.SampleHeightRaw(x, z);
+        }
+        return 0f;
+    }
 }

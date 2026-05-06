@@ -1,9 +1,9 @@
 using UnityEngine;
 
 /// <summary>
-/// V2.0 纯净版车辆控制器
+/// V4.1 纯净版车辆控制器
 /// 玩家模式：保留物理射线与 Rigidbody 驱动。
-/// NPC模式：彻底切断物理引擎，通过 WorldModel 白皮书接口进行纯数学轨道飞行。
+/// NPC模式：彻底切断物理引擎与旧版接口，通过 V4.1 统一高程真理层进行纯数学轨道飞行。
 /// </summary>
 public class SimpleCarController : MonoBehaviour
 {
@@ -29,7 +29,7 @@ public class SimpleCarController : MonoBehaviour
     [Header("物理环境")]
     public float slipFactor = 0.5f;
    
-   // private RaycastSensor sensor;
+    // private RaycastSensor sensor;
     private Rigidbody rb;
     private float targetSpeed = 0f;
     private float targetSteering = 0f;
@@ -37,16 +37,6 @@ public class SimpleCarController : MonoBehaviour
     private Collider[] allColliders;
     private float autoThrottle = 0f;
     private float autoSteering = 0f;
-
-    // ========== V2.0 白皮书接口占位 (由 a4 统一下发) ==========
-    // 实际环境中请确保 WorldModel 类已包含这些定义
-    /*
-    public enum IntersectionState { Uncontrolled, GreenLight, RedLight, YellowLight }
-    public class WorldModel : MonoBehaviour {
-        public static WorldModel Instance;
-        public float GetTerrainHeight(Vector2 worldXZ) { return 0f; }
-    }
-    */
 
     void Awake()
     {
@@ -141,18 +131,19 @@ public class SimpleCarController : MonoBehaviour
         }
 
         // ====================================================================
-        // 【V2.0 大扫除核心】删除 Physics.Raycast 贴地，严格调用白皮书接口
+        // 【V4.1 并发突击】彻底切断旧版接口，严格对齐全局统一高程真理层
         // ====================================================================
         if (WorldModel.Instance != null)
         {
-            Vector2 xzPos = new Vector2(transform.position.x, transform.position.z);
-            float trueGroundY = WorldModel.Instance.GetTerrainHeight(xzPos);
+            // [核心修改] 废弃 GetTerrainHeight，调用 V4.1 统一高程公共契约
+            float trueGroundY = WorldModel.Instance.GetUnifiedHeight(transform.position.x, transform.position.z);
             
             Vector3 pos = transform.position;
+            // 叠加悬挂高度偏移
             pos.y = trueGroundY + npcSuspensionHeight;
             transform.position = pos;
 
-            // 脱离物理法线后，强制保持车辆水平，实现绝对的“轨道车”匀速贴地飞行
+            // 脱离物理法线后，强制锁定 Pitch 与 Roll 轴，实现绝对的“轨道车”匀速贴地飞行
             transform.rotation = Quaternion.Euler(0f, transform.eulerAngles.y, 0f);
         }
     }

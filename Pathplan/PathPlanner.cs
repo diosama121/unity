@@ -20,12 +20,12 @@ public class PathPlanner : MonoBehaviour
         }
     }
 
-    private WorldModel _worldModel; // 缓存单例引用（避免频繁 Instance 查找）
+    private WorldModel _worldModel;
 
     void Awake() => _worldModel = WorldModel.Instance;
 
     /// <summary>
-    /// 【离散路径】仅返回拓扑节点ID序列（a4 基础契约）
+    /// 离散路径（拓扑节点ID序列）
     /// </summary>
     public List<int> FindDiscretePath(Vector3 startPos, Vector3 targetPos)
     {
@@ -42,43 +42,37 @@ public class PathPlanner : MonoBehaviour
     }
 
     /// <summary>
-    /// 【平滑路径】返回世界坐标序列（含样条线插值，可直接驱动车辆运动）
+    /// 平滑路径（含样条插值，可直接驱动车辆）
     /// </summary>
-      public List<Vector3> FindSmoothPath(Vector3 startPos, Vector3 targetPos)
+    public List<Vector3> FindSmoothPath(Vector3 startPos, Vector3 targetPos)
     {
-        // 1. 获取离散节点路径
         List<int> discretePath = FindDiscretePath(startPos, targetPos);
-        if (discretePath == null || discretePath.Count < 2) 
+        if (discretePath == null || discretePath.Count < 2)
         {
             Debug.LogWarning("[PathPlanner] 离散路径无效，无法生成平滑轨迹");
             return null;
         }
 
-        // 2. 构建控制点序列（关键修正：保留原始Y坐标）
-        List<Vector3> controlPoints = new List<Vector3>();
-        controlPoints.Add(startPos); // 起点（保留原始高度）
-        
+        // 构建控制点序列（保留原始高度）
+        List<Vector3> controlPoints = new List<Vector3> { startPos };
         foreach (int nodeId in discretePath)
         {
             RoadNode node = _worldModel.GetNode(nodeId);
-            if (node != null) controlPoints.Add(node.WorldPos); // 保留原始Y值
+            if (node != null) controlPoints.Add(node.WorldPos);
         }
-        
-        controlPoints.Add(targetPos); // 终点（保留原始高度）
+        controlPoints.Add(targetPos);
 
-        // 3. 【核心修正】正确使用 CatmullRomSpline（不再调用不存在的 Generate）
+        // 正确实例化 CatmullRomSpline
         CatmullRomSpline spline = new CatmullRomSpline(controlPoints, useCentripetal: false);
-        
-        // 4. 手动采样生成平滑路径（适配现有 API）
+
+        // 手动采样生成平滑路径
         List<Vector3> smoothPath = new List<Vector3>();
-        int totalSegments = controlPoints.Count - 1; // 控制点间的段数
-        int pointsPerSegment = 10; // 每段生成10个点（可配置）
-        
+        int totalSegments = controlPoints.Count - 1;
+        int pointsPerSegment = 10;
         for (int i = 0; i < totalSegments; i++)
         {
             for (int j = 0; j <= pointsPerSegment; j++)
             {
-                // 计算全局归一化参数 t ∈ [0,1]
                 float globalT = (i + (float)j / pointsPerSegment) / totalSegments;
                 smoothPath.Add(spline.GetPoint(globalT));
             }
@@ -87,22 +81,21 @@ public class PathPlanner : MonoBehaviour
     }
 
     /// <summary>
-    /// A* 核心实现（仅操作节点ID，完全依赖 a4 接口）
+    /// A* 核心实现（完全依赖 WorldModel 接口）
     /// </summary>
     private List<int> RunAStar(int startId, int targetId)
     {
         Dictionary<int, PathNode> openSet = new Dictionary<int, PathNode>();
         Dictionary<int, PathNode> closedSet = new Dictionary<int, PathNode>();
-        
-        // 初始化起点
+
         PathNode startNode = new PathNode(startId);
         startNode.GCost = 0;
-        startNode.HCost = HeuristicCost(startId, targetId); // 使用统一启发式
+        startNode.HCost = HeuristicCost(startId, targetId);
         openSet.Add(startId, startNode);
 
         while (openSet.Count > 0)
         {
-            // 从 openSet 中取出 FCost 最低的节点
+            // 取出 FCost 最低的节点
             PathNode currentNode = null;
             foreach (var node in openSet.Values)
             {
@@ -110,21 +103,36 @@ public class PathPlanner : MonoBehaviour
                     currentNode = node;
             }
 
+            // 到达目标，直接内联重建路径
             if (currentNode.NodeId == targetId)
-                return ReconstructPath(currentNode);
+            {
+                List<int> path = new List<int>();
+                PathNode node = currentNode;
+                while (node.ParentId != -1)
+                {
+                    path.Add(node.NodeId);
+                    if (!closedSet.TryGetValue(node.ParentId, out node) &&
+                        !openSet.TryGetValue(node.ParentId, out node))
+                    {
+                        Debug.LogError("[PathPlanner] 路径重建失败：找不到父节点");
+                        return null;
+                    }
+                }
+                path.Add(node.NodeId);
+                path.Reverse();
+                return path;
+            }
 
             openSet.Remove(currentNode.NodeId);
             closedSet.Add(currentNode.NodeId, currentNode);
 
-            // 【关键修正】使用 NeighborIds（非 ConnectedNodeIds）
             RoadNode currentRoadNode = _worldModel.GetNode(currentNode.NodeId);
             foreach (int neighborId in currentRoadNode.NeighborIds)
             {
                 if (closedSet.ContainsKey(neighborId)) continue;
 
-                // 100% 依赖 a4 的边代价接口
                 float edgeCost = _worldModel.GetEdgeCost(currentNode.NodeId, neighborId);
-                if (edgeCost >= float.MaxValue) continue; // 跳过不可达边
+                if (edgeCost >= float.MaxValue) continue;
 
                 float tentativeG = currentNode.GCost + edgeCost;
 
@@ -147,30 +155,12 @@ public class PathPlanner : MonoBehaviour
         return null;
     }
 
-    /// <summary>
-    /// 统一启发式函数（与 a4 的物理距离计算逻辑对齐）
-    /// </summary>
     private float HeuristicCost(int fromId, int toId)
     {
         RoadNode from = _worldModel.GetNode(fromId);
         RoadNode to = _worldModel.GetNode(toId);
-        return (from != null && to != null) 
-            ? Vector3.Distance(from.WorldPos, to.WorldPos) 
+        return (from != null && to != null)
+            ? Vector3.Distance(from.WorldPos, to.WorldPos)
             : float.MaxValue;
-    }
-
-    private List<int> ReconstructPath(PathNode endNode)
-    {
-        List<int> path = new List<int>();
-        PathNode currentNode = endNode;
-        
-        while (currentNode.ParentId != -1)
-        {
-            path.Add(currentNode.NodeId);
-            currentNode = new PathNode(currentNode.ParentId);
-        }
-        path.Add(currentNode.NodeId);
-        path.Reverse();
-        return path;
     }
 }

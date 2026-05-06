@@ -145,6 +145,41 @@ public class ProceduralRoadBuilder : MonoBehaviour
     {
         if (meshRoot != null) DestroyImmediate(meshRoot);
     }
+private Material[] BuildMaterialArray(Material fallback)
+{
+    Material[] mats = new Material[6];
+    Material defaultMat = new Material(Shader.Find("Standard"));
+    defaultMat.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Off); // 双面渲染
+
+    // 确保 fallback 也存在
+    Material safeFallback = fallback ? fallback : defaultMat;
+
+    if (useCountrysideUniformMaterials)
+    {
+        mats[0] = (countrysideRoadMaterial ? countrysideRoadMaterial : defaultMat);
+        mats[1] = mats[0];
+        mats[2] = mats[0];
+        mats[3] = (countrysideJunctionMaterial ? countrysideJunctionMaterial : defaultMat);
+        mats[4] = mats[3];
+        mats[5] = mats[3];
+    }
+    else
+    {
+        mats[0] = horizontalRoadMaterial ? horizontalRoadMaterial : safeFallback;
+        mats[1] = verticalRoadMaterial ? verticalRoadMaterial : safeFallback;
+        mats[2] = diagonalRoadMaterial ? diagonalRoadMaterial : safeFallback;
+        mats[3] = tJunctionMaterial ? tJunctionMaterial : safeFallback;
+        mats[4] = crossJunctionMaterial ? crossJunctionMaterial : safeFallback;
+        mats[5] = complexJunctionMaterial ? complexJunctionMaterial : safeFallback;
+    }
+
+    // 强制所有材质双面渲染（再次确保）
+    foreach (var mat in mats)
+        mat.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Off);
+
+    return mats;
+}
+
 private void CreateRoadObject(string name, Mesh mesh, Material[] materials, int layer, Transform parent)
 {
     GameObject obj = new GameObject(name);
@@ -155,27 +190,10 @@ private void CreateRoadObject(string name, Mesh mesh, Material[] materials, int 
     mr.sharedMaterials = materials;
     mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
     mr.receiveShadows = true;
+    // 增加双面渲染的材质侧保险
+    foreach (var m in materials)
+        m.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Off);
     obj.AddComponent<MeshCollider>().sharedMesh = mesh;
-}
-
-private Material[] BuildMaterialArray(Material fallback)
-{
-    Material[] mats = new Material[6];
-    if (useCountrysideUniformMaterials)
-    {
-        for (int i = 0; i < 3; i++) mats[i] = countrysideRoadMaterial ? countrysideRoadMaterial : fallback;
-        for (int i = 3; i < 6; i++) mats[i] = countrysideJunctionMaterial ? countrysideJunctionMaterial : fallback;
-    }
-    else
-    {
-        mats[0] = horizontalRoadMaterial ? horizontalRoadMaterial : fallback;
-        mats[1] = verticalRoadMaterial ? verticalRoadMaterial : fallback;
-        mats[2] = diagonalRoadMaterial ? diagonalRoadMaterial : fallback;
-        mats[3] = tJunctionMaterial ? tJunctionMaterial : fallback;
-        mats[4] = crossJunctionMaterial ? crossJunctionMaterial : fallback;
-        mats[5] = complexJunctionMaterial ? complexJunctionMaterial : fallback;
-    }
-    return mats;
 }
     void Start() => roadGen = GetComponent<RoadNetworkGenerator>();
 }

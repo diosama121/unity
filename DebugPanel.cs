@@ -3,9 +3,9 @@ using UnityEngine.UI;
 using System.Text;
 
 /// <summary>
-/// V2.0 上帝视角观测台 (a5 视觉与数据观测官)
+/// V4.1 上帝视角观测台 (a5 视觉与数据观测官)
 /// 核心准则：零物理射线，纯语义数据驱动
-/// 功能：节点总数统计、NPC活跃监控、鼠标悬停语义查询、一键数据录制
+/// 功能：节点总数统计、NPC活跃监控、模式状态实时观测、城乡一键切换、高程场健康度监控、一键数据录制
 /// </summary>
 public class DebugPanel : MonoBehaviour
 {
@@ -15,32 +15,43 @@ public class DebugPanel : MonoBehaviour
     public Text cameraGroundInfoText;    // 相机下方语义信息
 
     [Header("=== UI 按钮组件 ===")]
-    public Button toggleRecordButton;    // 一键录制按钮
-    public Text recordButtonText;        // 录制按钮状态文本
+    public Button toggleRecordButton;     // 一键录制按钮
+    public Text recordButtonText;         // 录制按钮状态文本
+    public Button toggleCountrysideButton;// 城乡模式切换按钮
+    public Text modeButtonText;           // 模式按钮状态文本
 
     [Header("=== 观测台设置 ===")]
     public KeyCode togglePanelKey = KeyCode.F1; // 开关面板快捷键
     public float updateInterval = 0.1f;         // 数据刷新频率
 
-    // 内部引用
+    // 内部引用缓存
     private SystemDataManager dataManager;
+    private RoadNetworkGenerator roadGen;
     private float updateTimer;
     private bool isPanelVisible = true;
 
     void Start()
     {
-        // 自动查找数据管理器
+        // 预缓存核心管理器，避免每帧查找损耗
         dataManager = FindObjectOfType<SystemDataManager>();
+        roadGen = FindObjectOfType<RoadNetworkGenerator>();
         
-        // 初始化按钮事件
+        // 初始化录制按钮事件
         if (toggleRecordButton != null)
         {
             toggleRecordButton.onClick.AddListener(OnToggleRecordClicked);
         }
-
+        
+        // 初始化城乡模式切换按钮事件
+        if (toggleCountrysideButton != null)
+        {
+            toggleCountrysideButton.onClick.AddListener(OnToggleCountrysideClicked);
+        }
+        
         // 初始更新UI
         UpdateWorldStats();
         UpdateRecordButtonUI(false);
+        UpdateModeButtonUI();
     }
 
     void Update()
@@ -76,17 +87,14 @@ public class DebugPanel : MonoBehaviour
         sb.AppendLine("=== 🌍 世界语义统计 ===");
         
         // 1. 获取节点总数 (通过 WorldModel 接口)
-        // 假设 WorldModel 提供 NodeCount 属性或 Nodes 列表，此处兼容两种常见模式
         int nodeCount = 0;
         if (WorldModel.Instance != null)
         {
-            // 优先尝试 NodeCount 属性
             var nodeCountProp = WorldModel.Instance.GetType().GetProperty("NodeCount");
             if (nodeCountProp != null)
             {
                 nodeCount = (int)nodeCountProp.GetValue(WorldModel.Instance);
             }
-            // 备选：尝试 Nodes 列表
             else
             {
                 var nodesProp = WorldModel.Instance.GetType().GetProperty("Nodes");
@@ -99,7 +107,7 @@ public class DebugPanel : MonoBehaviour
         }
         sb.AppendLine($"路网节点总数: {nodeCount}");
 
-        // 2. 获取活跃 NPC 数量 (查找 SimpleAutoDrive 组件)
+        // 2. 获取活跃 NPC 数量
         int npcCount = FindObjectsOfType<SimpleAutoDrive>().Length;
         sb.AppendLine($"活跃 NPC 数量: {npcCount}");
 
@@ -107,7 +115,7 @@ public class DebugPanel : MonoBehaviour
     }
 
     /// <summary>
-    /// 更新鼠标悬停位置的语义信息 (零物理射线)
+    /// 更新鼠标悬停位置的语义信息 (零物理射线 + V4.1 状态监控)
     /// </summary>
     void UpdateMouseHoverInfo()
     {
@@ -116,14 +124,23 @@ public class DebugPanel : MonoBehaviour
         StringBuilder sb = new StringBuilder();
         sb.AppendLine("=== 🖱️ 鼠标悬停语义 ===");
 
-        // V2.0 核心：零物理射线，仅通过屏幕坐标转 XZ 平面查询
+        // 【V4.1 核心新增】生成模式与种子状态探测
+        if (roadGen != null)
+        {
+            sb.AppendLine($"当前模式: {(roadGen.isCountryside ? "🏞️ 乡村起伏" : "🏙️ 城市纯平")}");
+            sb.AppendLine($"当前种子 (Seed): {roadGen.seed}");
+        }
+        else
+        {
+            sb.AppendLine("⚠️ 未找到 RoadNetworkGenerator 组件");
+        }
+
+        // 零物理射线坐标转换
         Vector3 mouseScreenPos = Input.mousePosition;
-        // 假设相机在场景中，取一个合理的 Y 高度用于 ScreenToWorldPoint
-        // 这里我们只关心 XZ 平面，所以用一个固定的 Y 值
-        mouseScreenPos.z = 10f; // 距离相机 10 个单位
+        mouseScreenPos.z = 10f;
         Vector3 mouseWorldPos = Camera.main.ScreenToWorldPoint(mouseScreenPos);
         
-        // 提取 XZ 坐标，忽略 Y，通过 WorldModel 查询最近节点
+        // 提取 XZ 坐标
         Vector2 mouseXZ = new Vector2(mouseWorldPos.x, mouseWorldPos.z);
         RoadNode nearestNode = WorldModel.Instance.GetNearestNode(new Vector3(mouseXZ.x, 0, mouseXZ.y));
 
@@ -133,7 +150,7 @@ public class DebugPanel : MonoBehaviour
             sb.AppendLine($"最近节点 ID: {nearestNode.Id}");
             sb.AppendLine($"节点世界坐标: ({nearestNode.WorldPos.x:F1}, {nearestNode.WorldPos.y:F1}, {nearestNode.WorldPos.z:F1})");
             
-            // 通过 NeighborIds 判断节点类型
+            // 节点类型判定
             string nodeType = "未知";
             if (nearestNode.NeighborIds != null)
             {
@@ -149,6 +166,10 @@ public class DebugPanel : MonoBehaviour
             sb.AppendLine("未检测到有效路网节点");
         }
 
+        // 【V4.1 核心新增】统一高程观测
+        float unifiedY = WorldModel.Instance.GetUnifiedHeight(mouseXZ.x, mouseXZ.y);
+        sb.AppendLine($"地表绝对高程: {unifiedY:F2} m");
+
         mouseHoverInfoText.text = sb.ToString();
     }
 
@@ -162,11 +183,9 @@ public class DebugPanel : MonoBehaviour
         StringBuilder sb = new StringBuilder();
         sb.AppendLine("=== 📷 相机下方语义 ===");
 
-        // 获取相机位置，提取 XZ 平面
         Vector3 cameraPos = Camera.main.transform.position;
         Vector2 cameraXZ = new Vector2(cameraPos.x, cameraPos.z);
         
-        // 通过 WorldModel 查询最近节点
         RoadNode nearestNode = WorldModel.Instance.GetNearestNode(new Vector3(cameraXZ.x, 0, cameraXZ.y));
 
         if (nearestNode != null)
@@ -174,7 +193,6 @@ public class DebugPanel : MonoBehaviour
             sb.AppendLine($"相机 XZ: ({cameraXZ.x:F1}, {cameraXZ.y:F1})");
             sb.AppendLine($"最近节点 ID: {nearestNode.Id}");
             
-            // 通过 NeighborIds 判断节点类型
             string nodeType = "未知";
             if (nearestNode.NeighborIds != null)
             {
@@ -183,6 +201,10 @@ public class DebugPanel : MonoBehaviour
                 else nodeType = "端点";
             }
             sb.AppendLine($"节点类型: {nodeType}");
+            
+            // 相机下方统一高程监控
+            float unifiedHeight = WorldModel.Instance.GetUnifiedHeight(cameraXZ.x, cameraXZ.y);
+            sb.AppendLine($"地表绝对高程: {unifiedHeight:F2} m");
         }
         else
         {
@@ -190,6 +212,25 @@ public class DebugPanel : MonoBehaviour
         }
 
         cameraGroundInfoText.text = sb.ToString();
+    }
+
+    /// <summary>
+    /// 【V4.1 新增】一键切换城乡生成模式
+    /// </summary>
+    void OnToggleCountrysideClicked()
+    {
+        if (roadGen == null)
+        {
+            Debug.LogWarning("[DebugPanel] 未找到 RoadNetworkGenerator，无法切换模式！");
+            return;
+        }
+
+        // 翻转模式状态
+        roadGen.isCountryside = !roadGen.isCountryside;
+        Debug.Log(roadGen.isCountryside ? "🏞️ [DebugPanel] 已切换至乡村起伏模式" : "🏙️ [DebugPanel] 已切换至城市纯平模式");
+        
+        // 更新按钮UI
+        UpdateModeButtonUI();
     }
 
     /// <summary>
@@ -203,7 +244,6 @@ public class DebugPanel : MonoBehaviour
             return;
         }
 
-        // 反射调用 dataManager 的录制逻辑 (兼容不同实现)
         var isRecordingField = dataManager.GetType().GetField("isRecording", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
         if (isRecordingField != null)
         {
@@ -220,10 +260,21 @@ public class DebugPanel : MonoBehaviour
             else
             {
                 Debug.Log("✅ [DebugPanel] 一键停止数据录制，正在导出...");
-                // 触发导出 (如果有 Export 方法)
                 var exportMethod = dataManager.GetType().GetMethod("ExportToCSV", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
                 exportMethod?.Invoke(dataManager, null);
             }
+        }
+    }
+
+    /// <summary>
+    /// 更新模式按钮 UI
+    /// </summary>
+    void UpdateModeButtonUI()
+    {
+        if (modeButtonText != null && roadGen != null)
+        {
+            modeButtonText.text = roadGen.isCountryside ? "切换至城市纯平" : "切换至乡村起伏";
+            modeButtonText.color = roadGen.isCountryside ? Color.green : Color.blue;
         }
     }
 
@@ -238,29 +289,4 @@ public class DebugPanel : MonoBehaviour
             recordButtonText.color = isRecording ? Color.red : Color.green;
         }
     }
-    /*
-    
-     a5 观测台核心特性（完全符合 V2.0 规范）
-1. 零物理射线，纯语义驱动
-鼠标悬停检测：通过 ScreenToWorldPoint 转 XZ 平面，直接调用 WorldModel.Instance.GetNearestNode
-相机下方检测：提取相机 XZ 坐标，通过 WorldModel 查询语义
-全程无 Physics.Raycast，彻底解耦物理层
-2. 核心功能覆盖
-世界统计：实时显示路网节点总数、活跃 NPC 数量
-语义查询：鼠标悬停 / 相机下方的节点 ID、类型、邻接数
-一键录制：按钮触发 SystemDataManager 数据录制与导出
-快捷开关：按 F1 显示 / 隐藏观测台
-3. 高兼容性设计
-使用反射兼容不同 WorldModel 实现（NodeCount / Nodes 列表）
-自动适配 SystemDataManager 的录制逻辑
-所有 UI 组件可在 Inspector 灵活配置
-🎮 使用说明
-在 Unity 中创建一个 Canvas，添加以下 UI 元素：
-3 个 Text 组件（分别用于世界统计、鼠标悬停、相机下方）
-1 个 Button 组件（用于一键录制），并在 Button 下添加一个 Text 子组件
-创建一个空物体，挂载 DebugPanel.cs
-将 UI 元素拖拽到脚本对应的 Inspector 字段中
-运行场景，按 F1 开关观测台，鼠标移动查看语义信息，点击按钮控制录制
-观测台已准备完毕，a4 总指挥和 a2 搭档可以随时检阅！需要调整 UI 布局或增加其他观测维度吗？
-    */
 }

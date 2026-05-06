@@ -199,21 +199,27 @@ public class RoadNetworkGenerator : MonoBehaviour
     }
 
 #if UNITY_EDITOR
-    void OnDrawGizmos()
+   void OnDrawGizmos()
+{
+    if (!showGizmos || nodes == null || nodes.Count == 0) return;
+
+    // 优先从真理层 WorldModel 获取坐标，实现高度同步
+    bool useTruthPositions = WorldModel.Instance != null && WorldModel.Instance.NodeCount > 0;
+
+    Gizmos.color = nodeColor;
+    foreach (var node in nodes)
     {
-        if (!showGizmos || nodes == null || nodes.Count == 0) return;
-
-        Gizmos.color = nodeColor;
-        foreach (var node in nodes)
-        {
-            Gizmos.DrawSphere(node.position, nodeSphereSize);
-        }
-
-        Gizmos.color = edgeColor;
-        foreach (var edge in edges)
-        {
-            Gizmos.DrawLine(nodes[edge.Item1].position, nodes[edge.Item2].position);
-        }
+        Vector3 pos = useTruthPositions ? WorldModel.Instance.GetNode(node.id).WorldPos : node.position;
+        Gizmos.DrawSphere(pos, nodeSphereSize);
     }
+
+    Gizmos.color = edgeColor;
+    foreach (var edge in edges)
+    {
+        Vector3 p1 = useTruthPositions ? WorldModel.Instance.GetNode(edge.Item1).WorldPos : nodes[edge.Item1].position;
+        Vector3 p2 = useTruthPositions ? WorldModel.Instance.GetNode(edge.Item2).WorldPos : nodes[edge.Item2].position;
+        Gizmos.DrawLine(p1, p2);
+    }
+}
 #endif
 }
