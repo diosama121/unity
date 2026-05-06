@@ -33,8 +33,13 @@ public class TerrainGridSystem : MonoBehaviour
     private MeshFilter _meshFilter;
     private MeshRenderer _meshRenderer;
 
-    private void Awake()
+   private void Awake()
+{
+    if (cellSize > 2.0f)
     {
+        Debug.LogWarning($"[TerrainGrid] cellSize {cellSize} 过大，强制设为 2.0m 以保证道路插值精度。");
+        cellSize = 2.0f;
+    }
         if (Instance != null)
         {
             Destroy(gameObject);
@@ -266,6 +271,12 @@ public class TerrainGridSystem : MonoBehaviour
         }
         return inside;
     }
+    public void Reinitialize(Bounds bounds)
+{
+    GenerateHeightMap(bounds);
+    _roadMask = new bool[_dimX - 1, _dimZ - 1];   // 清空遮罩
+    GenerateTerrainMesh();
+}
 }
 
 // ================================================================

@@ -346,31 +346,6 @@ controller.greenColor = greenColor;
     // =============================================
     // Gizmos
     // =============================================
-/ 建议注入到 TrafficManager.cs 或 TrafficLightManager.cs
-public void A3_InternalCheck()
-{
-    Debug.Log("=== [a3 内部自检开始] ===");
-    // 1. 检查 NPC 物理状态
-    var npcs = FindObjectsOfType<SimpleCarController>();
-    foreach(var npc in npcs) {
-        if (npc.isNPC && npc.GetComponent<Rigidbody>() != null && !npc.GetComponent<Rigidbody>().isKinematic)
-            Debug.LogError($"❌ [a3] NPC {npc.name} 物理未降维！Rigidbody 仍处于激活状态。");
-    }
-
-    // 2. 检查红绿灯语义同步
-    if (WorldModel.Instance != null) {
-        bool anyLightFound = false;
-        foreach(var node in WorldModel.Instance.Nodes) {
-            if (node.State != IntersectionState.Uncontrolled) {
-                anyLightFound = true;
-                Debug.Log($"✅ [a3] 节点 {node.Id} 语义同步正常: {node.State}");
-                break;
-            }
-        }
-        if (!anyLightFound) Debug.LogWarning("⚠️ [a3] WorldModel 中未发现活跃的红绿灯语义。");
-    }
-    Debug.Log("=== [a3 内部自检结束] ===");
-}
     void OnDrawGizmos()
     {
         foreach (var tl in trafficLights)

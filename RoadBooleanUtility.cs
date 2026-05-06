@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using Clipper2Lib;
 using System.Linq;
+using System;
 
 public static class RoadBooleanUtility
 {
@@ -88,71 +89,9 @@ public static class RoadBooleanUtility
     /// </summary>
     public static Paths64 Intersect(Paths64 subjects, Paths64 clips)
         => Clipper.Intersect(subjects, clips, FillRule.NonZero);
-    public static Path64 GenerateSmoothIntersectionPolygon(
-    Vector3 nodePos,
-    List<(Vector3 nodeA, Vector3 nodeB)> connectedEdges, // 每条边的两个端点
-    float roadWidth,
-    float expansionOffset = 1.5f) // 膨胀量，默认1.5米让边缘更圆滑
+
+    internal static Path64 GenerateSmoothIntersectionPolygon(Vector3 nodePos, List<(Vector3, Vector3)> connectedEdges, float roadWidth)
     {
-        if (connectedEdges == null || connectedEdges.Count < 2)
-            return GenerateCirclePolygon(nodePos, roadWidth * 0.75f);
-
-        // 1. 收集所有连接道路在节点附近的端部轮廓（小段）
-        Paths64 edgePatches = new Paths64();
-        float patchLength = roadWidth * 0.8f; // 只取靠近节点的小段
-
-        foreach (var (nA, nB) in connectedEdges)
-        {
-            // 确定哪一端是当前节点
-            Vector3 farEnd = (Vector3.Distance(nA, nodePos) < Vector3.Distance(nB, nodePos)) ? nB : nA;
-            Vector3 localEnd = (farEnd == nA) ? nB : nA;
-
-            // 取从节点出发、一小段中心线
-            Vector3 dir = (farEnd - localEnd).normalized;
-            Vector3 patchEnd = localEnd + dir * patchLength;
-
-            // 将这一小段中心线扩宽为多边形
-            List<Vector3> miniLine = new List<Vector3> { localEnd, patchEnd };
-            List<Vector3> miniPoly = ExpandCenterlineToPolygon(miniLine, roadWidth);
-            if (miniPoly.Count >= 3)
-            {
-                Path64 path = new Path64();
-                foreach (var pt in miniPoly)
-                    path.Add(new Point64((long)(pt.x * SCALE), (long)(pt.z * SCALE)));
-                edgePatches.Add(path);
-            }
-        }
-
-        // 2. 合并所有小段（它们会在节点处重叠）
-        Paths64 mergedPatches = Clipper.Union(edgePatches, FillRule.NonZero);
-
-        // 3. 整体膨胀，生成圆滑的交叉口区域
-        ClipperOffset co = new ClipperOffset();
-        co.AddPaths(mergedPatches, JoinType.Round, EndType.Round);
-        Paths64 result = new Paths64();
-        co.Execute(expansionOffset * SCALE, result);
-
-        return result.Count > 0 ? result[0] : GenerateCirclePolygon(nodePos, roadWidth * 0.75f);
+        throw new NotImplementedException();
     }
-public void A1_InternalCheck()
-{
-    Debug.Log("=== [a1 内部自检开始] ===");
-    // 1. 检查高度图是否生成
-    if (_heightMap == null) Debug.LogError("❌ [a1] 高度图未初始化！");
-    
-    // 2. 检查路网节点是否超出地形边界
-    if (RoadNetworkGenerator.Instance != null) {
-        foreach(var node in RoadNetworkGenerator.Instance.nodes) {
-            float h = SampleHeight(new Vector2(node.position.x, node.position.z));
-            if (h == 0 && usePerlinNoise) 
-                Debug.LogWarning($"⚠️ [a1] 节点 {node.id} 采样高度为0，可能超出地形边界或噪声未生效。");
-        }
-    }
-    
-    // 3. 检查道路遮罩烘焙状态
-    int maskedCells = 0;
-    foreach(bool b in _roadMask) if(b) maskedCells++;
-    Debug.Log($"ℹ️ [a1] 道路遮罩单元格数量: {maskedCells} / {_roadMask.Length}");
-    Debug.Log("=== [a1 内部自检结束] ===");
-}
 }
