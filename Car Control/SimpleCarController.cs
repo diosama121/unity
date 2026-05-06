@@ -136,7 +136,7 @@ public class SimpleCarController : MonoBehaviour
         if (WorldModel.Instance != null)
         {
             // [核心修改] 废弃 GetTerrainHeight，调用 V4.1 统一高程公共契约
-            float trueGroundY = WorldModel.Instance.GetUnifiedHeight(transform.position.x, transform.position.z);
+            float trueGroundY = WorldModel.Instance.GetUnifiedHeight(transform.position.x, transform.position.z)+0.2f;
             
             Vector3 pos = transform.position;
             // 叠加悬挂高度偏移

@@ -6,10 +6,6 @@ using TriangleNet.Meshing;
 using System.Linq;
 using System;
 
-/// <summary>
-/// V2.0 纯净外围环境生成器 (a1 分裂模块)
-/// 专门负责根据最终的道路轮廓，生成地表、建筑、人行道
-/// </summary>
 public class EnvironmentMeshBuilder : MonoBehaviour
 {
     private ProceduralRoadBuilder paramsSource;
@@ -35,49 +31,47 @@ public class EnvironmentMeshBuilder : MonoBehaviour
             aabb = Rect.MinMaxRect(minX - 0.1f, minY - 0.1f, maxX + 0.1f, maxY + 0.1f);
         }
     }
-  private bool IsIllegalTriangleEdgeCheck(TriangleNet.Topology.Triangle tri, List<RoadSegmentCache> roadSegs)
-{
-    Vector2 a = new Vector2((float)tri.GetVertex(0).X, (float)tri.GetVertex(0).Y);
-    Vector2 b = new Vector2((float)tri.GetVertex(1).X, (float)tri.GetVertex(1).Y);
-    Vector2 c = new Vector2((float)tri.GetVertex(2).X, (float)tri.GetVertex(2).Y);
 
-    (Vector2, Vector2)[] triEdges = { (a, b), (b, c), (c, a) };
-
-    foreach (var road in roadSegs)
+    private bool IsIllegalTriangleEdgeCheck(TriangleNet.Topology.Triangle tri, List<RoadSegmentCache> roadSegs)
     {
-        foreach (var roadSeg in road.segments)
+        Vector2 a = new Vector2((float)tri.GetVertex(0).X, (float)tri.GetVertex(0).Y);
+        Vector2 b = new Vector2((float)tri.GetVertex(1).X, (float)tri.GetVertex(1).Y);
+        Vector2 c = new Vector2((float)tri.GetVertex(2).X, (float)tri.GetVertex(2).Y);
+
+        (Vector2, Vector2)[] triEdges = { (a, b), (b, c), (c, a) };
+
+        foreach (var road in roadSegs)
         {
-            foreach (var triEdge in triEdges)
+            foreach (var roadSeg in road.segments)
             {
-                if (LineSegmentsIntersect(triEdge.Item1, triEdge.Item2, roadSeg.a, roadSeg.b))
-                    return true;
+                foreach (var triEdge in triEdges)
+                {
+                    if (LineSegmentsIntersect(triEdge.Item1, triEdge.Item2, roadSeg.a, roadSeg.b))
+                        return true;
+                }
             }
         }
-    }
-    return false;
-}
-
-// 线段相交检测（不含端点重叠，可调整容差）
-private bool LineSegmentsIntersect(Vector2 p1, Vector2 p2, Vector2 q1, Vector2 q2)
-{
-    float Cross(Vector2 a, Vector2 b) => a.x * b.y - a.y * b.x;
-    Vector2 r = p2 - p1;
-    Vector2 s = q2 - q1;
-    float rxs = Cross(r, s);
-    float qpxr = Cross(q1 - p1, r);
-
-    if (Mathf.Abs(rxs) < 0.0001f)
-    {
-        // 共线或平行，视为不相交（因为我们关心的是真正的跨越）
         return false;
     }
 
-    float t = Cross(q1 - p1, s) / rxs;
-    float u = qpxr / rxs;
+    private bool LineSegmentsIntersect(Vector2 p1, Vector2 p2, Vector2 q1, Vector2 q2)
+    {
+        float Cross(Vector2 a, Vector2 b) => a.x * b.y - a.y * b.x;
+        Vector2 r = p2 - p1;
+        Vector2 s = q2 - q1;
+        float rxs = Cross(r, s);
+        float qpxr = Cross(q1 - p1, r);
 
-    // 允许微小容差，仅当严格在(0,1)区间内才认为相交（排除端点重合）
-    return (t > 0.001f && t < 0.999f && u > 0.001f && u < 0.999f);
-}
+        if (Mathf.Abs(rxs) < 0.0001f)
+        {
+            return false;
+        }
+
+        float t = Cross(q1 - p1, s) / rxs;
+        float u = qpxr / rxs;
+        return (t > 0.001f && t < 0.999f && u > 0.001f && u < 0.999f);
+    }
+
     public void GenerateEnvironment(Paths64 finalRoadUnion, ProceduralRoadBuilder paramsSource)
     {
         this.paramsSource = paramsSource;
@@ -95,64 +89,65 @@ private bool LineSegmentsIntersect(Vector2 p1, Vector2 p2, Vector2 q1, Vector2 q
         }
     }
 
-   
-
-    // ==========================================
-    // 地表生成（强制 Margin = 50f）
-    // ==========================================
-   private void GenerateTerrainBase(Paths64 rawRoadUnion)
-{
-    // 1. 调用 RoadBooleanUtility 净化多边形
-    Paths64 cleanRoads = RoadBooleanUtility.SanitizePolygons(rawRoadUnion);
-    if (cleanRoads.Count == 0) return;
-
-    // 2. 生成外围裙边
-    Path64 outerSkirt = RoadBooleanUtility.GenerateOuterSkirt(cleanRoads, 18f);
-    if (outerSkirt.Count < 3) return;
-
-    // 3. 调用 Triangle.NET 黑盒生成二维网格
-    TriangulationUtility.RawMeshData meshData = TriangulationUtility.GenerateCDTMeshData(outerSkirt, cleanRoads);
-
-    // 4. 缝合真理层：将 2D 顶点转为 3D，Y 轴查 a4 高度服务
-    List<Vector3> verts3D = new List<Vector3>();
-    foreach (var v2 in meshData.vertices)
+    private void GenerateTerrainBase(Paths64 rawRoadUnion)
     {
-       float y = WorldModel.Instance != null
-    ? WorldModel.Instance.GetUnifiedHeight(v2.x, v2.y)
-    : 0f;
-        verts3D.Add(new Vector3(v2.x, y, v2.y));
+        Paths64 cleanRoads = RoadBooleanUtility.SanitizePolygons(rawRoadUnion);
+        if (cleanRoads.Count == 0) return;
+
+        Path64 outerSkirt = RoadBooleanUtility.GenerateOuterSkirt(cleanRoads, 18f);
+        if (outerSkirt.Count < 3) return;
+
+        TriangulationUtility.RawMeshData meshData = TriangulationUtility.GenerateCDTMeshData(outerSkirt, cleanRoads);
+
+        // === a1 修复：翻转三角形顺序，确保法线向上 ===
+        List<int> flippedTris = new List<int>();
+        for (int i = 0; i < meshData.triangles.Count; i += 3)
+        {
+            int a = meshData.triangles[i];
+            int b = meshData.triangles[i + 1];
+            int c = meshData.triangles[i + 2];
+            // 将 (a, b, c) 改为 (a, c, b)，翻转缠绕方向
+            flippedTris.Add(a);
+            flippedTris.Add(c);
+            flippedTris.Add(b);
+        }
+
+        List<Vector3> verts3D = new List<Vector3>();
+        foreach (var v2 in meshData.vertices)
+        {
+            float y = WorldModel.Instance != null
+                ? WorldModel.Instance.GetUnifiedHeight(v2.x, v2.y)
+                : 0f;
+            verts3D.Add(new Vector3(v2.x, y, v2.y));
+        }
+
+        Mesh terrainMesh = new Mesh();
+        terrainMesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+        terrainMesh.SetVertices(verts3D);
+        terrainMesh.SetTriangles(flippedTris, 0);   // 使用翻转后的三角形索引
+        terrainMesh.RecalculateNormals();
+        terrainMesh.RecalculateBounds();
+
+        Material mat = paramsSource.terrainBaseMaterial ? paramsSource.terrainBaseMaterial : paramsSource.roadMaterial;
+        if (mat == null) mat = new Material(Shader.Find("Standard"));
+        mat.renderQueue = 1999;
+
+        GameObject terrainRoot = GameObject.Find("Procedural_Terrain");
+        if (terrainRoot == null)
+        {
+            terrainRoot = new GameObject("Procedural_Terrain");
+            terrainRoot.transform.SetParent(transform, false);
+        }
+        GameObject go = new GameObject("Terrain_Base");
+        go.transform.SetParent(terrainRoot.transform, false);
+        go.layer = LayerMask.NameToLayer("Default");
+        go.AddComponent<MeshFilter>().sharedMesh = terrainMesh;
+        MeshRenderer mr = go.AddComponent<MeshRenderer>();
+        mr.sharedMaterial = mat;
+        mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        mr.receiveShadows = true;
     }
 
-    // 5. 构建 Mesh 并赋予 GameObject（与原逻辑一致）
-    Mesh terrainMesh = new Mesh();
-    terrainMesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
-    terrainMesh.SetVertices(verts3D);
-    terrainMesh.SetTriangles(meshData.triangles, 0);
-    terrainMesh.RecalculateNormals();
-    terrainMesh.RecalculateBounds();
-    Material mat = paramsSource.terrainBaseMaterial ? paramsSource.terrainBaseMaterial : paramsSource.roadMaterial;
-    if (mat == null) mat = new Material(Shader.Find("Standard"));
-    mat.renderQueue = 1999;
-
-    GameObject terrainRoot = GameObject.Find("Procedural_Terrain");
-    if (terrainRoot == null)
-    {
-        terrainRoot = new GameObject("Procedural_Terrain");
-        terrainRoot.transform.SetParent(transform, false);
-    }
-    GameObject go = new GameObject("Terrain_Base");
-    go.transform.SetParent(terrainRoot.transform, false);
-    go.layer = LayerMask.NameToLayer("Default");
-    go.AddComponent<MeshFilter>().sharedMesh = terrainMesh;
-    MeshRenderer mr = go.AddComponent<MeshRenderer>();
-    mr.sharedMaterial = mat;
-    mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-    mr.receiveShadows = true;
-}
-
-    // ==========================================
-    // 建筑生成（强制向内收缩 1.5m）
-    // ==========================================
     private void ExtrudeBuildingsFromIslands(Paths64 roadUnion)
     {
         if (paramsSource.buildingMaterial == null) return;
@@ -160,7 +155,6 @@ private bool LineSegmentsIntersect(Vector2 p1, Vector2 p2, Vector2 q1, Vector2 q
         GameObject buildingRoot = new GameObject("City_Buildings");
         buildingRoot.transform.SetParent(transform, false);
 
-        // 提取所有负面积岛屿，并整体收缩
         ClipperOffset co = new ClipperOffset();
         foreach (var path in roadUnion)
         {
@@ -172,7 +166,6 @@ private bool LineSegmentsIntersect(Vector2 p1, Vector2 p2, Vector2 q1, Vector2 q
         }
 
         Paths64 shrunkIslands = new Paths64();
-        // 强制向内收缩 1.5 米
         co.Execute(-1.5 * 1000.0, shrunkIslands);
 
         foreach (var safeIsland in shrunkIslands)
@@ -181,13 +174,13 @@ private bool LineSegmentsIntersect(Vector2 p1, Vector2 p2, Vector2 q1, Vector2 q
             List<Vector3> baseVerts = safeIsland.Select(pt =>
                 new Vector3((float)(pt.X / 1000.0), 0f, (float)(pt.Y / 1000.0))).ToList();
 
-            // 高度真理约束
             for (int i = 0; i < baseVerts.Count; i++)
             {
                 var v = baseVerts[i];
-               v.y = WorldModel.Instance != null
-    ? WorldModel.Instance.GetUnifiedHeight(v.x, v.z)
-    : 0f;
+                v.y = WorldModel.Instance != null
+                    ? WorldModel.Instance.GetUnifiedHeight(v.x, v.z)
+                    : 0f;
+                baseVerts[i] = v;
             }
 
             Mesh buildingMesh = ExtrudePolygon(baseVerts, paramsSource.buildingHeight);
@@ -200,9 +193,6 @@ private bool LineSegmentsIntersect(Vector2 p1, Vector2 p2, Vector2 q1, Vector2 q
         }
     }
 
-    // ==========================================
-    // 人行道生成
-    // ==========================================
     private void GenerateSidewalks(Paths64 roadUnion)
     {
         if (paramsSource.sidewalkMaterial == null) return;
@@ -228,9 +218,10 @@ private bool LineSegmentsIntersect(Vector2 p1, Vector2 p2, Vector2 q1, Vector2 q
             for (int i = 0; i < verts.Count; i++)
             {
                 var v = verts[i];
-               v.y = WorldModel.Instance != null
-    ? WorldModel.Instance.GetUnifiedHeight(v.x, v.z)
-    : 0f;
+                v.y = WorldModel.Instance != null
+                    ? WorldModel.Instance.GetUnifiedHeight(v.x, v.z)
+                    : 0f;
+                verts[i] = v;
             }
             Mesh sidewalkMesh = ExtrudePolygon(verts, paramsSource.sidewalkHeight);
             if (sidewalkMesh == null) continue;
@@ -241,13 +232,9 @@ private bool LineSegmentsIntersect(Vector2 p1, Vector2 p2, Vector2 q1, Vector2 q
         }
     }
 
-    // ==========================================
-    // 多边形拉伸为带顶底的实体网格
-    // ==========================================
     private Mesh ExtrudePolygon(List<Vector3> baseVerts, float height)
     {
         if (baseVerts.Count < 3) return null;
-        // 确保顶点顺序为顺时针（俯视），构建时法线朝外
         List<Vector3> bottom = new List<Vector3>(baseVerts);
         List<Vector3> top = new List<Vector3>();
         foreach (var v in bottom)
@@ -303,9 +290,6 @@ private bool LineSegmentsIntersect(Vector2 p1, Vector2 p2, Vector2 q1, Vector2 q
         return mesh;
     }
 
-    // ==========================================
-    // 辅助：获取路网包围盒
-    // ==========================================
     private Bounds GetNetworkBounds()
     {
         if (paramsSource.RoadGen.nodes == null || paramsSource.RoadGen.nodes.Count == 0)
@@ -322,7 +306,6 @@ private bool LineSegmentsIntersect(Vector2 p1, Vector2 p2, Vector2 q1, Vector2 q
         return b;
     }
 
-    // 简化道路轮廓（同原 ProceduralRoadBuilder 中的 CleanRoadUnion）
     private Paths64 CleanRoadUnion(Paths64 roadUnion)
     {
         Paths64 cleanUnion = new Paths64();
@@ -336,6 +319,7 @@ private bool LineSegmentsIntersect(Vector2 p1, Vector2 p2, Vector2 q1, Vector2 q
         cleanUnion = Clipper.InflatePaths(cleanUnion, -1.0, JoinType.Round, EndType.Polygon);
         return cleanUnion;
     }
+
     private class RoadSegmentCache
     {
         public List<(Vector2 a, Vector2 b)> segments = new List<(Vector2, Vector2)>();

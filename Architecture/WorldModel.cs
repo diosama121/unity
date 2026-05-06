@@ -85,38 +85,44 @@ public class WorldModel : MonoBehaviour
     /// <summary>
     /// 【核心手术】吞入原始图并预计算所有几何向量
     /// </summary>
-    private void IngestAndPrecomputeGraph(RoadNetworkGenerator source)
+  private void IngestAndPrecomputeGraph(RoadNetworkGenerator source)
+{
+    _graph.Clear();
+
+    // 防穿插离地偏移量（节点初始略高于地形，避免 Z-fighting 与踩空感）
+    const float NODE_GROUND_OFFSET = 0.2f;
+
+    // --- 第一步：统一高度基准 + 离地偏移 ---
+    foreach (var raw in source.nodes)
     {
-        _graph.Clear();
+        // 强制调用唯一真理接口获取地形高度
+        float baseY = GetUnifiedHeight(raw.position.x, raw.position.z);
+        // 叠加偏移，确保节点视觉与逻辑始终在地表之上
+        float finalY = baseY + NODE_GROUND_OFFSET;
 
-        // --- 第一步：初步摄入并校准高度 ---
-        foreach (var raw in source.nodes)
+        _graph[raw.id] = new RoadNode
         {
-            // 【V4.1 修复】废弃 raw.position.y，强制调用统一真理接口获取 Y
-            float baseY = GetUnifiedHeight(raw.position.x, raw.position.z);
-            
-            _graph[raw.id] = new RoadNode
-            {
-                Id = raw.id,
-                WorldPos = new Vector3(raw.position.x, baseY, raw.position.z), // 严格使用大写 WorldPos
-                Type = ClassifyNode(raw.neighbors.Count),
-                NeighborIds = new List<int>(raw.neighbors),
-                State = IntersectionState.Uncontrolled
-            };
-        }
-
-        // --- 第二步：高程平滑处理 ---
-        SmoothNodeHeights();
-
-        // --- 第三步：预计算切线与法线 ---
-        foreach (var node in _graph.Values)
-        {
-            node.Tangent = CalculateNodeTangent(node); // 严格使用大写 Tangent
-            node.Normal = Vector3.Cross(node.Tangent, Vector3.up).normalized; // 严格使用大写 Normal
-        }
-
-        _spatialIndex = new KDTree(_graph.Values);
+            Id = raw.id,
+            WorldPos = new Vector3(raw.position.x, finalY, raw.position.z),
+            Type = ClassifyNode(raw.neighbors.Count),
+            NeighborIds = new List<int>(raw.neighbors),
+            State = IntersectionState.Uncontrolled
+        };
     }
+
+    // --- 第二步：高程平滑处理 ---
+    // 【V4.1 删除】此方法会篡改真理高度，导致节点重新拉偏，已彻底移除！
+    // SmoothNodeHeights();
+
+    // --- 第三步：预计算切线与法线 ---
+    foreach (var node in _graph.Values)
+    {
+        node.Tangent = CalculateNodeTangent(node);
+        node.Normal = Vector3.Cross(node.Tangent, Vector3.up).normalized;
+    }
+
+    _spatialIndex = new KDTree(_graph.Values);
+}
 
     // --- a4 的几何计算车间 ---
 

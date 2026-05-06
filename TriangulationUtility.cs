@@ -52,12 +52,14 @@ public static class TriangulationUtility
         var triangles = new List<int>();
         var indexMap = new Dictionary<int, int>();
 
-        foreach (var tri in mesh.Triangles)
+      foreach (var tri in mesh.Triangles)
         {
             // 四点采样过滤
             if (IsTriangleInsideRoad(tri, caches)) continue;
 
-            for (int i = 2; i >= 0; i--) // 统一 winding
+            // 【强制翻转法线】使用 0, 2, 1 顺序，绝对保证 Unity 中的法线朝上！
+            int[] flipIndices = { 0, 2, 1 };
+            foreach (int i in flipIndices) 
             {
                 var v = tri.GetVertex(i);
                 if (!indexMap.TryGetValue(v.ID, out int newIdx))
