@@ -138,7 +138,7 @@ public class TerrainGridSystem : MonoBehaviour
         if (roadGen != null && roadGen.edges != null)
         {
             float seedOff = roadGen.seed * 1000f;
-            float scale = roadGen.isCountryside ? roadGen.countrysideHeightScale : heightScale;
+            float scale = roadGen.isCountryside ? roadGen.countrysideHeightScale : 0f;
             float tangLen = builder != null ? builder.tangentLength : 0.3f;
 
             // 预计算节点切线
