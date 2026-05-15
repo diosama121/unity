@@ -107,4 +107,34 @@ public partial class RoadNode
     /// 用于指导路口几何生成（T 型、十字、环岛等）。
     /// </summary>
     public IntersectionKind Kind = IntersectionKind.None;
+
+    /// <summary>
+    /// 按极角顺时针排序的邻居ID列表（仅路口节点有效）。
+    /// </summary>
+    public List<int> PolarSortedNeighbors;
+
+    /// <summary>
+    /// 每个邻居到下一个顺时针邻居的夹角（弧度），键=邻居ID。
+    /// </summary>
+    public Dictionary<int, float> AngleToNextNeighbor;
+}
+
+// ==========================================
+// 路口边缘入口结构体
+// ==========================================
+
+/// <summary>
+/// 路口边缘入口描述。
+/// 记录道路进入路口区域的左右边界位置及从路口中心指向外侧的方向。
+/// </summary>
+public struct JunctionEdgeEntry
+{
+    /// <summary>路口边缘左侧位置（世界坐标）</summary>
+    public Vector3 LeftPos;
+
+    /// <summary>路口边缘右侧位置（世界坐标）</summary>
+    public Vector3 RightPos;
+
+    /// <summary>从路口中心指向道路外侧的方向（XZ平面归一化）</summary>
+    public Vector3 OutwardDir;
 }

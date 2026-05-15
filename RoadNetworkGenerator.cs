@@ -104,7 +104,12 @@ public class RoadNetworkGenerator : MonoBehaviour
                 if (x == 0 || x == gridWidth - 1) offsetX = 0;
                 if (z == 0 || z == gridHeight - 1) offsetZ = 0;
 
-                Vector3 pos = new Vector3(x * cellSize + offsetX, 0, z * cellSize + offsetZ);
+                float seedOff = seed * 1000f;
+                float height = 0f;
+                if (isCountryside)
+                    height = Mathf.PerlinNoise((x * cellSize + offsetX + seedOff) * 0.05f, (z * cellSize + offsetZ + seedOff) * 0.05f) * countrysideHeightScale;
+
+                Vector3 pos = new Vector3(x * cellSize + offsetX, height, z * cellSize + offsetZ);
                 
                 WaypointNode node = new WaypointNode();
                 node.id = nodes.Count; // 严格按顺序分配 ID

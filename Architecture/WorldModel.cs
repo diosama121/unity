@@ -17,15 +17,7 @@ public partial class RoadNode
     public Vector3 Normal;        // 横向法线（Mesh 宽度的伸展基准）
     public NodeType Type;
     public List<int> NeighborIds;
-    public IntersectionState State;
-}
-
-// 供 a1 数学辅助类使用的样条线数据结构
-public struct SplinePoint
-{
-    public Vector3 Pos;
-    public Vector3 Tangent;
-    public Vector3 Normal;
+    public IntersectionState State; 
 }
 
 public class WorldModel : MonoBehaviour
@@ -90,7 +82,7 @@ public class WorldModel : MonoBehaviour
     _graph.Clear();
 
     // 防穿插离地偏移量（节点初始略高于地形，避免 Z-fighting 与踩空感）
-    const float NODE_GROUND_OFFSET = 0.2f;
+    const float NODE_GROUND_OFFSET = 0.1f;
 
     // --- 第一步：统一高度基准 + 离地偏移 ---
     foreach (var raw in source.nodes)
@@ -114,29 +106,50 @@ public class WorldModel : MonoBehaviour
     // 【V4.1 删除】此方法会篡改真理高度，导致节点重新拉偏，已彻底移除！
     // SmoothNodeHeights();
 
-    // --- 第2.5步：计算动态路口半径与路口语义 ---
+    // --- 第2.5步：极角排序 + 相邻夹角 + 动态半径预计算 ---
     foreach (var node in _graph.Values)
     {
-        if (node.NeighborIds.Count <= 2) continue; // 非路口节点跳过
+        if (node.NeighborIds.Count < 3) continue;
 
-        // 计算与所有邻居的最大距离
+        // 1. 极角排序邻居
+        List<int> sorted = node.NeighborIds
+            .OrderBy(nbId => Mathf.Atan2(
+                _graph[nbId].WorldPos.z - node.WorldPos.z,
+                _graph[nbId].WorldPos.x - node.WorldPos.x))
+            .ToList();
+        node.PolarSortedNeighbors = sorted;
+
+        // 2. 计算相邻道路夹角（弧度）
+        node.AngleToNextNeighbor = new Dictionary<int, float>();
+        int count = sorted.Count;
+
         float maxDist = 0f;
-        foreach (var nbId in node.NeighborIds)
+        for (int i = 0; i < count; i++)
         {
-            float d = Vector3.Distance(node.WorldPos, _graph[nbId].WorldPos);
+            int nbA = sorted[i];
+            int nbB = sorted[(i + 1) % count];
+
+            float d = Vector3.Distance(node.WorldPos, _graph[nbA].WorldPos);
             if (d > maxDist) maxDist = d;
+
+            Vector3 dirA = new Vector3(
+                _graph[nbA].WorldPos.x - node.WorldPos.x,
+                0f,
+                _graph[nbA].WorldPos.z - node.WorldPos.z).normalized;
+
+            Vector3 dirB = new Vector3(
+                _graph[nbB].WorldPos.x - node.WorldPos.x,
+                0f,
+                _graph[nbB].WorldPos.z - node.WorldPos.z).normalized;
+
+            float theta = Mathf.Acos(Mathf.Clamp(Vector3.Dot(dirA, dirB), -1f, 1f));
+            node.AngleToNextNeighbor[nbA] = theta;
         }
 
-        // 动态半径 = 最大边距的一半 + 固定缓冲
-        float rawRadius = (maxDist * 0.5f) + 2f;
+        // 3. IntersectionRadius 保留为兜底最大值
+        node.IntersectionRadius = Mathf.Clamp(maxDist, 6f, 20f);
 
-        // 从 roadBuilder 获取路宽做下限，防止半径过小导致路口多边形退化
-        float minRadius = 6f;
-        if (roadBuilder != null) minRadius = roadBuilder.roadWidth * 1.2f;
-
-        node.IntersectionRadius = Mathf.Clamp(rawRadius, minRadius, 25f);
-
-        // 语义分类
+        // 4. 语义分类
         node.Kind = node.NeighborIds.Count switch
         {
             3 => IntersectionKind.T_Junction,

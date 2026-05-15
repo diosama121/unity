@@ -32,10 +32,10 @@ public class TerrainGridSystem : MonoBehaviour
     private float _cachedRoadWidth = 6f;
 
     // 缓存三维曲线段 (将边细分为多段以贴合 Spline)
-    private struct RoadSegment { public Vector3 Start; public Vector3 End; }
+    private struct RoadSegment { public Vector3 Start; public Vector3 End; public float Width; }
     private RoadSegment[] _fastRoadSegmentsCache;
 
-    private void Awake()
+    private void Awake() 
     {
         if (cellSize > 2.0f) cellSize = 2.0f;
         if (Instance != null) { Destroy(gameObject); return; }
@@ -81,49 +81,30 @@ public class TerrainGridSystem : MonoBehaviour
         }
 
         float blendedY = noiseY;
+        Vector2 p = new Vector2(worldX, worldZ);
 
         if (_fastRoadSegmentsCache != null && _fastRoadSegmentsCache.Length > 0)
         {
             float minSqrDist = float.MaxValue;
-            float bestTargetY = noiseY; 
-            Vector2 p = new Vector2(worldX, worldZ);
-            
+            float bestTargetY = noiseY;
+            float bestWidth = _cachedRoadWidth;
+
             foreach (var seg in _fastRoadSegmentsCache)
             {
-                float sqrD = DistToSegmentSqr(p, new Vector2(seg.Start.x, seg.Start.z), new Vector2(seg.End.x, seg.End.z), out float t);
+                float sqrD = DistToSegmentSqr(p, new Vector2(seg.Start.x, seg.Start.z), new Vector2(seg.End.x, seg.End.z), out float segT);
                 if (sqrD < minSqrDist)
                 {
                     minSqrDist = sqrD;
-                    bestTargetY = Mathf.Lerp(seg.Start.y, seg.End.y, t); 
+                    bestTargetY = Mathf.Lerp(seg.Start.y, seg.End.y, segT);
+                    bestWidth = seg.Width;
                 }
             }
-            
-            float minDist = Mathf.Sqrt(minSqrDist);
-            
-            if (isCountry)
-            {
-                // 【核心修复 2】：扩大路肩缓冲带，留足空间给高山缓坡，防止 90 度悬崖
-                float platformRadius = _cachedRoadWidth * 0.8f + 2f; 
-                float blendRadius = platformRadius + 20f; // 20米的庞大平滑过渡区
-                
-                if (minDist <= platformRadius) 
-                {
-                    blendedY = bestTargetY; 
-                } 
-                else if (minDist < blendRadius) 
-                {
-                    float mask = Mathf.SmoothStep(0f, 1f, (minDist - platformRadius) / (blendRadius - platformRadius));
-                    blendedY = Mathf.Lerp(bestTargetY, noiseY, mask);
-                }
-            }
-            else
-            {
-                if (minDist < urbanBlendRadius * 1.5f)
-                {
-                    float urbanMask = 1f - Mathf.SmoothStep(0f, urbanBlendRadius * 1.5f, minDist);
-                    blendedY = Mathf.Lerp(noiseY, urbanFlatHeight, urbanMask);
-                }
-            }
+
+            float d = Mathf.Sqrt(minSqrDist);
+            float r = bestWidth * 2.5f;
+
+            float t = Mathf.Exp(-(d * d) / (r * r));
+            blendedY = Mathf.Lerp(noiseY, bestTargetY, t);
         }
 
         return blendedY + terrainHeightOffset;
@@ -150,6 +131,7 @@ public class TerrainGridSystem : MonoBehaviour
         if (builder != null) _cachedRoadWidth = builder.roadWidth;
 
         RoadNetworkGenerator roadGen = FindObjectOfType<RoadNetworkGenerator>();
+        WorldModel wm = WorldModel.Instance;
         List<RoadSegment> segments = new List<RoadSegment>();
         
         // 【核心修复 1】：将边按照 2D 样条线细分成小段，让山谷完全跟随道路拐弯！
@@ -181,17 +163,46 @@ public class TerrainGridSystem : MonoBehaviour
                 p2.y = Mathf.PerlinNoise((p2.x + seedOff) * noiseFrequency, (p2.z + seedOff) * noiseFrequency) * scale;
 
                 float dist = Vector3.Distance(p1, p2);
-                Vector3 m1 = nodeTangents[n1.id] * dist * tangLen;
-                Vector3 m2 = nodeTangents[n2.id] * dist * tangLen;
+                if (dist <= 0.1f) continue;
+                Vector3 dir = (p2 - p1) / dist;
 
-                int steps = 6; // 将一条边切成 6 段
-                Vector3 prevP = p1;
+                float startRadius = 0f, endRadius = 0f;
+                if (wm != null)
+                {
+                    RoadNode rnA = wm.GetNode(edge.Item1);
+                    RoadNode rnB = wm.GetNode(edge.Item2);
+                    if (rnA != null && rnA.NeighborIds != null && rnA.NeighborIds.Count > 2)
+                        startRadius = rnA.IntersectionRadius;
+                    if (rnB != null && rnB.NeighborIds != null && rnB.NeighborIds.Count > 2)
+                        endRadius = rnB.IntersectionRadius;
+                }
+
+                float effectiveDist = dist - startRadius - endRadius;
+                if (effectiveDist <= 0.2f) continue;
+
+                Vector3 tp1 = p1 + dir * startRadius;
+                Vector3 tp2 = p2 - dir * endRadius;
+                tp1.y = Mathf.Lerp(p1.y, p2.y, startRadius / dist);
+                tp2.y = Mathf.Lerp(p1.y, p2.y, (dist - endRadius) / dist);
+
+                float tDist = Vector3.Distance(tp1, tp2);
+                Vector3 m1 = nodeTangents[n1.id] * tDist * tangLen;
+                Vector3 m2 = nodeTangents[n2.id] * tDist * tangLen;
+
+                int steps = 6;
+                Vector3 prevP = tp1;
                 for(int i = 1; i <= steps; i++) {
                     float t = i / (float)steps;
                     float t2 = t * t, t3 = t2 * t;
-                    Vector3 pos = (2*t3 - 3*t2 + 1)*p1 + (t3 - 2*t2 + t)*m1 + (-2*t3 + 3*t2)*p2 + (t3 - t2)*m2;
-                    pos.y = Mathf.Lerp(p1.y, p2.y, t);
-                    segments.Add(new RoadSegment { Start = prevP, End = pos });
+                    Vector3 pos = (2*t3 - 3*t2 + 1)*tp1 + (t3 - 2*t2 + t)*m1 + (-2*t3 + 3*t2)*tp2 + (t3 - t2)*m2;
+                    pos.y = Mathf.Lerp(tp1.y, tp2.y, t);
+                    float segWidth = _cachedRoadWidth;
+                    if (roadGen != null && roadGen.isCountryside)
+                    {
+                        Vector3 midPt = (prevP + pos) * 0.5f;
+                        segWidth = RoadMathUtility.GetRoadWidthAtPosition(midPt, _cachedRoadWidth, true);
+                    }
+                    segments.Add(new RoadSegment { Start = prevP, End = pos, Width = segWidth });
                     prevP = pos;
                 }
             }

@@ -178,7 +178,7 @@ public static class TopologyUtility
                         foreach (int neighborId in mergedNode.Neighbors)
                         {
                             GraphNode neighbor = result.Find(n => n.Id == neighborId);
-                            if (neighbor != null)
+                            if (neighbor.Id == neighborId)
                             {
                                 neighbor.Neighbors.Remove(result[i].Id);
                                 neighbor.Neighbors.Remove(result[j].Id);
