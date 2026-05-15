@@ -20,7 +20,6 @@ public class TrafficManager : MonoBehaviour
         roadGen = FindObjectOfType<RoadNetworkGenerator>();
         pathPlanner = FindObjectOfType<PathPlanner>();
         
-        // 延迟生成，确保路网与交通灯已经完全构建好
         if (roadGen != null && roadGen.nodes != null && roadGen.nodes.Count > 0)
         {
             Invoke("SpawnNPCs", 0.5f); 
@@ -39,7 +38,7 @@ public class TrafficManager : MonoBehaviour
             pathPlanner = FindObjectOfType<PathPlanner>();
             yield return new WaitForSeconds(0.5f);
         }
-        yield return new WaitForSeconds(0.5f); // 额外等半秒确保绝对稳妥
+        yield return new WaitForSeconds(0.5f);
         SpawnNPCs();
     }
 
@@ -47,9 +46,10 @@ public class TrafficManager : MonoBehaviour
     {
         if (npcVehiclePrefab == null) { Debug.LogError("TrafficManager: 缺少 NPC Prefab!"); return; }
         if (roadGen.nodes.Count < 2) { Debug.LogWarning("TrafficManager: 路网节点不足，无法生成 NPC"); return; }
-       //等着修复，现在先做地形部分。 if (pathPlanner == null) { Debug.LogError("TrafficManager: 缺少 PathPlanner!"); return; }
+        
+        // 【修复 1：解除封印】恢复对 PathPlanner 的检查
+        if (pathPlanner == null) { Debug.LogError("TrafficManager: 缺少 PathPlanner!"); return; }
 
-        // 随机打乱节点池，从中抽取不重复的出生点
         List<RoadNetworkGenerator.WaypointNode> shuffledNodes = new List<RoadNetworkGenerator.WaypointNode>(roadGen.nodes);
         ShuffleList(shuffledNodes);
 
@@ -57,57 +57,46 @@ public class TrafficManager : MonoBehaviour
         for (int i = 0; i < shuffledNodes.Count && spawnedCount < npcCount; i++)
         {
             var startNode = shuffledNodes[i];
-            
-            // 智能寻找一个距离较远的目标节点，防止原地打转
             var targetNode = GetFarNode(startNode);
             if (targetNode == null) continue;
 
-            // 严格按照白皮书获取真实地形高度
             Vector3 spawnPos = startNode.position;
             if (WorldModel.Instance != null)
             {
-                spawnPos.y = WorldModel.Instance.GetTerrainHeight(new Vector2(spawnPos.x, spawnPos.z));
+                spawnPos.y = WorldModel.Instance.GetUnifiedHeight(spawnPos.x, spawnPos.z);
             }
 
-            // 生成车辆实体
             GameObject npcObj = Instantiate(npcVehiclePrefab, spawnPos, Quaternion.identity);
             npcObj.name = $"NPC_Vehicle_{spawnedCount}";
 
-            // 【核心指令】强制切断物理，开启纯数学轨道模式
-            SimpleCarController controller = npcObj.GetComponent<SimpleAutoDrive>()?.GetComponent<SimpleCarController>();
+            SimpleCarController controller = npcObj.GetComponent<SimpleCarController>();
             if (controller == null) controller = npcObj.GetComponentInChildren<SimpleCarController>();
-            
-            if (controller != null)
-            {
-                controller.isNPC = true; 
-            }
+            if (controller != null) controller.isNPC = true; 
 
-            // 对接 V2.0 路径管线
             SimpleAutoDrive autoDrive = npcObj.GetComponent<SimpleAutoDrive>();
             if (autoDrive != null)
             {
-             /*   CatmullRomSpline spline = pathPlanner.PlanPath(startNode.position, targetNode.position);
+                // 【修复 2：解除样条规划封印，调用正确的接口】
+                CatmullRomSpline spline = pathPlanner.PlanPathSpline(startNode.position, targetNode.position);
                 if (spline != null && spline.TotalLength > 0)
                 {
-                    // 将样条曲线与目标路口语义 ID 喂给底层执行器
                     autoDrive.SetSplinePath(spline, targetNode.id);
                     npcVehicles.Add(autoDrive);
                     spawnedCount++;
                 }
                 else
                 {
-                    Destroy(npcObj); // 规划失败直接回炉，不占性能
+                    Destroy(npcObj);
                 }
             }
             else
             {
                 Destroy(npcObj);
-            }*/
-        }}
+            }
+        }
         Debug.Log($"✅ TrafficManager: 成功生成 {spawnedCount} 辆纯数学轨道 NPC");
     }
 
-    // 简易远点抽取算法
     private RoadNetworkGenerator.WaypointNode GetFarNode(RoadNetworkGenerator.WaypointNode startNode)
     {
         float maxDist = 0;

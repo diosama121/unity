@@ -1,9 +1,7 @@
 using UnityEngine;
 using System.Collections.Generic;
-// using AutonomousSim.Navigation; // 如果 a2 的真实类在这个命名空间下，请取消此行注释
 
 [RequireComponent(typeof(SimpleCarController))]
-//[RequireComponent(typeof(RaycastSensor))] 
 public class SimpleAutoDrive : MonoBehaviour
 {
     [Header("组件引用")]
@@ -12,7 +10,6 @@ public class SimpleAutoDrive : MonoBehaviour
     [Header("控制参数")]
     public float targetSpeed = 15f;
     public float safeDistance = 8f;
-    [Tooltip("基于样条总长度的预瞄比例 (0.0 ~ 1.0)，数值越小反应越慢但越平滑")]
     public float lookAheadT = 0.02f;
     
     [Header("=== 交通规则注入 ===")]
@@ -27,17 +24,13 @@ public class SimpleAutoDrive : MonoBehaviour
     public float currentT = 0f;
     public bool obstacleDetected = false;
     
-    // 严格对齐白皮书
     public IntersectionState currentIntersectionState = IntersectionState.Uncontrolled; 
     private int currentDestinationNodeId = -1;
 
     private int reverseCount = 0;
     private SimpleCarController carController;
- //   private RaycastSensor sensor;
     
-    // 【V4.1 核心】直接持有 a2 下发的样条对象
     private CatmullRomSpline currentSpline;
-    
     private Vector3 finalDestination = Vector3.zero;
 
     private float avoidCooldown = 0f;
@@ -54,7 +47,6 @@ public class SimpleAutoDrive : MonoBehaviour
     void Start()
     {
         carController = GetComponent<SimpleCarController>();
-       // sensor = GetComponent<RaycastSensor>();
         if (pathPlanner == null) pathPlanner = FindObjectOfType<PathPlanner>();
         carController.autoMode = true;
         lastPosition = transform.position;
@@ -80,9 +72,6 @@ public class SimpleAutoDrive : MonoBehaviour
 
     void UpdateSensorData()
     {
-     //   obstacleDetected = sensor.HasFrontObstacle(safeDistance);
-
-        // 白皮书接口查询红绿灯 (直接命中 a1 的真身)
         if (currentDestinationNodeId >= 0 && WorldModel.Instance != null)
         {
             currentIntersectionState = WorldModel.Instance.GetIntersectionState(currentDestinationNodeId);
@@ -151,15 +140,6 @@ public class SimpleAutoDrive : MonoBehaviour
             return;
         }
 
-        /*float frontDist = sensor.GetFrontDistance();
-        if (frontDist > 0 && frontDist < safeDistance * 0.5f && avoidCooldown <= 0f)
-        {
-            isReversing = false; reverseTimer = 0f;
-            currentState = DriveState.Avoiding;
-            return;
-        }*/
-
-        // 【a4 补丁 2】：无限生命周期路由
         if (currentT >= 1.0f)
         {
             RequestNewRandomPath();
@@ -169,27 +149,23 @@ public class SimpleAutoDrive : MonoBehaviour
         FollowPath();
     }
 
-    // 在脚本下方新增此方法：向 a2 申请新的随机目标点
     void RequestNewRandomPath()
     {
         if (WorldModel.Instance != null && pathPlanner != null)
         {
-            // 随机抽取一个新的节点 ID
             int randTargetId = Random.Range(0, WorldModel.Instance.NodeCount);
             RoadNode targetNode = WorldModel.Instance.GetNode(randTargetId);
             
             if (targetNode != null)
             {
-            /*    CatmullRomSpline newSpline = pathPlanner.PlanPath(transform.position, targetNode.WorldPos);
+                CatmullRomSpline newSpline = pathPlanner.PlanPathSpline(transform.position, targetNode.WorldPos);
                 if (newSpline != null && newSpline.TotalLength > 0)
                 {
-                    // 无缝衔接下一段轨道
                     SetSplinePath(newSpline, targetNode.Id);
                     return;
-                }*/
+                }
             }
         }
-        // 只有在寻路彻底失败时才停车
         currentState = DriveState.Idle;
         currentSpline = null;
         carController.SetAutoControl(0f, 0f);
@@ -241,7 +217,6 @@ public class SimpleAutoDrive : MonoBehaviour
     {
         if (currentSpline == null || currentSpline.TotalLength < 0.1f) return;
 
-        // 1. 基于车辆实际速度，按样条总长度推进连续 t 值
         float actualSpeed = Mathf.Abs(carController.GetSpeed());
         if (actualSpeed > 0.1f && currentSpline.TotalLength > 0)
         {
@@ -249,7 +224,6 @@ public class SimpleAutoDrive : MonoBehaviour
             currentT = Mathf.Clamp01(currentT);
         }
 
-        // 2. 获取当前点与切线方向
         Vector3 posOnSpline = currentSpline.GetPoint(currentT);
         float nextT = Mathf.Min(currentT + 0.001f, 1f);
         Vector3 tangent = (currentSpline.GetPoint(nextT) - posOnSpline).normalized;
@@ -257,13 +231,11 @@ public class SimpleAutoDrive : MonoBehaviour
         Vector3 rightVector = Vector3.Cross(Vector3.up, tangent).normalized;
         Vector3 offsetTargetPos = posOnSpline + rightVector * rightLaneOffset;
 
-        // 3. [V4.1 并发突击] 严格调用 V4.1 统一高程真理层获取真实高程
         if (WorldModel.Instance != null)
         {
             offsetTargetPos.y = WorldModel.Instance.GetUnifiedHeight(offsetTargetPos.x, offsetTargetPos.z);
         }
 
-        // 4. 获取前方预瞄点
         float targetLookAheadT = Mathf.Min(currentT + lookAheadT, 1f);
         Vector3 lookAheadPos = currentSpline.GetPoint(targetLookAheadT) + rightVector * rightLaneOffset;
         
@@ -272,31 +244,21 @@ public class SimpleAutoDrive : MonoBehaviour
             lookAheadPos.y = WorldModel.Instance.GetUnifiedHeight(lookAheadPos.x, lookAheadPos.z);
         }
 
-        // 5. 将预瞄目标作为追踪点计算偏航角
         lookAheadPos.y = transform.position.y; 
         Vector3 localTarget = transform.InverseTransformPoint(lookAheadPos);
 
         float angle = Mathf.Atan2(localTarget.x, localTarget.z) * Mathf.Rad2Deg;
         float steering = Mathf.Clamp(angle / 45f, -1f, 1f);
 
-        // 6. 速度与红绿灯逻辑
         float speedFactor = 1f;
         if (Mathf.Abs(angle) > 25f) speedFactor = 0.4f;
 
         if (currentIntersectionState == IntersectionState.RedLight) speedFactor = 0f;
-        else
-        {
-          /*  float frontDist = sensor.GetFrontDistance();
-            if (frontDist > 0 && frontDist < safeDistance) speedFactor *= Mathf.Clamp01((frontDist - 2f) / safeDistance);
-        }
 
         float throttle = (targetSpeed * speedFactor) / carController.maxSpeed;
-        carController.SetAutoControl(throttle, steering);*/
-    }}
+        carController.SetAutoControl(throttle, steering);
+    }
 
-    // ======================================================================
-    // 【V4.1 标准入口】直接消费 a2 下发的 CatmullRomSpline
-    // ======================================================================
     public void SetSplinePath(CatmullRomSpline spline, int destinationNodeId)
     {
         this.currentSpline = spline;
@@ -310,13 +272,12 @@ public class SimpleAutoDrive : MonoBehaviour
         if (pathPlanner == null) return;
         Vector3 target = finalDestination != Vector3.zero ? finalDestination : transform.position + transform.forward * 20f;
         
-        // 直接接收 a2 真实的样条对象
-       /* CatmullRomSpline newSpline = pathPlanner.PlanPath(transform.position, target);
+        CatmullRomSpline newSpline = pathPlanner.PlanPathSpline(transform.position, target);
         if (newSpline != null && newSpline.TotalLength > 0)
         {
             currentSpline = newSpline;
             currentT = 0f;
-        }*/
+        }
     }
 
     public void SetDestination(Vector3 destination)

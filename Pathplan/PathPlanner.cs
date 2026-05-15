@@ -53,7 +53,7 @@ public class PathPlanner : MonoBehaviour
             return null;
         }
 
-        // 构建控制点序列（保留原始高度）
+        // 构建控制点序列
         List<Vector3> controlPoints = new List<Vector3> { startPos };
         foreach (int nodeId in discretePath)
         {
@@ -62,10 +62,8 @@ public class PathPlanner : MonoBehaviour
         }
         controlPoints.Add(targetPos);
 
-        // 正确实例化 CatmullRomSpline
         CatmullRomSpline spline = new CatmullRomSpline(controlPoints, useCentripetal: false);
 
-        // 手动采样生成平滑路径
         List<Vector3> smoothPath = new List<Vector3>();
         int totalSegments = controlPoints.Count - 1;
         int pointsPerSegment = 10;
@@ -81,7 +79,26 @@ public class PathPlanner : MonoBehaviour
     }
 
     /// <summary>
-    /// A* 核心实现（完全依赖 WorldModel 接口）
+    /// 【新增接口】直接返回样条曲线对象，供自动驾驶系统(A3)追踪使用
+    /// </summary>
+    public CatmullRomSpline PlanPathSpline(Vector3 startPos, Vector3 targetPos)
+    {
+        List<int> discretePath = FindDiscretePath(startPos, targetPos);
+        if (discretePath == null || discretePath.Count < 2) return null;
+
+        List<Vector3> controlPoints = new List<Vector3> { startPos };
+        foreach (int nodeId in discretePath)
+        {
+            RoadNode node = _worldModel.GetNode(nodeId);
+            if (node != null) controlPoints.Add(node.WorldPos);
+        }
+        controlPoints.Add(targetPos);
+
+        return new CatmullRomSpline(controlPoints, useCentripetal: false);
+    }
+
+    /// <summary>
+    /// A* 核心实现
     /// </summary>
     private List<int> RunAStar(int startId, int targetId)
     {
@@ -95,7 +112,6 @@ public class PathPlanner : MonoBehaviour
 
         while (openSet.Count > 0)
         {
-            // 取出 FCost 最低的节点
             PathNode currentNode = null;
             foreach (var node in openSet.Values)
             {
@@ -103,7 +119,6 @@ public class PathPlanner : MonoBehaviour
                     currentNode = node;
             }
 
-            // 到达目标，直接内联重建路径
             if (currentNode.NodeId == targetId)
             {
                 List<int> path = new List<int>();
