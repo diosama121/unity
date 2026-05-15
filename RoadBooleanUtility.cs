@@ -10,7 +10,7 @@ public static class RoadBooleanUtility
     private const double INV_SCALE = 1.0 / SCALE;
 
     /// <summary>
-    /// 将 XZ 平面中心线扩展为带宽度的封闭多边形（Vector3 列表）
+    /// 将 XZ 平面中心线扩展为带宽度的封闭多边形
     /// </summary>
     public static List<Vector3> ExpandCenterlineToPolygon(List<Vector3> centerLine, float roadWidth)
     {
@@ -36,7 +36,7 @@ public static class RoadBooleanUtility
     }
 
     /// <summary>
-    /// 合并多个多边形，返回 Vector3 轮廓列表（用于调试或旧版）
+    /// 合并多个多边形，返回 Vector3 轮廓列表
     /// </summary>
     public static List<List<Vector3>> MergeRoadPolygons(List<Vector3[]> roadPolygons)
     {
@@ -53,7 +53,7 @@ public static class RoadBooleanUtility
     }
 
     /// <summary>
-    /// 合并多边形，直接返回 Clipper2 的 Paths64（推荐给 Triangle.NET 使用）
+    /// 合并多边形，返回 Clipper2 Paths64
     /// </summary>
     public static Paths64 MergeRoadPolygonsToPaths64(List<Vector3[]> roadPolygons)
     {
@@ -79,20 +79,14 @@ public static class RoadBooleanUtility
         return result.Count > 0 ? result[0] : new Path64();
     }
 
-    /// <summary>
-    /// 差集：subjects 减去 clips
-    /// </summary>
     public static Paths64 Difference(Paths64 subjects, Paths64 clips)
         => Clipper.Difference(subjects, clips, FillRule.NonZero);
 
-    /// <summary>
-    /// 交集：subjects 与 clips 的相交部分
-    /// </summary>
     public static Paths64 Intersect(Paths64 subjects, Paths64 clips)
         => Clipper.Intersect(subjects, clips, FillRule.NonZero);
 
     /// <summary>
-    /// 生成平滑路口多边形（带数据清洗与兜底）
+    /// 生成平滑路口多边形
     /// </summary>
     public static Path64 GenerateSmoothIntersectionPolygon(
         Vector3 nodePos,
@@ -100,30 +94,22 @@ public static class RoadBooleanUtility
         float roadWidth,
         float expansionOffset = 1.5f)
     {
-        // ==========================================
-        // 【a1 数据清洗防线】拦截导致 Clipper2 崩溃的畸形边
-        // ==========================================
         if (connectedEdges != null)
         {
-            // 1. 剔除幽灵边（长度极短，会导致数学除零或无穷小）
             connectedEdges.RemoveAll(edge => Vector3.Distance(edge.nodeA, edge.nodeB) < 0.1f);
         }
 
-        // 2. 如果清洗后有效的连接边少于2条，意味着这不是一个正常路口
-        // 拒绝走复杂的倒角逻辑，直接回退为简单的圆盘补丁，保命要紧！
         if (connectedEdges == null || connectedEdges.Count < 2)
         {
             return GenerateCirclePolygon(nodePos, roadWidth * 0.75f);
         }
 
-        // 3. 对每条边生成一个矩形补丁（基于道路宽度膨胀线段）
         Paths64 edgePatches = new Paths64();
-        float patchLength = roadWidth * 0.8f; // 仅用作旧逻辑保留
+        float patchLength = roadWidth * 0.8f;
         foreach (var edge in connectedEdges)
         {
             Vector3 dir = (edge.nodeB - edge.nodeA).normalized;
             float distance = Vector3.Distance(edge.nodeA, edge.nodeB);
-            // 使用从节点中心向邻居方向延伸一小段，避免补丁过短
             Vector3 from = edge.nodeA;
             Vector3 to = edge.nodeA + dir * Mathf.Min(distance * 0.5f, patchLength);
             Path64 line = new Path64
@@ -139,99 +125,106 @@ public static class RoadBooleanUtility
                 edgePatches.Add(patch[0]);
         }
 
-        // 4. 合并所有边的补丁
         Paths64 mergedPatches = Clipper.Union(edgePatches, FillRule.NonZero);
         if (mergedPatches.Count == 0)
             return GenerateCirclePolygon(nodePos, roadWidth * 0.75f);
 
-        // 5. 对合并后的多边形进行倒角（圆滑处理）
         ClipperOffset rounder = new ClipperOffset();
-        // 使用 Miter 合并可能导致尖角，可改用 Round
         rounder.AddPaths(mergedPatches, JoinType.Round, EndType.Polygon);
         Paths64 result = new Paths64();
-        // 微膨胀以产生圆角，expansionOffset 通常 1.5f
         rounder.Execute(expansionOffset * SCALE, result);
         return result.Count > 0 ? result[0] : GenerateCirclePolygon(nodePos, roadWidth * 0.75f);
     }
+
+    // 【修复 2 + 3】完全替换的 SanitizePolygons
     public static Paths64 SanitizePolygons(Paths64 rawPaths)
-{
-    Paths64 clean = new Paths64();
-    foreach (var path in rawPaths)
     {
-        // 过滤面积 < 1平方米² 的碎片 (1 * 1000 * 1000)
-        if (Math.Abs(Clipper.Area(path)) < 1.0 * 1000 * 1000) continue;
-        // 简化共线点，容差 2.0 世界单位
-        var simplified = Clipper.SimplifyPath(path, 2.0);
-        if (simplified.Count >= 3)
-            clean.Add(simplified);
-    }
-    return clean;
-}
-
-/// <summary>
-/// 生成道路轮廓向外膨胀的“裙边”外轮廓，用于缝合起伏地形。
-/// </summary>
-public static Path64 GenerateOuterSkirt(Paths64 roadUnion, float offsetMetres)
-{
-    ClipperOffset co = new ClipperOffset();
-    foreach (var path in roadUnion)
-        co.AddPath(path, JoinType.Round, EndType.Polygon);
-
-    Paths64 result = new Paths64();
-    co.Execute(offsetMetres * SCALE, result);
-    if (result.Count == 0) return new Path64();
-
-    // 取面积最大的轮廓作为外裙边
-    Path64 best = result[0];
-    double maxArea = Clipper.Area(best);
-    for (int i = 1; i < result.Count; i++)
-    {
-        double area = Clipper.Area(result[i]);
-        if (area > maxArea) { best = result[i]; maxArea = area; }
-    }
-    // 再简化一次以降低顶点密度
-    return Clipper.SimplifyPath(best, 2.0);
-}
-
-/// <summary>
-/// 批量点包含检测，内部使用 AABB 加速。
-/// </summary>
-public static bool IsAnyPointInsidePolygons(IEnumerable<Point64> pts, List<RoadContourCache> caches)
-{
-    foreach (var pt in pts)
-    {
-        float x = (float)(pt.X * INV_SCALE);
-        float y = (float)(pt.Y * INV_SCALE);
-        foreach (var cache in caches)
+        Paths64 clean = new Paths64();
+        foreach (var path in rawPaths)
         {
-            if (!cache.aabb.Contains(new Vector2(x, y))) continue;
-            if (Clipper.PointInPolygon(pt, cache.path) != PointInPolygonResult.IsOutside)
-                return true;
+            // 过滤面积 < 1.0 平方米的碎片
+            if (Math.Abs(Clipper.Area(path)) < 1.0 * 1000 * 1000) continue;
+            
+            // 简化共线点，容差 2.0
+            var simplified = Clipper.SimplifyPath(path, 2.0); 
+
+            // 形态学开闭运算：先负膨胀再正膨胀，自动消除微小尖刺、自交点和极小锐角
+            Paths64 tempPaths = new Paths64 { simplified };
+            tempPaths = Clipper.InflatePaths(tempPaths, -0.5 * 1000.0, JoinType.Round, EndType.Polygon);
+            tempPaths = Clipper.InflatePaths(tempPaths, 0.5 * 1000.0, JoinType.Round, EndType.Polygon);
+
+            foreach (var finalPath in tempPaths)
+            {
+                if (finalPath.Count >= 3)
+                {
+                    clean.Add(finalPath);
+                }
+            }
+        }
+        return clean;
+    }
+
+    /// <summary>
+    /// 生成道路轮廓向外膨胀的“裙边”外轮廓
+    /// </summary>
+    public static Path64 GenerateOuterSkirt(Paths64 roadUnion, float offsetMetres)
+    {
+        ClipperOffset co = new ClipperOffset();
+        foreach (var path in roadUnion)
+            co.AddPath(path, JoinType.Round, EndType.Polygon);
+
+        Paths64 result = new Paths64();
+        co.Execute(offsetMetres * SCALE, result);
+        if (result.Count == 0) return new Path64();
+
+        Path64 best = result[0];
+        double maxArea = Clipper.Area(best);
+        for (int i = 1; i < result.Count; i++)
+        {
+            double area = Clipper.Area(result[i]);
+            if (area > maxArea) { best = result[i]; maxArea = area; }
+        }
+        return Clipper.SimplifyPath(best, 2.0);
+    }
+
+    /// <summary>
+    /// 批量点包含检测，内部使用 AABB 加速
+    /// </summary>
+    public static bool IsAnyPointInsidePolygons(IEnumerable<Point64> pts, List<RoadContourCache> caches)
+    {
+        foreach (var pt in pts)
+        {
+            float x = (float)(pt.X * INV_SCALE);
+            float y = (float)(pt.Y * INV_SCALE);
+            foreach (var cache in caches)
+            {
+                if (!cache.aabb.Contains(new Vector2(x, y))) continue;
+                if (Clipper.PointInPolygon(pt, cache.path) != PointInPolygonResult.IsOutside)
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    public class RoadContourCache
+    {
+        public Path64 path;
+        public Rect aabb;
+        public RoadContourCache(Path64 p)
+        {
+            path = p;
+            float minX = float.MaxValue, minY = float.MaxValue;
+            float maxX = float.MinValue, maxY = float.MinValue;
+            foreach (var pt in p)
+            {
+                float x = (float)(pt.X / 1000.0);
+                float y = (float)(pt.Y / 1000.0);
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+            }
+            aabb = Rect.MinMaxRect(minX - 0.1f, minY - 0.1f, maxX + 0.1f, maxY + 0.1f);
         }
     }
-    return false;
-}
-
-// 在 RoadBooleanUtility 类内部添加 RoadContourCache（如果不在别处定义）
-public class RoadContourCache
-{
-    public Path64 path;
-    public Rect aabb;
-    public RoadContourCache(Path64 p)
-    {
-        path = p;
-        float minX = float.MaxValue, minY = float.MaxValue;
-        float maxX = float.MinValue, maxY = float.MinValue;
-        foreach (var pt in p)
-        {
-            float x = (float)(pt.X / 1000.0);
-            float y = (float)(pt.Y / 1000.0);
-            if (x < minX) minX = x;
-            if (x > maxX) maxX = x;
-            if (y < minY) minY = y;
-            if (y > maxY) maxY = y;
-        }
-        aabb = Rect.MinMaxRect(minX - 0.1f, minY - 0.1f, maxX + 0.1f, maxY + 0.1f);
-    }
-}
 }

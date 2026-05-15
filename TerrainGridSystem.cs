@@ -29,6 +29,9 @@ public class TerrainGridSystem : MonoBehaviour
     private MeshFilter _meshFilter;
     private MeshRenderer _meshRenderer;
 
+    // 【性能抢救】缓存道路节点（只含有效节点）用于快速距离查询
+    private Vector2[] _fastRoadNodesCache;
+
     private void Awake()
     {
         if (cellSize > 2.0f)
@@ -66,46 +69,42 @@ public class TerrainGridSystem : MonoBehaviour
         GenerateTerrainMesh();
     }
 
-    // ===================== 核心供血源：SampleHeightRaw =====================
-   public float SampleHeightRaw(float worldX, float worldZ)
-{
-    RoadNetworkGenerator roadGen = FindObjectOfType<RoadNetworkGenerator>();
-    
-    // 1. 基础噪声高度
-    float noiseY = 0f;
-    if (roadGen != null && roadGen.isCountryside)   // 只有乡村模式才计算噪声
+    // ===================== 核心供血源：SampleHeightRaw（重写版） =====================
+    public float SampleHeightRaw(float worldX, float worldZ)
     {
-        float seedOffset = roadGen.seed * 1000f;
-        float scale = roadGen.countrysideHeightScale;
-        float nx = (worldX + seedOffset) * noiseFrequency;
-        float nz = (worldZ + seedOffset) * noiseFrequency;
-        noiseY = Mathf.PerlinNoise(nx, nz) * scale;
-    }
-    
-    // 2. 计算城市权重：距离最近路口
-    float urbanMask = 0f;
-    if (roadGen != null)
-    {
-        float minDist = float.MaxValue;
-        foreach (var node in roadGen.nodes)
+        RoadNetworkGenerator roadGen = FindObjectOfType<RoadNetworkGenerator>();
+
+        // 1. 基础噪声高度
+        float noiseY = 0f;
+        if (roadGen != null && roadGen.isCountryside)
         {
-            // 只要有 3 条以上邻居就视为路口（含十字、丁字）
-            if (node.neighbors.Count >= 3)
-            {
-                float d = Vector2.Distance(
-                    new Vector2(worldX, worldZ),
-                    new Vector2(node.position.x, node.position.z));
-                if (d < minDist) minDist = d;
-            }
+            float seedOffset = roadGen.seed * 1000f;
+            float nx = (worldX + seedOffset) * noiseFrequency;
+            float nz = (worldZ + seedOffset) * noiseFrequency;
+            noiseY = Mathf.PerlinNoise(nx, nz) * roadGen.countrysideHeightScale;
         }
-        if (minDist < float.MaxValue)
-            urbanMask = 1f - Mathf.SmoothStep(0f, urbanBlendRadius, minDist);
+
+        // 2. 计算城市权重：使用缓存加速
+        float urbanMask = 0f;
+        if (_fastRoadNodesCache != null && _fastRoadNodesCache.Length > 0)
+        {
+            float minSqrDist = float.MaxValue;
+            foreach (var nodePos in _fastRoadNodesCache)
+            {
+                float dx = worldX - nodePos.x;
+                float dz = worldZ - nodePos.y;
+                float sqrD = dx * dx + dz * dz;
+                if (sqrD < minSqrDist) minSqrDist = sqrD;
+            }
+            float minDist = Mathf.Sqrt(minSqrDist);
+            if (minDist < urbanBlendRadius * 1.5f)
+                urbanMask = 1f - Mathf.SmoothStep(0f, urbanBlendRadius * 1.5f, minDist);
+        }
+
+        // 3. 平滑融合
+        float blendedY = Mathf.Lerp(noiseY, urbanFlatHeight, urbanMask);
+        return blendedY + terrainHeightOffset;
     }
-    
-    // 3. 平滑融合
-    float blendedY = Mathf.Lerp(noiseY, urbanFlatHeight, urbanMask);
-    return blendedY + terrainHeightOffset;
-}
 
     // ===================== 旧有 SampleHeight 保持双线性插值 =====================
     public float SampleHeight(Vector2 worldXZ)
@@ -144,6 +143,17 @@ public class TerrainGridSystem : MonoBehaviour
 
         _dimX = Mathf.CeilToInt(width / cellSize) + 1;
         _dimZ = Mathf.CeilToInt(length / cellSize) + 1;
+
+        // 【性能抢救 1】提取有效节点建立极速缓存
+        RoadNetworkGenerator roadGen = FindObjectOfType<RoadNetworkGenerator>();
+        List<Vector2> validNodes = new List<Vector2>();
+        if (roadGen != null && roadGen.nodes != null)
+        {
+            foreach (var node in roadGen.nodes)
+                if (node.neighbors.Count > 0)
+                    validNodes.Add(new Vector2(node.position.x, node.position.z));
+        }
+        _fastRoadNodesCache = validNodes.ToArray();
 
         _heightMap = new float[_dimX, _dimZ];
         for (int i = 0; i < _dimX; i++)
@@ -194,7 +204,6 @@ public class TerrainGridSystem : MonoBehaviour
                 uvs.Add(new Vector2(0, 1));
                 uvs.Add(new Vector2(1, 1));
 
-                // 【修复】顺时针顺序，法线朝上
                 // 三角形1：v00 -> v01 -> v10
                 triangles.Add(vi);
                 triangles.Add(vi + 2);
@@ -256,6 +265,22 @@ public class TerrainGridSystem : MonoBehaviour
         int cellCountX = _dimX - 1;
         int cellCountZ = _dimZ - 1;
 
+        // 【性能抢救 2】预计算每个路段的 AABB 包围盒
+        var polyCaches = new List<(Rect aabb, List<Vector2> pts)>();
+        foreach (var poly in roadPolygons)
+        {
+            if (poly == null || poly.Length < 3) continue;
+            float minX = float.MaxValue, minZ = float.MaxValue, maxX = float.MinValue, maxZ = float.MinValue;
+            List<Vector2> pts2D = new List<Vector2>(poly.Length);
+            foreach (var v in poly)
+            {
+                pts2D.Add(new Vector2(v.x, v.z));
+                if (v.x < minX) minX = v.x; if (v.x > maxX) maxX = v.x;
+                if (v.z < minZ) minZ = v.z; if (v.z > maxZ) maxZ = v.z;
+            }
+            polyCaches.Add((Rect.MinMaxRect(minX - 0.5f, minZ - 0.5f, maxX + 0.5f, maxZ + 0.5f), pts2D));
+        }
+
         for (int i = 0; i < cellCountX; i++)
         {
             for (int j = 0; j < cellCountZ; j++)
@@ -263,15 +288,12 @@ public class TerrainGridSystem : MonoBehaviour
                 float cx = _minX + (i + 0.5f) * cellSize;
                 float cz = _minZ + (j + 0.5f) * cellSize;
                 Vector2 point = new Vector2(cx, cz);
-
                 bool inside = false;
-                foreach (var poly in roadPolygons)
+
+                foreach (var cache in polyCaches)
                 {
-                    if (poly == null || poly.Length < 3) continue;
-                    List<Vector2> poly2D = new List<Vector2>(poly.Length);
-                    foreach (var v in poly)
-                        poly2D.Add(new Vector2(v.x, v.z));
-                    if (PointInPolygonXZ(point, poly2D))
+                    if (!cache.aabb.Contains(point)) continue; // AABB 快速剔除
+                    if (PointInPolygonXZ(point, cache.pts))
                     {
                         inside = true;
                         break;

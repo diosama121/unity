@@ -30,7 +30,9 @@ public static class RoadMathUtility
         Vector3 m0 = tangentA * dist * 0.5f;
         Vector3 m1 = tangentB * dist * 0.5f;
 
-        int steps = Mathf.Max(2, Mathf.CeilToInt(dist / stepDistance));
+        // 【修复 1：强制精度】无视外部传进来的 2m，强制要求样条采样步长最大不能超过 0.5m，保障曲线平滑！
+        float actualStep = Mathf.Clamp(stepDistance, 0.1f, 0.5f);
+        int steps = Mathf.Max(2, Mathf.CeilToInt(dist / actualStep));
         float deltaT = 1f / steps;
 
         for (int i = 0; i <= steps; i++)
@@ -43,12 +45,10 @@ public static class RoadMathUtility
                           (-2 * t3 + 3 * t2) * p1 + 
                           (t3 - t2) * m1;
             
-            // 【修复 1：强行剥离旧基准】彻底无视数学方程算出来的 pos.y
-            // 【修复 2：实时采样 + 强制上浮】+ 0.2f 确保道路面片永远在地形网格上方，消灭 Z-Fighting
+            // 强行剥离旧基准 + 实时采样 + 强制上浮
             pos.y = wm.GetUnifiedHeight(pos.x, pos.z) + 0.2f;
 
-            // 【修复 3：切线高度同步（兜底防品红碎面）】
-            // 绝对不能用平面的解析切线！必须利用前后点的真实 Y 坐标重新算差值重构立体切线
+            // 切线高度同步（兜底防品红碎面）
             float t_prev = Mathf.Max(0f, t - deltaT);
             float t_next = Mathf.Min(1f, t + deltaT);
 

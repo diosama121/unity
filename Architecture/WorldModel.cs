@@ -55,27 +55,50 @@ public class WorldModel : MonoBehaviour
     /// <summary>
     /// 【总指挥点火接口】V2.2 严密初始化序列
     /// </summary>
-    public void TriggerWorldGeneration()
+   public void TriggerWorldGeneration()
     {
         Debug.Log("[WorldModel] 🚀 创世序列启动...");
-
-        // 1. 触发图拓扑随机生成 (V1.0)
         roadGenerator.Generate();
-
-        // 2. 动态计算地形包围盒 (给 a1 裙边预留 100m 冗余)
         Bounds worldBounds = CalculateWorldBounds();
         
-        // 【V4.1 生命周期时序锁 - 绝对起点】
-        // 必须严格排在 IngestAndPrecomputeGraph 之前！否则高度图未生成，路网全坠入 Y=0
+        // 1. 初始化基础高程
         terrainGrid.Initialize(worldBounds);
-
-        // 3. 建立真理层 (核心：高度平滑 + 切线计算 + 坐标锁死)
+        
+        // 2. 建立真理层
         IngestAndPrecomputeGraph(roadGenerator);
-
-        // 4. 通知 a1 视觉层执行 (a1 现在只需“按图填色”)
+        
+        // 3. 构建道路 Mesh
         roadBuilder.BuildRoads();
 
-        // 5. 通知 a3 交通层执行
+        // ==========================================
+        // 【新增：地形挖洞锁】
+        // 收集所有四边形面片数据，传给 TerrainGridSystem 挖洞
+        // ==========================================
+        if (terrainGrid != null)
+        {
+            // 重新计算一遍道路四边形用于挖洞遮罩
+            List<Vector3[]> allEdgeQuads = new List<Vector3[]>();
+            HashSet<string> processedEdges = new HashSet<string>();
+            foreach (var node in Nodes)
+            {
+                if (node.NeighborIds == null) continue;
+                foreach (int neighborId in node.NeighborIds)
+                {
+                    string edgeKey = Mathf.Min(node.Id, neighborId) + "_" + Mathf.Max(node.Id, neighborId);
+                    if (processedEdges.Contains(edgeKey)) continue;
+                    processedEdges.Add(edgeKey);
+                    var spline = RoadMathUtility.GetRoadSpline(node.Id, neighborId, roadBuilder.meshResolution);
+                    if (spline != null && spline.Count >= 2)
+                    {
+                        // 把宽度稍微放大 1.2 倍用于挖洞，确保路肩不会穿插地形
+                        allEdgeQuads.AddRange(RoadMathUtility.SweepSplineToQuads(spline, roadBuilder.roadWidth * 1.2f)); 
+                    }
+                }
+            }
+            terrainGrid.BakeRoadMask(allEdgeQuads);
+        }
+
+        // 4. 交通层
         if (trafficLightManager != null) trafficLightManager.PlaceTrafficLights();
         if (trafficManager != null) trafficManager.SpawnNPCs();
 
