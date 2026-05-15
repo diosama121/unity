@@ -6,11 +6,11 @@ public class TerrainGridSystem : MonoBehaviour
     public static TerrainGridSystem Instance { get; private set; }
 
     [Header("网格参数")]
-    public float cellSize = 2f; // 强制建议为 2f
+    public float cellSize = 2f; 
 
     [Header("地形噪声")]
     public float noiseFrequency = 0.05f;
-    public float heightScale = 10f;
+    public float heightScale = 30f; 
     public bool usePerlinNoise = true;
 
     [Header("城市平整融合")]
@@ -29,8 +29,11 @@ public class TerrainGridSystem : MonoBehaviour
     private MeshFilter _meshFilter;
     private MeshRenderer _meshRenderer;
 
-    private Vector2[] _fastRoadNodesCache;
-    private float _cachedRoadWidth = 6f; // 缓存路宽提升性能
+    private float _cachedRoadWidth = 6f;
+
+    // 缓存三维曲线段 (将边细分为多段以贴合 Spline)
+    private struct RoadSegment { public Vector3 Start; public Vector3 End; }
+    private RoadSegment[] _fastRoadSegmentsCache;
 
     private void Awake()
     {
@@ -56,7 +59,15 @@ public class TerrainGridSystem : MonoBehaviour
         GenerateTerrainMesh();
     }
 
-    // ===================== 天地同步高程 =====================
+    private float DistToSegmentSqr(Vector2 p, Vector2 v, Vector2 w, out float t)
+    {
+        float l2 = Vector2.SqrMagnitude(v - w);
+        if (l2 == 0f) { t = 0f; return Vector2.SqrMagnitude(p - v); }
+        t = Mathf.Max(0, Mathf.Min(1, Vector2.Dot(p - v, w - v) / l2));
+        Vector2 projection = v + t * (w - v);
+        return Vector2.SqrMagnitude(p - projection);
+    }
+
     public float SampleHeightRaw(float worldX, float worldZ)
     {
         RoadNetworkGenerator roadGen = FindObjectOfType<RoadNetworkGenerator>();
@@ -66,26 +77,24 @@ public class TerrainGridSystem : MonoBehaviour
         if (isCountry)
         {
             float seedOffset = roadGen.seed * 1000f;
-            float nx = (worldX + seedOffset) * noiseFrequency;
-            float nz = (worldZ + seedOffset) * noiseFrequency;
-            noiseY = Mathf.PerlinNoise(nx, nz) * roadGen.countrysideHeightScale;
+            noiseY = Mathf.PerlinNoise((worldX + seedOffset) * noiseFrequency, (worldZ + seedOffset) * noiseFrequency) * roadGen.countrysideHeightScale;
         }
 
         float blendedY = noiseY;
 
-        if (_fastRoadNodesCache != null && _fastRoadNodesCache.Length > 0)
+        if (_fastRoadSegmentsCache != null && _fastRoadSegmentsCache.Length > 0)
         {
             float minSqrDist = float.MaxValue;
-            Vector2 closestNode = Vector2.zero;
-            foreach (var nodePos in _fastRoadNodesCache)
+            float bestTargetY = noiseY; 
+            Vector2 p = new Vector2(worldX, worldZ);
+            
+            foreach (var seg in _fastRoadSegmentsCache)
             {
-                float dx = worldX - nodePos.x;
-                float dz = worldZ - nodePos.y;
-                float sqrD = dx * dx + dz * dz;
-                if (sqrD < minSqrDist) 
+                float sqrD = DistToSegmentSqr(p, new Vector2(seg.Start.x, seg.Start.z), new Vector2(seg.End.x, seg.End.z), out float t);
+                if (sqrD < minSqrDist)
                 {
                     minSqrDist = sqrD;
-                    closestNode = nodePos;
+                    bestTargetY = Mathf.Lerp(seg.Start.y, seg.End.y, t); 
                 }
             }
             
@@ -93,23 +102,18 @@ public class TerrainGridSystem : MonoBehaviour
             
             if (isCountry)
             {
-                // 【核心修复】：乡村模式，动态路宽平台化，防止地形穿透马路！
-                float platformRadius = _cachedRoadWidth * 0.7f; 
-                float blendRadius = _cachedRoadWidth * 1.5f;    
+                // 【核心修复 2】：扩大路肩缓冲带，留足空间给高山缓坡，防止 90 度悬崖
+                float platformRadius = _cachedRoadWidth * 0.8f + 2f; 
+                float blendRadius = platformRadius + 20f; // 20米的庞大平滑过渡区
                 
-                if (minDist < platformRadius + blendRadius)
+                if (minDist <= platformRadius) 
                 {
-                    float seedOffset = roadGen.seed * 1000f;
-                    float cx = (closestNode.x + seedOffset) * noiseFrequency;
-                    float cz = (closestNode.y + seedOffset) * noiseFrequency;
-                    float centerNodeHeight = Mathf.PerlinNoise(cx, cz) * roadGen.countrysideHeightScale;
-
-                    if (minDist <= platformRadius) {
-                        blendedY = centerNodeHeight; // 平台核心区绝对平整
-                    } else {
-                        float mask = Mathf.SmoothStep(0f, 1f, (minDist - platformRadius) / blendRadius);
-                        blendedY = Mathf.Lerp(centerNodeHeight, noiseY, mask);
-                    }
+                    blendedY = bestTargetY; 
+                } 
+                else if (minDist < blendRadius) 
+                {
+                    float mask = Mathf.SmoothStep(0f, 1f, (minDist - platformRadius) / (blendRadius - platformRadius));
+                    blendedY = Mathf.Lerp(bestTargetY, noiseY, mask);
                 }
             }
             else
@@ -128,15 +132,12 @@ public class TerrainGridSystem : MonoBehaviour
     public float SampleHeight(Vector2 worldXZ)
     {
         if (_heightMap == null) return 0f;
-        float fx = (worldXZ.x - _minX) / cellSize;
-        float fz = (worldXZ.y - _minZ) / cellSize;
+        float fx = (worldXZ.x - _minX) / cellSize; float fz = (worldXZ.y - _minZ) / cellSize;
         fx = Mathf.Clamp(fx, 0f, _dimX - 1); fz = Mathf.Clamp(fz, 0f, _dimZ - 1);
         int x0 = Mathf.FloorToInt(fx); int z0 = Mathf.FloorToInt(fz);
         int x1 = Mathf.Min(x0 + 1, _dimX - 1); int z1 = Mathf.Min(z0 + 1, _dimZ - 1);
         float tx = fx - x0; float tz = fz - z0;
-        float h0 = Mathf.Lerp(_heightMap[x0, z0], _heightMap[x1, z0], tx);
-        float h1 = Mathf.Lerp(_heightMap[x0, z1], _heightMap[x1, z1], tx);
-        return Mathf.Lerp(h0, h1, tz);
+        return Mathf.Lerp(Mathf.Lerp(_heightMap[x0, z0], _heightMap[x1, z0], tx), Mathf.Lerp(_heightMap[x0, z1], _heightMap[x1, z1], tx), tz);
     }
 
     private void GenerateHeightMap(Bounds bounds)
@@ -149,25 +150,83 @@ public class TerrainGridSystem : MonoBehaviour
         if (builder != null) _cachedRoadWidth = builder.roadWidth;
 
         RoadNetworkGenerator roadGen = FindObjectOfType<RoadNetworkGenerator>();
-        List<Vector2> validNodes = new List<Vector2>();
-        if (roadGen != null && roadGen.nodes != null)
+        List<RoadSegment> segments = new List<RoadSegment>();
+        
+        // 【核心修复 1】：将边按照 2D 样条线细分成小段，让山谷完全跟随道路拐弯！
+        if (roadGen != null && roadGen.edges != null)
         {
-            foreach (var node in roadGen.nodes)
-                if (node.neighbors.Count > 0) validNodes.Add(new Vector2(node.position.x, node.position.z));
+            float seedOff = roadGen.seed * 1000f;
+            float scale = roadGen.isCountryside ? roadGen.countrysideHeightScale : heightScale;
+            float tangLen = builder != null ? builder.tangentLength : 0.3f;
+
+            // 预计算节点切线
+            Dictionary<int, Vector3> nodeTangents = new Dictionary<int, Vector3>();
+            foreach(var node in roadGen.nodes) {
+                Vector3 avgDir = Vector3.zero;
+                if (node.neighbors.Count > 0) {
+                    foreach(var nbId in node.neighbors) {
+                        var nb = roadGen.nodes.Find(n => n.id == nbId);
+                        avgDir += (nb.position - node.position).normalized;
+                    }
+                    nodeTangents[node.id] = (avgDir / node.neighbors.Count).normalized;
+                } else nodeTangents[node.id] = Vector3.forward;
+            }
+
+            foreach (var edge in roadGen.edges)
+            {
+                var n1 = roadGen.nodes.Find(n => n.id == edge.Item1);
+                var n2 = roadGen.nodes.Find(n => n.id == edge.Item2);
+                Vector3 p1 = n1.position; Vector3 p2 = n2.position;
+                p1.y = Mathf.PerlinNoise((p1.x + seedOff) * noiseFrequency, (p1.z + seedOff) * noiseFrequency) * scale;
+                p2.y = Mathf.PerlinNoise((p2.x + seedOff) * noiseFrequency, (p2.z + seedOff) * noiseFrequency) * scale;
+
+                float dist = Vector3.Distance(p1, p2);
+                Vector3 m1 = nodeTangents[n1.id] * dist * tangLen;
+                Vector3 m2 = nodeTangents[n2.id] * dist * tangLen;
+
+                int steps = 6; // 将一条边切成 6 段
+                Vector3 prevP = p1;
+                for(int i = 1; i <= steps; i++) {
+                    float t = i / (float)steps;
+                    float t2 = t * t, t3 = t2 * t;
+                    Vector3 pos = (2*t3 - 3*t2 + 1)*p1 + (t3 - 2*t2 + t)*m1 + (-2*t3 + 3*t2)*p2 + (t3 - t2)*m2;
+                    pos.y = Mathf.Lerp(p1.y, p2.y, t);
+                    segments.Add(new RoadSegment { Start = prevP, End = pos });
+                    prevP = pos;
+                }
+            }
         }
-        _fastRoadNodesCache = validNodes.ToArray();
+        _fastRoadSegmentsCache = segments.ToArray();
 
         _heightMap = new float[_dimX, _dimZ];
         for (int i = 0; i < _dimX; i++)
-        {
             for (int j = 0; j < _dimZ; j++)
-            {
-                float wx = _minX + i * cellSize;
-                float wz = _minZ + j * cellSize;
-                _heightMap[i, j] = SampleHeightRaw(wx, wz);
+                _heightMap[i, j] = SampleHeightRaw(_minX + i * cellSize, _minZ + j * cellSize);
+        
+        SmoothHeightMap(); // 生成后平滑化
+        
+        _roadMask = new bool[_dimX - 1, _dimZ - 1]; 
+    }
+
+    // 【核心修复 3】：3x3 均值滤波。抹除路口不同坡度交汇时产生的断层与尖刺！
+    private void SmoothHeightMap()
+    {
+        float[,] newMap = new float[_dimX, _dimZ];
+        for (int x = 0; x < _dimX; x++) {
+            for (int z = 0; z < _dimZ; z++) {
+                float sum = 0; int count = 0;
+                for (int dx = -1; dx <= 1; dx++) {
+                    for (int dz = -1; dz <= 1; dz++) {
+                        int nx = x + dx; int nz = z + dz;
+                        if (nx >= 0 && nx < _dimX && nz >= 0 && nz < _dimZ) {
+                            sum += _heightMap[nx, nz]; count++;
+                        }
+                    }
+                }
+                newMap[x, z] = sum / count;
             }
         }
-        _roadMask = new bool[_dimX - 1, _dimZ - 1]; 
+        _heightMap = newMap;
     }
 
     private void GenerateTerrainMesh()
@@ -218,8 +277,5 @@ public class TerrainGridSystem : MonoBehaviour
         if (_meshFilter.GetComponent<MeshCollider>() != null) _meshFilter.GetComponent<MeshCollider>().sharedMesh = mesh;
     }
 
-    public void BakeRoadMask(List<Vector3[]> roadPolygons)
-    {
-        GenerateTerrainMesh(); // 废弃挖洞，直接生成
-    }
+    public void BakeRoadMask(List<Vector3[]> roadPolygons) { GenerateTerrainMesh(); }
 }

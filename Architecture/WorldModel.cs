@@ -218,7 +218,7 @@ public class WorldModel : MonoBehaviour
     {
         if (terrainGrid != null)
         {
-            return terrainGrid.SampleHeightRaw(x, z);
+            return terrainGrid.SampleHeight(new Vector2(x, z));
         }
         return 0f;
     }
