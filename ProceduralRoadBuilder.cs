@@ -9,7 +9,7 @@ public class ProceduralRoadBuilder : MonoBehaviour
     public float roadWidth = 6f;
     public float meshResolution = 2f;
     public Material roadMaterial;
-    public float roadHeightOffset = 0.05f;
+    public float roadHeightOffset = 0.15f;
     public string roadLayerName = "Road";
 
     [Header("=== 样条切线参数 ===")]
@@ -59,6 +59,10 @@ public class ProceduralRoadBuilder : MonoBehaviour
     {
         if (WorldModel.Instance == null || WorldModel.Instance.Nodes == null) return;
 
+        float stepDist = meshResolution;
+        if (roadGen != null && roadGen.isCountryside)
+            stepDist = 0.5f;
+
         foreach (var node in WorldModel.Instance.Nodes)
         {
             Vector3 pos = node.WorldPos; 
@@ -92,7 +96,7 @@ public class ProceduralRoadBuilder : MonoBehaviour
                 if (processedEdges.Contains(edgeKey)) continue;
                 processedEdges.Add(edgeKey);
 
-                List<SplinePoint> spline = RoadMathUtility.GetRoadSpline(node.Id, neighborId, meshResolution, roadWidth);
+                List<SplinePoint> spline = RoadMathUtility.GetRoadSpline(node.Id, neighborId, stepDist, roadWidth);
                 if (spline == null || spline.Count < 2) continue;
 
                 RoadMathUtility.SweptRoadResult swept = RoadMathUtility.SweepSplineToQuadsWithSetback(spline, node.Id, neighborId, roadWidth);
@@ -136,7 +140,7 @@ public class ProceduralRoadBuilder : MonoBehaviour
         foreach (var kvp in junctionEntriesByNode)
         {
             RoadNode juncNode = WorldModel.Instance.GetNode(kvp.Key);
-            if (juncNode == null || juncNode.NeighborIds == null || juncNode.NeighborIds.Count <= 2) continue;
+            if (juncNode == null || juncNode.NeighborIds == null || juncNode.NeighborIds.Count < 2) continue;
             BuildIntersectionPatches(juncNode, kvp.Value, allPolys);
         }
 
@@ -155,49 +159,67 @@ public class ProceduralRoadBuilder : MonoBehaviour
         if (entries.Count < 2) return;
 
         Vector3 center = junctionNode.WorldPos;
-        center.y = WorldModel.Instance.GetUnifiedHeight(center.x, center.z) + 0.1f;
+        center.y = WorldModel.Instance.GetUnifiedHeight(center.x, center.z) + roadHeightOffset;
 
         List<JunctionEdgeEntry> sorted = entries
             .OrderBy(e => Mathf.Atan2(e.OutwardDir.z, e.OutwardDir.x))
             .ToList();
 
         int count = sorted.Count;
-        int samples = 8;
+        int cornerSamples = 5;
+        int radialSteps = 4;
 
-        Vector3[][] roadBeziers = new Vector3[count][];
         for (int i = 0; i < count; i++)
         {
-            Vector3 p0 = sorted[i].RightPos;
-            Vector3 p2 = sorted[i].LeftPos;
-            p0.y = WorldModel.Instance.GetUnifiedHeight(p0.x, p0.z) + 0.1f;
-            p2.y = WorldModel.Instance.GetUnifiedHeight(p2.x, p2.z) + 0.1f;
+            JunctionEdgeEntry currentRoad = sorted[i];
+            JunctionEdgeEntry nextRoad = sorted[(i + 1) % count];
+
+            GenerateRadialPie(center, currentRoad.LeftPos, currentRoad.RightPos, radialSteps, allPolys);
+
+            Vector3 p0 = currentRoad.RightPos;
+            Vector3 p2 = nextRoad.LeftPos;
             Vector3 p1 = center;
 
-            roadBeziers[i] = new Vector3[samples];
-            for (int s = 0; s < samples; s++)
+            Vector3[] curve = new Vector3[cornerSamples];
+            for (int s = 0; s < cornerSamples; s++)
             {
-                float t = (float)s / (samples - 1);
+                float t = (float)s / (cornerSamples - 1);
                 float u = 1f - t;
-                roadBeziers[i][s] = u * u * p0 + 2f * u * t * p1 + t * t * p2;
-                roadBeziers[i][s].y = WorldModel.Instance.GetUnifiedHeight(roadBeziers[i][s].x, roadBeziers[i][s].z) + 0.1f;
+                curve[s] = u * u * p0 + 2f * u * t * p1 + t * t * p2;
+            }
+
+            for (int s = 0; s < cornerSamples - 1; s++)
+            {
+                GenerateRadialPie(center, curve[s], curve[s + 1], radialSteps, allPolys);
             }
         }
+    }
 
-        for (int i = 0; i < count; i++)
+    private void GenerateRadialPie(Vector3 center, Vector3 edgeA, Vector3 edgeB, int radialSteps, List<Vector3[]> allPolys)
+    {
+        Vector3 prevA = center;
+        Vector3 prevB = center;
+
+        for (int r = 1; r <= radialSteps; r++)
         {
-            Vector3[] bezierA = roadBeziers[i];
-            Vector3[] bezierB = roadBeziers[(i + 1) % count];
+            float rt = (float)r / radialSteps;
+            Vector3 curA = Vector3.Lerp(center, edgeA, rt);
+            Vector3 curB = Vector3.Lerp(center, edgeB, rt);
 
-            for (int s = 0; s < samples - 1; s++)
+            curA.y = WorldModel.Instance.GetUnifiedHeight(curA.x, curA.z) + roadHeightOffset;
+            curB.y = WorldModel.Instance.GetUnifiedHeight(curB.x, curB.z) + roadHeightOffset;
+
+            if (r == 1)
             {
-                Vector3 a0 = bezierA[s];
-                Vector3 a1 = bezierA[s + 1];
-                Vector3 b0 = bezierB[s];
-                Vector3 b1 = bezierB[s + 1];
-
-                allPolys.Add(new Vector3[] { a0, a1, b1 });
-                allPolys.Add(new Vector3[] { a0, b1, b0 });
+                allPolys.Add(new Vector3[] { center, curB, curA });
             }
+            else
+            {
+                allPolys.Add(new Vector3[] { prevA, curB, prevB });
+                allPolys.Add(new Vector3[] { prevA, curA, curB });
+            }
+            prevA = curA;
+            prevB = curB;
         }
     }
 

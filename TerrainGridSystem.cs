@@ -35,6 +35,9 @@ public class TerrainGridSystem : MonoBehaviour
     private struct RoadSegment { public Vector3 Start; public Vector3 End; public float Width; }
     private RoadSegment[] _fastRoadSegmentsCache;
 
+    private struct IntersectionData { public Vector3 Center; public float Radius; public float TargetY; }
+    private IntersectionData[] _fastIntersectionsCache;
+
     private void Awake() 
     {
         if (cellSize > 2.0f) cellSize = 2.0f;
@@ -105,6 +108,29 @@ public class TerrainGridSystem : MonoBehaviour
 
             float t = Mathf.Exp(-(d * d) / (r * r));
             blendedY = Mathf.Lerp(noiseY, bestTargetY, t);
+        }
+
+        if (_fastIntersectionsCache != null && _fastIntersectionsCache.Length > 0)
+        {
+            float finalY = blendedY;
+            float maxWeight = 0f;
+            foreach (var inter in _fastIntersectionsCache)
+            {
+                float sqrD = Vector2.SqrMagnitude(p - new Vector2(inter.Center.x, inter.Center.z));
+                float influenceRadius = inter.Radius * 3.0f;
+
+                if (sqrD < influenceRadius * influenceRadius)
+                {
+                    float d = Mathf.Sqrt(sqrD);
+                    float t = Mathf.Exp(-(d * d) / (inter.Radius * inter.Radius));
+                    if (t > maxWeight)
+                    {
+                        maxWeight = t;
+                        finalY = Mathf.Lerp(blendedY, inter.TargetY, t);
+                    }
+                }
+            }
+            blendedY = finalY;
         }
 
         return blendedY + terrainHeightOffset;
@@ -209,35 +235,36 @@ public class TerrainGridSystem : MonoBehaviour
         }
         _fastRoadSegmentsCache = segments.ToArray();
 
+        List<IntersectionData> intersections = new List<IntersectionData>();
+        if (wm != null && wm.Nodes != null)
+        {
+            float seedOff = roadGen != null ? roadGen.seed * 1000f : 0f;
+            float iScale = (roadGen != null && roadGen.isCountryside) ? roadGen.countrysideHeightScale : 0f;
+
+            foreach (var node in wm.Nodes)
+            {
+                if (node.NeighborIds != null && node.NeighborIds.Count > 2)
+                {
+                    float nodeY = Mathf.PerlinNoise((node.WorldPos.x + seedOff) * noiseFrequency, (node.WorldPos.z + seedOff) * noiseFrequency) * iScale;
+                    float radius = node.IntersectionRadius > 0 ? node.IntersectionRadius : _cachedRoadWidth * 1.2f;
+
+                    intersections.Add(new IntersectionData
+                    {
+                        Center = node.WorldPos,
+                        Radius = radius,
+                        TargetY = nodeY
+                    });
+                }
+            }
+        }
+        _fastIntersectionsCache = intersections.ToArray();
+
         _heightMap = new float[_dimX, _dimZ];
         for (int i = 0; i < _dimX; i++)
             for (int j = 0; j < _dimZ; j++)
                 _heightMap[i, j] = SampleHeightRaw(_minX + i * cellSize, _minZ + j * cellSize);
         
-        SmoothHeightMap(); // 生成后平滑化
-        
         _roadMask = new bool[_dimX - 1, _dimZ - 1]; 
-    }
-
-    // 【核心修复 3】：3x3 均值滤波。抹除路口不同坡度交汇时产生的断层与尖刺！
-    private void SmoothHeightMap()
-    {
-        float[,] newMap = new float[_dimX, _dimZ];
-        for (int x = 0; x < _dimX; x++) {
-            for (int z = 0; z < _dimZ; z++) {
-                float sum = 0; int count = 0;
-                for (int dx = -1; dx <= 1; dx++) {
-                    for (int dz = -1; dz <= 1; dz++) {
-                        int nx = x + dx; int nz = z + dz;
-                        if (nx >= 0 && nx < _dimX && nz >= 0 && nz < _dimZ) {
-                            sum += _heightMap[nx, nz]; count++;
-                        }
-                    }
-                }
-                newMap[x, z] = sum / count;
-            }
-        }
-        _heightMap = newMap;
     }
 
     private void GenerateTerrainMesh()
