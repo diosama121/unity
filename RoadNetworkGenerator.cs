@@ -21,6 +21,10 @@ public class RoadNetworkGenerator : MonoBehaviour
     [Range(0f, 0.4f)]
     public float connectionRemoveRate = 0.1f;
 
+    [Header("=== 节点过滤 ===")]
+    [Tooltip("跳过间距小于此值的节点对，防止过密导致网格爆炸")]
+    public float minNodeDistance = 15f;
+
     [Header("=== 生成控制 ===")]
     public bool generateOnStart = true;
     public bool autoLinkPathPlanner = true;
@@ -117,6 +121,8 @@ public class RoadNetworkGenerator : MonoBehaviour
                 if (x < gridWidth - 1)
                 {
                     int rightIndex = z * gridWidth + (x + 1);
+                    float dist = Vector3.Distance(nodes[currentIndex].position, nodes[rightIndex].position);
+                    if (dist < minNodeDistance) continue;
                     if (UnityEngine.Random.value > connectionRemoveRate) // 随机挖空机制
                     {
                         nodes[currentIndex].neighbors.Add(rightIndex);
@@ -129,6 +135,8 @@ public class RoadNetworkGenerator : MonoBehaviour
                 if (z < gridHeight - 1)
                 {
                     int topIndex = (z + 1) * gridWidth + x;
+                    float dist = Vector3.Distance(nodes[currentIndex].position, nodes[topIndex].position);
+                    if (dist < minNodeDistance) continue;
                     if (UnityEngine.Random.value > connectionRemoveRate)
                     {
                         nodes[currentIndex].neighbors.Add(topIndex);

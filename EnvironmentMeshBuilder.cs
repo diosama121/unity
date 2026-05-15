@@ -3,7 +3,6 @@ using UnityEngine;
 using Clipper2Lib;
 using TriangleNet.Geometry;
 using TriangleNet.Meshing;
-using System.Linq;
 using System;
 
 public class EnvironmentMeshBuilder : MonoBehaviour
@@ -46,30 +45,12 @@ public class EnvironmentMeshBuilder : MonoBehaviour
             {
                 foreach (var triEdge in triEdges)
                 {
-                    if (LineSegmentsIntersect(triEdge.Item1, triEdge.Item2, roadSeg.a, roadSeg.b))
+                    if (GeometryUtility.LineSegmentsIntersect(triEdge.Item1, triEdge.Item2, roadSeg.a, roadSeg.b))
                         return true;
                 }
             }
         }
         return false;
-    }
-
-    private bool LineSegmentsIntersect(Vector2 p1, Vector2 p2, Vector2 q1, Vector2 q2)
-    {
-        float Cross(Vector2 a, Vector2 b) => a.x * b.y - a.y * b.x;
-        Vector2 r = p2 - p1;
-        Vector2 s = q2 - q1;
-        float rxs = Cross(r, s);
-        float qpxr = Cross(q1 - p1, r);
-
-        if (Mathf.Abs(rxs) < 0.0001f)
-        {
-            return false;
-        }
-
-        float t = Cross(q1 - p1, s) / rxs;
-        float u = qpxr / rxs;
-        return (t > 0.001f && t < 0.999f && u > 0.001f && u < 0.999f);
     }
 
     public void GenerateEnvironment(Paths64 finalRoadUnion, ProceduralRoadBuilder paramsSource)

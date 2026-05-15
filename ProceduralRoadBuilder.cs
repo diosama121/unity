@@ -77,25 +77,9 @@ public class ProceduralRoadBuilder : MonoBehaviour
         {
             if (node.NeighborIds == null) continue;
 
-            // 路口八角补丁，消除锐角缝隙
-            if (node.NeighborIds.Count > 2) 
+            if (node.NeighborIds.Count > 2)
             {
-                float patchRadius = roadWidth * 0.75f; 
-                Vector3 center = node.WorldPos;
-                float patchYOffset = 0.21f; 
-                center.y = WorldModel.Instance.GetUnifiedHeight(center.x, center.z) + patchYOffset; 
-
-                int segments = 16;
-                float angleStep = 360f / segments;
-                for (int i = 0; i < segments; i++)
-                {
-                    float a1 = i * angleStep * Mathf.Deg2Rad;
-                    float a2 = (i + 1) * angleStep * Mathf.Deg2Rad;
-                    Vector3 p1 = center + new Vector3(Mathf.Cos(a1) * patchRadius, 0, Mathf.Sin(a1) * patchRadius);
-                    Vector3 p2 = center + new Vector3(Mathf.Cos(a2) * patchRadius, 0, Mathf.Sin(a2) * patchRadius);
-                    p1.y = center.y; p2.y = center.y;
-                    allPolys.Add(new Vector3[] { center, p2, p1 });
-                }
+                BuildIntersectionFan(node, allPolys);
             }
 
             foreach (int neighborId in node.NeighborIds)
@@ -104,9 +88,19 @@ public class ProceduralRoadBuilder : MonoBehaviour
                 if (processedEdges.Contains(edgeKey)) continue;
                 processedEdges.Add(edgeKey);
 
+                bool startIsJunction = IsJunction(node);
+                bool endIsJunction = IsJunction(WorldModel.Instance.GetNode(neighborId));
+
                 List<SplinePoint> spline = RoadMathUtility.GetRoadSpline(node.Id, neighborId, meshResolution, roadWidth);
                 if (spline == null || spline.Count < 2) continue;
-                allPolys.AddRange(RoadMathUtility.SweepSplineToQuads(spline, roadWidth));
+
+                float shrinkDistance = roadWidth * 0.85f;
+                List<SplinePoint> shrunkSpline = ShrinkSplineAtJunctions(spline, startIsJunction, endIsJunction, shrinkDistance);
+
+                if (shrunkSpline.Count >= 2)
+                {
+                    allPolys.AddRange(RoadMathUtility.SweepSplineToQuads(shrunkSpline, roadWidth));
+                }
             }
         }
 
@@ -116,6 +110,112 @@ public class ProceduralRoadBuilder : MonoBehaviour
         int roadLayer = LayerMask.NameToLayer(roadLayerName) < 0 ? 0 : LayerMask.NameToLayer(roadLayerName);
         CreateRoadObject("Temp_Road_Mesh", roadMesh, BuildMaterialArray(roadMaterial), roadLayer, meshRoot.transform);
         RoadMeshCombiner.CombineRoadMeshes(meshRoot.transform);
+    }
+
+    private bool IsJunction(RoadNode node)
+    {
+        return node != null && node.NeighborIds != null && node.NeighborIds.Count > 2;
+    }
+
+    private List<SplinePoint> ShrinkSplineAtJunctions(List<SplinePoint> original, bool shrinkStart, bool shrinkEnd, float shrinkDistance)
+    {
+        if (original.Count < 2) return original;
+
+        float totalLength = 0;
+        for (int i = 0; i < original.Count - 1; i++)
+        {
+            totalLength += Vector3.Distance(original[i].Pos, original[i + 1].Pos);
+        }
+
+        float startOffset = shrinkStart ? shrinkDistance : 0;
+        float endOffset = shrinkEnd ? shrinkDistance : 0;
+
+        if (startOffset + endOffset >= totalLength)
+        {
+            float half = totalLength * 0.4f;
+            startOffset = half;
+            endOffset = half;
+        }
+
+        List<SplinePoint> result = new List<SplinePoint>();
+        float accumulated = 0;
+
+        for (int i = 0; i < original.Count - 1; i++)
+        {
+            SplinePoint current = original[i];
+            SplinePoint next = original[i + 1];
+            float segmentLength = Vector3.Distance(current.Pos, next.Pos);
+
+            if (accumulated >= startOffset && accumulated + segmentLength <= totalLength - endOffset)
+            {
+                result.Add(current);
+            }
+            else if (accumulated < startOffset && accumulated + segmentLength > startOffset)
+            {
+                float t = (startOffset - accumulated) / segmentLength;
+                SplinePoint interpolated = new SplinePoint();
+                interpolated.Pos = Vector3.Lerp(current.Pos, next.Pos, t);
+                interpolated.Tangent = Vector3.Lerp(current.Tangent, next.Tangent, t).normalized;
+                interpolated.Normal = Vector3.Lerp(current.Normal, next.Normal, t).normalized;
+                result.Add(interpolated);
+            }
+
+            accumulated += segmentLength;
+        }
+
+        if (accumulated <= totalLength - endOffset)
+        {
+            result.Add(original.Last());
+        }
+        else if (accumulated > totalLength - endOffset && result.Count > 0)
+        {
+            float t = (totalLength - endOffset - (accumulated - Vector3.Distance(original[original.Count - 2].Pos, original.Last().Pos))) / 
+                      Vector3.Distance(original[original.Count - 2].Pos, original.Last().Pos);
+            SplinePoint interpolated = new SplinePoint();
+            interpolated.Pos = Vector3.Lerp(original[original.Count - 2].Pos, original.Last().Pos, t);
+            interpolated.Tangent = Vector3.Lerp(original[original.Count - 2].Tangent, original.Last().Tangent, t).normalized;
+            interpolated.Normal = Vector3.Lerp(original[original.Count - 2].Normal, original.Last().Normal, t).normalized;
+            result.Add(interpolated);
+        }
+
+        return result;
+    }
+
+    private void BuildIntersectionFan(RoadNode junctionNode, List<Vector3[]> allPolys)
+    {
+        Vector3 center = junctionNode.WorldPos;
+        center.y = WorldModel.Instance.GetUnifiedHeight(center.x, center.z) + roadHeightOffset + 0.01f;
+
+        List<Vector3> edgePoints = new List<Vector3>();
+        float halfWidth = roadWidth * 0.5f;
+
+        foreach (int neighborId in junctionNode.NeighborIds)
+        {
+            RoadNode neighbor = WorldModel.Instance.GetNode(neighborId);
+            if (neighbor == null) continue;
+
+            Vector3 dirToNeighbor = (neighbor.WorldPos - junctionNode.WorldPos).normalized;
+            Vector3 normal = GeometryUtility.ComputeNormalFromTangent(dirToNeighbor);
+
+            Vector3 leftPoint = junctionNode.WorldPos + dirToNeighbor * (roadWidth * 0.85f) - normal * halfWidth;
+            Vector3 rightPoint = junctionNode.WorldPos + dirToNeighbor * (roadWidth * 0.85f) + normal * halfWidth;
+
+            leftPoint.y = WorldModel.Instance.GetUnifiedHeight(leftPoint.x, leftPoint.z) + roadHeightOffset + 0.01f;
+            rightPoint.y = WorldModel.Instance.GetUnifiedHeight(rightPoint.x, rightPoint.z) + roadHeightOffset + 0.01f;
+
+            edgePoints.Add(leftPoint);
+            edgePoints.Add(rightPoint);
+        }
+
+        if (edgePoints.Count < 3) return;
+
+        List<Vector3> sortedPoints = GeometryUtility.SortPointsByPolarAngle(edgePoints, center);
+
+        for (int i = 0; i < sortedPoints.Count; i++)
+        {
+            int nextIndex = (i + 1) % sortedPoints.Count;
+            allPolys.Add(new Vector3[] { center, sortedPoints[nextIndex], sortedPoints[i] });
+        }
     }
 
     void ClearRoads()
