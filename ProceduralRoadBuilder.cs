@@ -1,6 +1,5 @@
 using UnityEngine;
 using System.Collections.Generic;
-using System.Linq;
 
 [RequireComponent(typeof(RoadNetworkGenerator))]
 public class ProceduralRoadBuilder : MonoBehaviour
@@ -34,11 +33,11 @@ public class ProceduralRoadBuilder : MonoBehaviour
     public Material countrysideRoadMaterial;
     public Material countrysideJunctionMaterial;
 
-    [Header("=== 地表生成（开关，具体由 EnvironmentMeshBuilder 执行） ===")]
+    [Header("=== 地表生成（供外部读取） ===")]
     public bool generateTerrainBase = true;
     public Material terrainBaseMaterial;
 
-    [Header("=== 城镇模式参数（开关，具体由 EnvironmentMeshBuilder 执行） ===")]
+    [Header("=== 城镇模式参数（供外部读取） ===")]
     public bool generateCity = true;
     public float buildingHeight = 10f;
     public Material buildingMaterial;
@@ -50,24 +49,18 @@ public class ProceduralRoadBuilder : MonoBehaviour
     public bool showSplineGizmos = false;
 
     private RoadNetworkGenerator roadGen;
-    private GameObject meshRoot;
     public RoadNetworkGenerator RoadGen => roadGen;
+    private GameObject meshRoot;
 
-    private Dictionary<int, List<Vector3>> intersectionExposedVerts = new Dictionary<int, List<Vector3>>();
+    void Awake() => roadGen = GetComponent<RoadNetworkGenerator>();
 
     public void BuildRoads()
     {
-        if (WorldModel.Instance == null || WorldModel.Instance.Nodes == null)
-        {
-            Debug.LogError("[ProceduralRoadBuilder] WorldModel 不可用");
-            return;
-        }
+        if (WorldModel.Instance == null || WorldModel.Instance.Nodes == null) return;
 
-        // 【紧急修复：高程校准】
-        // 在算任何曲线之前，先把所有端点从地下拔出来，死死钉在真理地表上！
         foreach (var node in WorldModel.Instance.Nodes)
         {
-            Vector3 pos = node.WorldPos; // 若实际属性名为 WorldPos，请替换
+            Vector3 pos = node.WorldPos; 
             pos.y = WorldModel.Instance.GetUnifiedHeight(pos.x, pos.z);
             node.WorldPos = pos; 
         }
@@ -77,12 +70,33 @@ public class ProceduralRoadBuilder : MonoBehaviour
         meshRoot.layer = LayerMask.NameToLayer(roadLayerName) < 0 ? 0 : LayerMask.NameToLayer(roadLayerName);
         meshRoot.transform.SetParent(transform, false);
 
-        var allEdgeQuads = new List<Vector3[]>();
+        var allPolys = new List<Vector3[]>();
         HashSet<string> processedEdges = new HashSet<string>();
 
         foreach (var node in WorldModel.Instance.Nodes)
         {
             if (node.NeighborIds == null) continue;
+
+            // 路口八角补丁，消除锐角缝隙
+            if (node.NeighborIds.Count > 2) 
+            {
+                float patchRadius = roadWidth * 0.75f; 
+                Vector3 center = node.WorldPos;
+                float patchYOffset = 0.21f; 
+                center.y = WorldModel.Instance.GetUnifiedHeight(center.x, center.z) + patchYOffset; 
+
+                int segments = 16;
+                float angleStep = 360f / segments;
+                for (int i = 0; i < segments; i++)
+                {
+                    float a1 = i * angleStep * Mathf.Deg2Rad;
+                    float a2 = (i + 1) * angleStep * Mathf.Deg2Rad;
+                    Vector3 p1 = center + new Vector3(Mathf.Cos(a1) * patchRadius, 0, Mathf.Sin(a1) * patchRadius);
+                    Vector3 p2 = center + new Vector3(Mathf.Cos(a2) * patchRadius, 0, Mathf.Sin(a2) * patchRadius);
+                    p1.y = center.y; p2.y = center.y;
+                    allPolys.Add(new Vector3[] { center, p2, p1 });
+                }
+            }
 
             foreach (int neighborId in node.NeighborIds)
             {
@@ -90,68 +104,25 @@ public class ProceduralRoadBuilder : MonoBehaviour
                 if (processedEdges.Contains(edgeKey)) continue;
                 processedEdges.Add(edgeKey);
 
-                List<SplinePoint> spline = RoadMathUtility.GetRoadSpline(node.Id, neighborId, meshResolution);
+                List<SplinePoint> spline = RoadMathUtility.GetRoadSpline(node.Id, neighborId, meshResolution, roadWidth);
                 if (spline == null || spline.Count < 2) continue;
-
-                List<Vector3[]> quads = RoadMathUtility.SweepSplineToQuads(spline, roadWidth);
-                allEdgeQuads.AddRange(quads);
+                allPolys.AddRange(RoadMathUtility.SweepSplineToQuads(spline, roadWidth));
             }
         }
 
-        Mesh roadMesh = RoadMeshUtility.BuildRoadMesh(allEdgeQuads);
+        Mesh roadMesh = RoadMeshUtility.BuildRoadMesh(allPolys);
         if (roadMesh == null) return;
 
-        int roadLayer = LayerMask.NameToLayer(roadLayerName);
-        if (roadLayer < 0) roadLayer = 0;
+        int roadLayer = LayerMask.NameToLayer(roadLayerName) < 0 ? 0 : LayerMask.NameToLayer(roadLayerName);
         CreateRoadObject("Temp_Road_Mesh", roadMesh, BuildMaterialArray(roadMaterial), roadLayer, meshRoot.transform);
-
-        Debug.Log($"[ProceduralRoadBuilder] 道路初始几何构建完成，准备移交 Combiner 进行终极合批与物理烘焙...");
-
         RoadMeshCombiner.CombineRoadMeshes(meshRoot.transform);
-
-        Debug.Log($"[ProceduralRoadBuilder] ✅ 道路系统全部构建完毕！");
-    }
-
-    private List<SplinePoint> TruncateForIntersections(List<SplinePoint> spline)
-    {
-        if (spline.Count <= 4) return spline; 
-        List<SplinePoint> trunk = new List<SplinePoint>(spline);
-        return trunk.GetRange(1, trunk.Count - 2);
-    }
-
-    private void ExposeEndpoints(int nodeId, Vector3 left, Vector3 right)
-    {
-        if (!intersectionExposedVerts.ContainsKey(nodeId))
-            intersectionExposedVerts[nodeId] = new List<Vector3>();
-        intersectionExposedVerts[nodeId].Add(left);
-        intersectionExposedVerts[nodeId].Add(right);
-    }
-
-    private void CombineAndAssign(List<Mesh> meshes)
-    {
-        if (meshes.Count == 0) return;
-        Mesh final = meshes[0]; 
-        int roadLayer = LayerMask.NameToLayer(roadLayerName);
-        GameObject roadObj = new GameObject("Temp_Road_Mesh_Legacy");
-        roadObj.layer = roadLayer < 0 ? 0 : roadLayer;
-        roadObj.transform.SetParent(meshRoot.transform, false);
-        roadObj.AddComponent<MeshFilter>().sharedMesh = final;
-        MeshRenderer mr = roadObj.AddComponent<MeshRenderer>();
-        mr.sharedMaterial = roadMaterial;
-        mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-        mr.receiveShadows = true;
-        roadObj.AddComponent<MeshCollider>().sharedMesh = final;
     }
 
     void ClearRoads()
     {
         if (meshRoot != null) DestroyImmediate(meshRoot);
-        foreach (Transform child in transform)
-        {
-            if (child.name.StartsWith("Combined_Road_"))
-            {
-                DestroyImmediate(child.gameObject);
-            }
+        foreach (Transform child in transform) {
+            if (child.name.StartsWith("Combined_Road_")) DestroyImmediate(child.gameObject);
         }
     }
 
@@ -159,21 +130,13 @@ public class ProceduralRoadBuilder : MonoBehaviour
     {
         Material[] mats = new Material[6];
         Material defaultMat = new Material(Shader.Find("Standard"));
-        defaultMat.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Off);
-
         Material safeFallback = fallback ? fallback : defaultMat;
-
-        if (useCountrysideUniformMaterials)
-        {
-            mats[0] = (countrysideRoadMaterial ? countrysideRoadMaterial : defaultMat);
-            mats[1] = mats[0];
-            mats[2] = mats[0];
-            mats[3] = (countrysideJunctionMaterial ? countrysideJunctionMaterial : defaultMat);
-            mats[4] = mats[3];
-            mats[5] = mats[3];
-        }
-        else
-        {
+        if (useCountrysideUniformMaterials) {
+            mats[0] = countrysideRoadMaterial ? countrysideRoadMaterial : defaultMat;
+            mats[1] = mats[0]; mats[2] = mats[0];
+            mats[3] = countrysideJunctionMaterial ? countrysideJunctionMaterial : defaultMat;
+            mats[4] = mats[3]; mats[5] = mats[3];
+        } else {
             mats[0] = horizontalRoadMaterial ? horizontalRoadMaterial : safeFallback;
             mats[1] = verticalRoadMaterial ? verticalRoadMaterial : safeFallback;
             mats[2] = diagonalRoadMaterial ? diagonalRoadMaterial : safeFallback;
@@ -181,10 +144,7 @@ public class ProceduralRoadBuilder : MonoBehaviour
             mats[4] = crossJunctionMaterial ? crossJunctionMaterial : safeFallback;
             mats[5] = complexJunctionMaterial ? complexJunctionMaterial : safeFallback;
         }
-
-        foreach (var mat in mats)
-            mat.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Off);
-
+        foreach (var mat in mats) mat.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Off);
         return mats;
     }
 
@@ -197,10 +157,5 @@ public class ProceduralRoadBuilder : MonoBehaviour
         MeshRenderer mr = obj.AddComponent<MeshRenderer>();
         mr.sharedMaterials = materials;
         mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-        mr.receiveShadows = true;
-        foreach (var m in materials)
-            m.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Off);
     }
-
-    void Start() => roadGen = GetComponent<RoadNetworkGenerator>();
 }
