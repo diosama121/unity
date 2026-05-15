@@ -9,7 +9,7 @@ public enum NodeType { Endpoint, Straight, Merge, Intersection }
 public enum IntersectionState { Uncontrolled, GreenLight, RedLight, YellowLight }
 
 [System.Serializable]
-public class RoadNode
+public partial class RoadNode
 {
     public int Id;
     public Vector3 WorldPos;      // 绝对坐标真理（包含平滑后的 Y）
@@ -113,6 +113,37 @@ public class WorldModel : MonoBehaviour
     // --- 第二步：高程平滑处理 ---
     // 【V4.1 删除】此方法会篡改真理高度，导致节点重新拉偏，已彻底移除！
     // SmoothNodeHeights();
+
+    // --- 第2.5步：计算动态路口半径与路口语义 ---
+    foreach (var node in _graph.Values)
+    {
+        if (node.NeighborIds.Count <= 2) continue; // 非路口节点跳过
+
+        // 计算与所有邻居的最大距离
+        float maxDist = 0f;
+        foreach (var nbId in node.NeighborIds)
+        {
+            float d = Vector3.Distance(node.WorldPos, _graph[nbId].WorldPos);
+            if (d > maxDist) maxDist = d;
+        }
+
+        // 动态半径 = 最大边距的一半 + 固定缓冲
+        float rawRadius = (maxDist * 0.5f) + 2f;
+
+        // 从 roadBuilder 获取路宽做下限，防止半径过小导致路口多边形退化
+        float minRadius = 6f;
+        if (roadBuilder != null) minRadius = roadBuilder.roadWidth * 1.2f;
+
+        node.IntersectionRadius = Mathf.Clamp(rawRadius, minRadius, 25f);
+
+        // 语义分类
+        node.Kind = node.NeighborIds.Count switch
+        {
+            3 => IntersectionKind.T_Junction,
+            4 => IntersectionKind.Crossroad,
+            _ => IntersectionKind.MultiWay
+        };
+    }
 
     // --- 第三步：预计算切线与法线 ---
     foreach (var node in _graph.Values)

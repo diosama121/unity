@@ -1,6 +1,7 @@
 using UnityEngine;
 using System.Collections.Generic;
 using System;
+using System.Linq;
 
 #if UNITY_EDITOR
 using UnityEditor;
@@ -24,6 +25,9 @@ public class RoadNetworkGenerator : MonoBehaviour
     [Header("=== 节点过滤 ===")]
     [Tooltip("跳过间距小于此值的节点对，防止过密导致网格爆炸")]
     public float minNodeDistance = 15f;
+    [Range(0f, 0.5f)]
+    [Tooltip("乡村模式：坡度超过此值的边拒绝连边")]
+    public float maxCountrysideSlope = 0.20f;
 
     [Header("=== 生成控制 ===")]
     public bool generateOnStart = true;
@@ -110,6 +114,9 @@ public class RoadNetworkGenerator : MonoBehaviour
             }
         }
 
+        // 2.5 节点聚类熔断：合并物理距离 < minNodeDistance 的节点对，杜绝密集扎堆
+        MergeClusteredNodes();
+
         // 3. 生成拓扑连线 (Edges) 与邻居关系 (Neighbors)
         for (int z = 0; z < gridHeight; z++)
         {
@@ -123,6 +130,10 @@ public class RoadNetworkGenerator : MonoBehaviour
                     int rightIndex = z * gridWidth + (x + 1);
                     float dist = Vector3.Distance(nodes[currentIndex].position, nodes[rightIndex].position);
                     if (dist < minNodeDistance) continue;
+                    if (isCountryside && !SlopeInterceptor.IsSlopeAcceptable(
+                        nodes[currentIndex].position, nodes[rightIndex].position, 
+                        maxCountrysideSlope, WorldModel.Instance != null ? WorldModel.Instance.terrainGrid : null))
+                        continue;
                     if (UnityEngine.Random.value > connectionRemoveRate) // 随机挖空机制
                     {
                         nodes[currentIndex].neighbors.Add(rightIndex);
@@ -137,6 +148,10 @@ public class RoadNetworkGenerator : MonoBehaviour
                     int topIndex = (z + 1) * gridWidth + x;
                     float dist = Vector3.Distance(nodes[currentIndex].position, nodes[topIndex].position);
                     if (dist < minNodeDistance) continue;
+                    if (isCountryside && !SlopeInterceptor.IsSlopeAcceptable(
+                        nodes[currentIndex].position, nodes[topIndex].position,
+                        maxCountrysideSlope, WorldModel.Instance != null ? WorldModel.Instance.terrainGrid : null))
+                        continue;
                     if (UnityEngine.Random.value > connectionRemoveRate)
                     {
                         nodes[currentIndex].neighbors.Add(topIndex);
@@ -153,6 +168,59 @@ public class RoadNetworkGenerator : MonoBehaviour
     // =============================================
     // 内部辅助
     // =============================================
+
+    private void MergeClusteredNodes()
+    {
+        float mergeThreshold = minNodeDistance * 0.6f;
+        int mergeCount = 0;
+
+        for (int i = 0; i < nodes.Count; i++)
+        {
+            if (nodes[i] == null) continue;
+
+            for (int j = i + 1; j < nodes.Count; j++)
+            {
+                if (nodes[j] == null) continue;
+
+                float dist = Vector3.Distance(nodes[i].position, nodes[j].position);
+                if (dist >= mergeThreshold) continue;
+
+                nodes[i].position = (nodes[i].position + nodes[j].position) * 0.5f;
+
+                foreach (int nb in nodes[j].neighbors)
+                {
+                    if (nb != i && !nodes[i].neighbors.Contains(nb))
+                        nodes[i].neighbors.Add(nb);
+                    if (nb != i)
+                    {
+                        nodes[nb].neighbors.Remove(j);
+                        if (!nodes[nb].neighbors.Contains(i))
+                            nodes[nb].neighbors.Add(i);
+                    }
+                }
+
+                nodes[i].neighbors.Remove(j);
+                nodes[j] = null;
+                mergeCount++;
+            }
+
+            nodes[i].neighbors = nodes[i].neighbors.Distinct().ToList();
+        }
+
+        nodes.RemoveAll(n => n == null);
+        for (int i = 0; i < nodes.Count; i++)
+        {
+            nodes[i].id = i;
+            for (int j = nodes[i].neighbors.Count - 1; j >= 0; j--)
+            {
+                if (nodes[i].neighbors[j] >= nodes.Count)
+                    nodes[i].neighbors.RemoveAt(j);
+            }
+        }
+
+        if (mergeCount > 0)
+            Debug.Log($"[RoadNetworkGenerator] 🔗 节点聚类熔断: 合并了 {mergeCount} 个过密节点");
+    }
 
     private void AddEdge(int a, int b)
     {
