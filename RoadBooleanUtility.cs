@@ -137,13 +137,13 @@ public static class RoadBooleanUtility
     }
 
     // 【修复 2 + 3】完全替换的 SanitizePolygons
-    public static Paths64 SanitizePolygons(Paths64 rawPaths)
+   public static Paths64 SanitizePolygons(Paths64 rawPaths)
     {
         Paths64 clean = new Paths64();
         foreach (var path in rawPaths)
         {
-            // 过滤面积 < 1.0 平方米的碎片
-            if (Math.Abs(Clipper.Area(path)) < 1.0 * 1000 * 1000) continue;
+            // 【终极修复】将阈值从 1.0 降至 0.2 平方米，防止正常的细窄路段被误删断裂
+            if (Math.Abs(Clipper.Area(path)) < 0.2 * 1000 * 1000) continue;
             
             // 简化共线点，容差 2.0
             var simplified = Clipper.SimplifyPath(path, 2.0); 
@@ -163,7 +163,6 @@ public static class RoadBooleanUtility
         }
         return clean;
     }
-
     /// <summary>
     /// 生成道路轮廓向外膨胀的“裙边”外轮廓
     /// </summary>

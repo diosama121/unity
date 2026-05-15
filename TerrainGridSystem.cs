@@ -254,7 +254,7 @@ public class TerrainGridSystem : MonoBehaviour
         return inside;
     }
 
-    public void BakeRoadMask(List<Vector3[]> roadPolygons)
+   public void BakeRoadMask(List<Vector3[]> roadPolygons)
     {
         if (_roadMask == null)
         {
@@ -265,11 +265,25 @@ public class TerrainGridSystem : MonoBehaviour
         int cellCountX = _dimX - 1;
         int cellCountZ = _dimZ - 1;
 
-        // 【性能抢救 2】预计算每个路段的 AABB 包围盒
         var polyCaches = new List<(Rect aabb, List<Vector2> pts)>();
         foreach (var poly in roadPolygons)
         {
             if (poly == null || poly.Length < 3) continue;
+
+            // 【终极防爆门】计算四边形面积，超过 1000 平方米直接判定为多边形交叉错误并丢弃！防止地形大面积消失！
+            float area = 0;
+            for (int k = 0; k < poly.Length; k++)
+            {
+                Vector3 p1 = poly[k];
+                Vector3 p2 = poly[(k + 1) % poly.Length];
+                area += (p1.x * p2.z - p2.x * p1.z);
+            }
+            if (Mathf.Abs(area) * 0.5f > 1000f) 
+            {
+                Debug.LogWarning($"[TerrainGridSystem] 拦截到超大异常多边形，已丢弃，防止地形破洞！");
+                continue;
+            }
+
             float minX = float.MaxValue, minZ = float.MaxValue, maxX = float.MinValue, maxZ = float.MinValue;
             List<Vector2> pts2D = new List<Vector2>(poly.Length);
             foreach (var v in poly)
@@ -280,7 +294,6 @@ public class TerrainGridSystem : MonoBehaviour
             }
             polyCaches.Add((Rect.MinMaxRect(minX - 0.5f, minZ - 0.5f, maxX + 0.5f, maxZ + 0.5f), pts2D));
         }
-
         for (int i = 0; i < cellCountX; i++)
         {
             for (int j = 0; j < cellCountZ; j++)

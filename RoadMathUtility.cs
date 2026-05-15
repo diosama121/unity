@@ -24,13 +24,18 @@ public static class RoadMathUtility
         (Vector3 p0, Vector3 tangentA) = wm.GetNodeData(nodeIdA);
         (Vector3 p1, Vector3 tangentB) = wm.GetNodeData(nodeIdB);
 
+        // 【紧急修复：封死地下切线隐患】
+        // 强制把起止端点拽到真理地表 + 上浮，杜绝向下拉扯的样条切线
+        p0.y = wm.GetUnifiedHeight(p0.x, p0.z) + 0.2f;
+        p1.y = wm.GetUnifiedHeight(p1.x, p1.z) + 0.2f;
+
         float dist = Vector3.Distance(p0, p1);
         if (dist <= 0.1f) return points;
 
         Vector3 m0 = tangentA * dist * 0.5f;
         Vector3 m1 = tangentB * dist * 0.5f;
 
-        // 【修复 1：强制精度】无视外部传进来的 2m，强制要求样条采样步长最大不能超过 0.5m，保障曲线平滑！
+        // 强制精度：采样步长最大不超过 0.5m
         float actualStep = Mathf.Clamp(stepDistance, 0.1f, 0.5f);
         int steps = Mathf.Max(2, Mathf.CeilToInt(dist / actualStep));
         float deltaT = 1f / steps;
@@ -45,7 +50,7 @@ public static class RoadMathUtility
                           (-2 * t3 + 3 * t2) * p1 + 
                           (t3 - t2) * m1;
             
-            // 强行剥离旧基准 + 实时采样 + 强制上浮
+            // 实时采样 + 强制上浮
             pos.y = wm.GetUnifiedHeight(pos.x, pos.z) + 0.2f;
 
             // 切线高度同步（兜底防品红碎面）
