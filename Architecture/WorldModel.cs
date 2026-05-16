@@ -77,11 +77,15 @@ public class WorldModel : MonoBehaviour
         // 4. 通知 a1 视觉层执行 (a1 现在只需"按图填色")
         roadBuilder.BuildRoads();
 
-        // 4.5. 生成停止线锚点（Traffic Control 精确制动目标）
-        GenerateStopLines();
+        // 4.5. 生成停止线锚点（Traffic Control 精确制动目标）—— 乡村模式不需要
+        if (roadGenerator != null && !roadGenerator.isCountryside)
+        {
+            GenerateStopLines();
+        }
 
-        // 5. 通知 a3 交通层执行
-        if (trafficLightManager != null) trafficLightManager.PlaceTrafficLights();
+        // 5. 通知 a3 交通层执行（红绿灯仅城镇模式，NPC乡村/城镇均保留）
+        if (trafficLightManager != null && !roadGenerator.isCountryside)
+            trafficLightManager.PlaceTrafficLights();
         if (trafficManager != null) trafficManager.ResetSpawnState();
         if (trafficManager != null) trafficManager.SpawnNPCs();
 

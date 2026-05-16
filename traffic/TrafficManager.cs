@@ -23,7 +23,6 @@ public class TrafficManager : MonoBehaviour
     public void SpawnNPCs()
     {
         if (_hasSpawned) { Debug.Log("TrafficManager: NPC已生成，跳过重复调用"); return; }
-        _hasSpawned = true;
 
         roadGen = FindObjectOfType<RoadNetworkGenerator>();
         pathPlanner = FindObjectOfType<PathPlanner>();
@@ -58,6 +57,7 @@ public class TrafficManager : MonoBehaviour
             if (controller != null) controller.isNPC = true; 
 
             SimpleAutoDrive autoDrive = npcObj.GetComponent<SimpleAutoDrive>();
+            if (autoDrive == null) autoDrive = npcObj.GetComponentInChildren<SimpleAutoDrive>();
             if (autoDrive != null)
             {
                 // 【修复 2：解除样条规划封印，调用正确的接口】
@@ -70,14 +70,19 @@ public class TrafficManager : MonoBehaviour
                 }
                 else
                 {
+                    Debug.LogWarning($"TrafficManager: NPC {spawnedCount} 样条路径规划失败，已销毁实例");
                     Destroy(npcObj);
                 }
             }
             else
             {
+                Debug.LogWarning($"TrafficManager: NPC预制体缺少SimpleAutoDrive组件（已检查自身及子物体），实例已销毁");
                 Destroy(npcObj);
             }
         }
+
+        // 仅在完成全部生成循环后才锁定状态（避免中途失败锁死后续重试）
+        _hasSpawned = true;
         Debug.Log($"✅ TrafficManager: 成功生成 {spawnedCount} 辆纯数学轨道 NPC");
     }
 
