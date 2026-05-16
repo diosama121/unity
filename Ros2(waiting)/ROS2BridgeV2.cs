@@ -335,6 +335,22 @@ public class ROS2BridgeV2 : MonoBehaviour
             Debug.LogWarning($"JSON 解析异常: {e.Message} | 数据: {jsonData}");
         }
     }
+    public void Reconnect()
+    {
+        Debug.Log("🔄 ROS2 Bridge 正在重连...");
+        isConnected = false;
+        if (receiveThread != null && receiveThread.IsAlive) receiveThread.Abort();
+        if (sendThread != null && sendThread.IsAlive) sendThread.Abort();
+        if (connectThread != null && connectThread.IsAlive) connectThread.Abort();
+        if (stream != null) { stream.Close(); stream = null; }
+        if (client != null) { client.Close(); client = null; }
+        lastReceiveTime = 0f;
+        useRosControl = false;
+        rosLinearVelocity = 0f;
+        rosAngularVelocity = 0f;
+        ConnectToROS2();
+    }
+
     void OnApplicationQuit()
     {
         isConnected = false;
