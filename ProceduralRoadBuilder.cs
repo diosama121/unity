@@ -141,6 +141,8 @@ public class ProceduralRoadBuilder : MonoBehaviour
             }
         }
 
+        int roadLayer = LayerMask.NameToLayer(roadLayerName) < 0 ? 0 : LayerMask.NameToLayer(roadLayerName);
+
         foreach (var kvp in junctionEntriesByNode)
         {
             RoadNode juncNode = WorldModel.Instance.GetNode(kvp.Key);
@@ -157,7 +159,6 @@ public class ProceduralRoadBuilder : MonoBehaviour
         Mesh roadMesh = RoadMeshUtility.BuildRoadMesh(allPolys, allUVs);
         if (roadMesh == null) return;
 
-        int roadLayer = LayerMask.NameToLayer(roadLayerName) < 0 ? 0 : LayerMask.NameToLayer(roadLayerName);
         CreateRoadObject("Temp_Road_Mesh", roadMesh, BuildMaterialArray(roadMaterial), roadLayer, meshRoot.transform);
         RoadMeshCombiner.CombineRoadMeshes(meshRoot.transform);
 
