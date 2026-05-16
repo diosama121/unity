@@ -4,24 +4,31 @@ using System.Collections.Generic;
 public static class RoadMeshUtility
 {
     // 支持混合传入四边形和三角形
-    public static Mesh BuildRoadMesh(List<Vector3[]> allPolys)
+    public static Mesh BuildRoadMesh(List<Vector3[]> allPolys, List<Vector2[]> allUVs = null)
     {
         if (allPolys == null || allPolys.Count == 0) return null;
 
         List<Vector3> verts = new List<Vector3>();
         List<int> tris = new List<int>();
+        List<Vector2> uvs = new List<Vector2>();
 
-        foreach (var poly in allPolys)
+        for (int p = 0; p < allPolys.Count; p++)
         {
-            if (poly.Length == 3) // 处理圆盘的三角形
+            var poly = allPolys[p];
+
+            if (poly.Length == 3)
             {
                 int start = verts.Count;
                 verts.AddRange(poly);
                 tris.Add(start + 0);
                 tris.Add(start + 1);
                 tris.Add(start + 2);
+
+                uvs.Add(Vector2.zero);
+                uvs.Add(Vector2.zero);
+                uvs.Add(Vector2.zero);
             }
-            else if (poly.Length == 4) // 处理马路的四边形
+            else if (poly.Length == 4)
             {
                 int start = verts.Count;
                 verts.AddRange(poly);
@@ -32,6 +39,18 @@ public static class RoadMeshUtility
                 tris.Add(start + 0);
                 tris.Add(start + 3);
                 tris.Add(start + 2);
+
+                if (allUVs != null && p < allUVs.Count && allUVs[p] != null && allUVs[p].Length == 4)
+                {
+                    uvs.AddRange(allUVs[p]);
+                }
+                else
+                {
+                    uvs.Add(Vector2.zero);
+                    uvs.Add(Vector2.zero);
+                    uvs.Add(Vector2.zero);
+                    uvs.Add(Vector2.zero);
+                }
             }
         }
 
@@ -39,6 +58,7 @@ public static class RoadMeshUtility
         mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
         mesh.SetVertices(verts);
         mesh.SetTriangles(tris, 0);
+        mesh.SetUVs(0, uvs);
         mesh.RecalculateNormals();
 
         // 法线兜底防翻转

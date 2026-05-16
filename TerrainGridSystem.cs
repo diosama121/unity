@@ -136,6 +136,20 @@ public class TerrainGridSystem : MonoBehaviour
         return blendedY + terrainHeightOffset;
     }
 
+    public float SampleHeightRawOnly(float worldX, float worldZ)
+    {
+        RoadNetworkGenerator roadGen = FindObjectOfType<RoadNetworkGenerator>();
+        bool isCountry = (roadGen != null && roadGen.isCountryside);
+
+        float noiseY = 0f;
+        if (isCountry)
+        {
+            float seedOffset = roadGen.seed * 1000f;
+            noiseY = Mathf.PerlinNoise((worldX + seedOffset) * noiseFrequency, (worldZ + seedOffset) * noiseFrequency) * roadGen.countrysideHeightScale;
+        }
+        return noiseY + terrainHeightOffset;
+    }
+
     public float SampleHeight(Vector2 worldXZ)
     {
         if (_heightMap == null) return 0f;
@@ -315,5 +329,64 @@ public class TerrainGridSystem : MonoBehaviour
         if (_meshFilter.GetComponent<MeshCollider>() != null) _meshFilter.GetComponent<MeshCollider>().sharedMesh = mesh;
     }
 
-    public void BakeRoadMask(List<Vector3[]> roadPolygons) { GenerateTerrainMesh(); }
+    public void BakeRoadMask(List<Vector3[]> roadPolygons)
+    {
+        if (roadPolygons == null || roadPolygons.Count == 0 || _roadMask == null || _heightMap == null) return;
+
+        int cellCountX = _dimX - 1;
+        int cellCountZ = _dimZ - 1;
+
+        for (int i = 0; i < cellCountX; i++)
+        {
+            for (int j = 0; j < cellCountZ; j++)
+            {
+                if (_roadMask[i, j]) continue;
+
+                float cx = _minX + (i + 0.5f) * cellSize;
+                float cz = _minZ + (j + 0.5f) * cellSize;
+                Vector2 cellCenter = new Vector2(cx, cz);
+
+                foreach (var poly in roadPolygons)
+                {
+                    if (poly.Length < 3) continue;
+                    if (PointInPolygonXZ(cellCenter, poly))
+                    {
+                        _roadMask[i, j] = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        GenerateTerrainMesh();
+        Debug.Log($"[TerrainGrid] BakeRoadMask完成: 移除 {CountMaskedCells()} 个道路覆盖地形单元");
+    }
+
+    private bool PointInPolygonXZ(Vector2 point, Vector3[] poly)
+    {
+        bool inside = false;
+        int n = poly.Length;
+        for (int i = 0, j = n - 1; i < n; j = i++)
+        {
+            Vector2 pi = new Vector2(poly[i].x, poly[i].z);
+            Vector2 pj = new Vector2(poly[j].x, poly[j].z);
+            if ((pi.y > point.y) != (pj.y > point.y) &&
+                point.x < (pj.x - pi.x) * (point.y - pi.y) / (pj.y - pi.y) + pi.x)
+            {
+                inside = !inside;
+            }
+        }
+        return inside;
+    }
+
+    private int CountMaskedCells()
+    {
+        int count = 0;
+        int cellCountX = _dimX - 1;
+        int cellCountZ = _dimZ - 1;
+        for (int i = 0; i < cellCountX; i++)
+            for (int j = 0; j < cellCountZ; j++)
+                if (_roadMask[i, j]) count++;
+        return count;
+    }
 }

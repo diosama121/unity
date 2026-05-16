@@ -34,6 +34,11 @@ public class WorldModel : MonoBehaviour
     private Dictionary<int, RoadNode> _graph = new Dictionary<int, RoadNode>();
     private KDTree _spatialIndex;
 
+    public Dictionary<int, Lane> GlobalLanes = new Dictionary<int, Lane>();
+    public Dictionary<int, LaneConnector> GlobalConnectors = new Dictionary<int, LaneConnector>();
+    public Dictionary<int, List<StopLine>> GlobalStopLines = new Dictionary<int, List<StopLine>>();
+    private int _nextLaneId = 0;
+
     // 观测接口
     public int NodeCount => _graph.Count;
     public IEnumerable<RoadNode> Nodes => _graph.Values;
@@ -64,8 +69,14 @@ public class WorldModel : MonoBehaviour
         // 3. 建立真理层 (核心：高度平滑 + 切线计算 + 坐标锁死)
         IngestAndPrecomputeGraph(roadGenerator);
 
-        // 4. 通知 a1 视觉层执行 (a1 现在只需“按图填色”)
+        // 3.5. 生成车道图（Lane语义层：Nav Layer主导）
+        GenerateAndRegisterLanes();
+
+        // 4. 通知 a1 视觉层执行 (a1 现在只需"按图填色")
         roadBuilder.BuildRoads();
+
+        // 4.5. 生成停止线锚点（Traffic Control 精确制动目标）
+        GenerateStopLines();
 
         // 5. 通知 a3 交通层执行
         if (trafficLightManager != null) trafficLightManager.PlaceTrafficLights();
@@ -166,7 +177,136 @@ public class WorldModel : MonoBehaviour
     }
 
     _spatialIndex = new KDTree(_graph.Values);
-}
+    }
+
+    private void GenerateAndRegisterLanes()
+    {
+        GlobalLanes.Clear();
+        GlobalConnectors.Clear();
+        _nextLaneId = 0;
+
+        if (roadGenerator == null || roadGenerator.isCountryside) return;
+
+        HashSet<string> processedEdges = new HashSet<string>();
+        float roadWidth = roadBuilder != null ? roadBuilder.roadWidth : 6f;
+        float stepDist = roadBuilder != null ? roadBuilder.meshResolution : 2f;
+
+        foreach (var node in _graph.Values)
+        {
+            if (node.NeighborIds == null) continue;
+
+            foreach (int neighborId in node.NeighborIds)
+            {
+                string edgeKey = Mathf.Min(node.Id, neighborId) + "_" + Mathf.Max(node.Id, neighborId);
+                if (processedEdges.Contains(edgeKey)) continue;
+                processedEdges.Add(edgeKey);
+
+                List<SplinePoint> centerSpline = RoadMathUtility.GetRoadSpline(node.Id, neighborId, stepDist, roadWidth);
+                if (centerSpline == null || centerSpline.Count < 2) continue;
+
+                var (fwdPath, revPath) = RoadMathUtility.GenerateLanePathsFromCenter(centerSpline, roadWidth);
+                if (fwdPath.Count < 2 && revPath.Count < 2) continue;
+
+                int roadId = node.Id * 10000 + neighborId;
+
+                Lane fwdLane = null;
+                Lane revLane = null;
+
+                if (fwdPath.Count >= 2)
+                {
+                    fwdLane = new Lane
+                    {
+                        LaneId = _nextLaneId++,
+                        RoadId = roadId,
+                        CenterSpline = new CatmullRomSpline(fwdPath),
+                        Direction = LaneDirection.Forward,
+                        LeftLaneId = -1,
+                        RightLaneId = -1,
+                        NextConnectorIds = new List<int>()
+                    };
+                }
+
+                if (revPath.Count >= 2)
+                {
+                    revLane = new Lane
+                    {
+                        LaneId = _nextLaneId++,
+                        RoadId = roadId,
+                        CenterSpline = new CatmullRomSpline(revPath),
+                        Direction = LaneDirection.Reverse,
+                        LeftLaneId = -1,
+                        RightLaneId = -1,
+                        NextConnectorIds = new List<int>()
+                    };
+                }
+
+                if (fwdLane != null && revLane != null)
+                {
+                    fwdLane.LeftLaneId = revLane.LaneId;
+                    revLane.RightLaneId = fwdLane.LaneId;
+                }
+
+                if (fwdLane != null) GlobalLanes[fwdLane.LaneId] = fwdLane;
+                if (revLane != null) GlobalLanes[revLane.LaneId] = revLane;
+            }
+        }
+
+        Debug.Log($"[WorldModel] 车道图注册完成: {GlobalLanes.Count}条车道, {GlobalConnectors.Count}个连接器");
+    }
+
+    private void GenerateStopLines()
+    {
+        GlobalStopLines.Clear();
+
+        foreach (var node in _graph.Values)
+        {
+            if (node.NeighborIds == null || node.NeighborIds.Count < 3) continue;
+
+            var stopLines = new List<StopLine>();
+            Vector3 junctionPos = node.WorldPos;
+
+            foreach (int nbId in node.NeighborIds)
+            {
+                if (!_graph.TryGetValue(nbId, out RoadNode nbNode)) continue;
+
+                Vector3 dirToJunction = (junctionPos - nbNode.WorldPos).normalized;
+                dirToJunction.y = 0f;
+                if (dirToJunction.sqrMagnitude < 0.001f) continue;
+
+                Vector3 stopPos = junctionPos - dirToJunction * 2f;
+                stopPos.y = GetUnifiedHeight(stopPos.x, stopPos.z) + 0.1f;
+
+                stopLines.Add(new StopLine
+                {
+                    NodeId = node.Id,
+                    LaneId = -1,
+                    Position = stopPos,
+                    Normal = dirToJunction,
+                    AssociatedPhaseId = node.Id
+                });
+            }
+
+            if (stopLines.Count > 0)
+                GlobalStopLines[node.Id] = stopLines;
+        }
+
+        Debug.Log($"[WorldModel] 停止线生成完成: {GlobalStopLines.Count}个路口");
+    }
+
+    public StopLine GetNearestStopLine(int junctionId, Vector3 fromPos)
+    {
+        if (!GlobalStopLines.TryGetValue(junctionId, out var lines) || lines.Count == 0)
+            return null;
+
+        StopLine nearest = lines[0];
+        float minDist = Vector3.Distance(fromPos, nearest.Position);
+        for (int i = 1; i < lines.Count; i++)
+        {
+            float d = Vector3.Distance(fromPos, lines[i].Position);
+            if (d < minDist) { minDist = d; nearest = lines[i]; }
+        }
+        return nearest;
+    }
 
     // --- a4 的几何计算车间 ---
 

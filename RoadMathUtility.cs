@@ -179,6 +179,7 @@ public static class RoadMathUtility
     public struct SweptRoadResult
     {
         public List<Vector3[]> Quads;
+        public List<Vector2[]> QuadUVs;
         public SetbackEdgeData StartSetback;
         public SetbackEdgeData EndSetback;
     }
@@ -208,10 +209,11 @@ public static class RoadMathUtility
         return radius;
     }
 
-    public static SweptRoadResult SweepSplineToQuadsWithSetback(List<SplinePoint> spline, int nodeIdA, int nodeIdB, float baseRoadWidth)
+    public static SweptRoadResult SweepSplineToQuadsWithSetback(List<SplinePoint> spline, int nodeIdA, int nodeIdB, float baseRoadWidth, float uvScale = 0.1f)
     {
         SweptRoadResult result = new SweptRoadResult();
         result.Quads = new List<Vector3[]>();
+        result.QuadUVs = new List<Vector2[]>();
         WorldModel wm = WorldModel.Instance;
         if (wm == null || spline == null || spline.Count < 2) return result;
 
@@ -226,6 +228,14 @@ public static class RoadMathUtility
         bool isCountry = (wm.roadGenerator != null && wm.roadGenerator.isCountryside);
         float startRadius = GetDynamicSetbackRadius(wm, nodeIdA, nodeIdB, baseRoadWidth, isCountry, spline[0].Pos);
         float endRadius = GetDynamicSetbackRadius(wm, nodeIdB, nodeIdA, baseRoadWidth, isCountry, spline[spline.Count - 1].Pos);
+
+        if (startRadius + endRadius >= totalLength)
+        {
+            float ratio = startRadius / (startRadius + endRadius);
+            float maxTotal = totalLength * 0.8f;
+            startRadius = maxTotal * ratio;
+            endRadius = maxTotal * (1f - ratio);
+        }
 
         int startIdx = 0;
         for (int i = 0; i < cumulativeDists.Length; i++)
@@ -276,6 +286,14 @@ public static class RoadMathUtility
             rightB.y = wm.GetUnifiedHeight(rightB.x, rightB.z) + 0.1f;
 
             result.Quads.Add(new Vector3[] { leftA, rightA, rightB, leftB });
+
+            float segDist = Vector3.Distance(pA.Pos, pB.Pos);
+            float vA = cumulativeDists[startIdx + i] * uvScale;
+            float vB = (cumulativeDists[startIdx + i] + segDist) * uvScale;
+            result.QuadUVs.Add(new Vector2[] {
+                new Vector2(0, vA), new Vector2(1, vA),
+                new Vector2(1, vB), new Vector2(0, vB)
+            });
         }
 
         SplinePoint firstSp = clipped[0];
@@ -315,5 +333,36 @@ public static class RoadMathUtility
         };
 
         return result;
+    }
+
+    public static (List<Vector3> forwardLane, List<Vector3> reverseLane) GenerateLanePathsFromCenter(
+        List<SplinePoint> centerSpline, float baseRoadWidth)
+    {
+        List<Vector3> forwardLane = new List<Vector3>();
+        List<Vector3> reverseLane = new List<Vector3>();
+
+        if (centerSpline == null || centerSpline.Count < 2) return (forwardLane, reverseLane);
+
+        WorldModel wm = WorldModel.Instance;
+        float laneOffset = baseRoadWidth * 0.25f;
+
+        for (int i = 0; i < centerSpline.Count; i++)
+        {
+            SplinePoint sp = centerSpline[i];
+
+            Vector3 fwdPos = sp.Pos + sp.Normal * laneOffset;
+            Vector3 revPos = sp.Pos - sp.Normal * laneOffset;
+
+            if (wm != null)
+            {
+                fwdPos.y = wm.GetUnifiedHeight(fwdPos.x, fwdPos.z) + 0.1f;
+                revPos.y = wm.GetUnifiedHeight(revPos.x, revPos.z) + 0.1f;
+            }
+
+            forwardLane.Add(fwdPos);
+            reverseLane.Add(revPos);
+        }
+
+        return (forwardLane, reverseLane);
     }
 }

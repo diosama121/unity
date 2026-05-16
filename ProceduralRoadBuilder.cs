@@ -1,6 +1,8 @@
 using UnityEngine;
 using System.Collections.Generic;
 using System.Linq;
+using TriangleNet.Geometry;
+using TriangleNet.Meshing;
 
 [RequireComponent(typeof(RoadNetworkGenerator))]
 public class ProceduralRoadBuilder : MonoBehaviour
@@ -82,6 +84,7 @@ public class ProceduralRoadBuilder : MonoBehaviour
         }
 
         var allPolys = new List<Vector3[]>();
+        var allUVs = new List<Vector2[]>();
         HashSet<string> processedEdges = new HashSet<string>();
 
         Dictionary<int, List<JunctionEdgeEntry>> junctionEntriesByNode = new Dictionary<int, List<JunctionEdgeEntry>>();
@@ -99,8 +102,9 @@ public class ProceduralRoadBuilder : MonoBehaviour
                 List<SplinePoint> spline = RoadMathUtility.GetRoadSpline(node.Id, neighborId, stepDist, roadWidth);
                 if (spline == null || spline.Count < 2) continue;
 
-                RoadMathUtility.SweptRoadResult swept = RoadMathUtility.SweepSplineToQuadsWithSetback(spline, node.Id, neighborId, roadWidth);
+                RoadMathUtility.SweptRoadResult swept = RoadMathUtility.SweepSplineToQuadsWithSetback(spline, node.Id, neighborId, roadWidth, uvScale);
                 allPolys.AddRange(swept.Quads);
+                allUVs.AddRange(swept.QuadUVs);
 
                 if (swept.StartSetback.EdgeVertices != null && swept.StartSetback.EdgeVertices.Count >= 2)
                 {
@@ -141,86 +145,213 @@ public class ProceduralRoadBuilder : MonoBehaviour
         {
             RoadNode juncNode = WorldModel.Instance.GetNode(kvp.Key);
             if (juncNode == null || juncNode.NeighborIds == null || juncNode.NeighborIds.Count < 2) continue;
-            BuildIntersectionPatches(juncNode, kvp.Value, allPolys);
+            IntersectionMeshData juncData = BuildPerfectIntersectionMesh(juncNode, kvp.Value);
+            if (juncData.RenderMesh != null)
+            {
+                Material junctionMat = useCountrysideUniformMaterials ? countrysideJunctionMaterial : complexJunctionMaterial;
+                if (junctionMat == null) junctionMat = roadMaterial;
+                CreateJunctionObject($"Junction_{kvp.Key}", juncData, junctionMat, roadLayer, meshRoot.transform);
+            }
         }
 
-        Mesh roadMesh = RoadMeshUtility.BuildRoadMesh(allPolys);
+        Mesh roadMesh = RoadMeshUtility.BuildRoadMesh(allPolys, allUVs);
         if (roadMesh == null) return;
 
         int roadLayer = LayerMask.NameToLayer(roadLayerName) < 0 ? 0 : LayerMask.NameToLayer(roadLayerName);
         CreateRoadObject("Temp_Road_Mesh", roadMesh, BuildMaterialArray(roadMaterial), roadLayer, meshRoot.transform);
         RoadMeshCombiner.CombineRoadMeshes(meshRoot.transform);
+
+        var terrainGrid = TerrainGridSystem.Instance;
+        if (terrainGrid != null)
+        {
+            terrainGrid.BakeRoadMask(allPolys);
+        }
     }
 
-    
-
-    private void BuildIntersectionPatches(RoadNode junctionNode, List<JunctionEdgeEntry> entries, List<Vector3[]> allPolys)
+    public struct IntersectionMeshData
     {
-        if (entries.Count < 2) return;
+        public Mesh RenderMesh;
+        public Mesh ColliderMesh;
+    }
+
+    private struct BoundaryData
+    {
+        public float Y;
+        public Vector3 Normal;
+    }
+
+    public IntersectionMeshData BuildPerfectIntersectionMesh(RoadNode junctionNode, List<JunctionEdgeEntry> entries)
+    {
+        IntersectionMeshData result = new IntersectionMeshData();
+        if (entries.Count < 2) return result;
 
         Vector3 center = junctionNode.WorldPos;
-        center.y = WorldModel.Instance.GetUnifiedHeight(center.x, center.z) + roadHeightOffset;
+        var sortedEntries = entries.OrderBy(e => Mathf.Atan2(e.OutwardDir.z, e.OutwardDir.x)).ToList();
 
-        List<JunctionEdgeEntry> sorted = entries
-            .OrderBy(e => Mathf.Atan2(e.OutwardDir.z, e.OutwardDir.x))
-            .ToList();
+        List<Vector3> authoritativeContour = new List<Vector3>();
+        Dictionary<Vector2, BoundaryData> exactBoundaryDict = new Dictionary<Vector2, BoundaryData>(new Vector2EqualityComparer());
 
-        int count = sorted.Count;
-        int cornerSamples = 5;
-        int radialSteps = 4;
-
-        for (int i = 0; i < count; i++)
+        for (int i = 0; i < sortedEntries.Count; i++)
         {
-            JunctionEdgeEntry currentRoad = sorted[i];
-            JunctionEdgeEntry nextRoad = sorted[(i + 1) % count];
+            var current = sortedEntries[i];
+            var next = sortedEntries[(i + 1) % sortedEntries.Count];
 
-            GenerateRadialPie(center, currentRoad.LeftPos, currentRoad.RightPos, radialSteps, allPolys);
-
-            Vector3 p0 = currentRoad.RightPos;
-            Vector3 p2 = nextRoad.LeftPos;
-            Vector3 p1 = center;
-
-            Vector3[] curve = new Vector3[cornerSamples];
-            for (int s = 0; s < cornerSamples; s++)
+            Vector3 edgeVec = current.RightPos - current.LeftPos;
+            if (Vector3.Cross(current.OutwardDir, edgeVec).y < 0)
             {
-                float t = (float)s / (cornerSamples - 1);
-                float u = 1f - t;
-                curve[s] = u * u * p0 + 2f * u * t * p1 + t * t * p2;
+                (current.LeftPos, current.RightPos) = (current.RightPos, current.LeftPos);
             }
 
-            for (int s = 0; s < cornerSamples - 1; s++)
+            float boundaryLen = Vector3.Distance(current.LeftPos, current.RightPos);
+            int boundarySamples = Mathf.Max(1, Mathf.CeilToInt(boundaryLen / 0.5f));
+
+            for (int s = 0; s <= boundarySamples; s++)
             {
-                GenerateRadialPie(center, curve[s], curve[s + 1], radialSteps, allPolys);
+                float t = (float)s / boundarySamples;
+                Vector3 edgePt = Vector3.Lerp(current.LeftPos, current.RightPos, t);
+                Vector3 edgeNormal = Vector3.up;
+
+                authoritativeContour.Add(edgePt);
+
+                Vector2 key = new Vector2(edgePt.x, edgePt.z);
+                if (!exactBoundaryDict.ContainsKey(key))
+                {
+                    exactBoundaryDict.Add(key, new BoundaryData { Y = edgePt.y, Normal = edgeNormal });
+                }
+            }
+
+            float dist = Vector3.Distance(current.RightPos, next.LeftPos);
+            float angle = Vector3.Angle(current.OutwardDir, next.OutwardDir);
+            float radiusMult = Mathf.Min(0.35f, Mathf.Clamp01(angle / 90f));
+            float r = dist * radiusMult;
+
+            Vector3 controlPoint = (current.RightPos - current.OutwardDir * r + next.LeftPos - next.OutwardDir * r) * 0.5f;
+
+            int cornerSamples = 6;
+            for (int s = 1; s < cornerSamples; s++)
+            {
+                float t = (float)s / cornerSamples;
+                float u = 1f - t;
+                Vector3 curvePt = u * u * current.RightPos + 2f * u * t * controlPoint + t * t * next.LeftPos;
+                authoritativeContour.Add(curvePt);
             }
         }
+
+        var poly = new Polygon();
+        poly.Add(new Contour(authoritativeContour.Select(v => new Vertex(v.x, v.z)).ToList()));
+
+        var renderOptions = new ConstraintOptions { ConformingDelaunay = true };
+        var renderQuality = new QualityOptions { MinimumAngle = 20, MaximumArea = 1.5 };
+        result.RenderMesh = ProcessMesh(poly.Triangulate(renderOptions, renderQuality), sortedEntries, exactBoundaryDict, true);
+
+        var colliderOptions = new ConstraintOptions { ConformingDelaunay = false };
+        var colliderQuality = new QualityOptions { MinimumAngle = 15 };
+        result.ColliderMesh = ProcessMesh(poly.Triangulate(colliderOptions, colliderQuality), sortedEntries, exactBoundaryDict, false);
+
+        return result;
     }
 
-    private void GenerateRadialPie(Vector3 center, Vector3 edgeA, Vector3 edgeB, int radialSteps, List<Vector3[]> allPolys)
+    private Mesh ProcessMesh(TriangleNet.Meshing.IMesh triMesh, List<JunctionEdgeEntry> entries, Dictionary<Vector2, BoundaryData> exactBoundaryDict, bool isRenderMesh)
     {
-        Vector3 prevA = center;
-        Vector3 prevB = center;
+        List<Vector3> finalVertices = new List<Vector3>();
+        List<int> finalTriangles = new List<int>();
+        Dictionary<Vector2, int> vertexWeldMap = new Dictionary<Vector2, int>(new Vector2EqualityComparer());
+        List<Vector3> finalNormals = new List<Vector3>();
 
-        for (int r = 1; r <= radialSteps; r++)
+        foreach (var tri in triMesh.Triangles)
         {
-            float rt = (float)r / radialSteps;
-            Vector3 curA = Vector3.Lerp(center, edgeA, rt);
-            Vector3 curB = Vector3.Lerp(center, edgeB, rt);
-
-            curA.y = WorldModel.Instance.GetUnifiedHeight(curA.x, curA.z) + roadHeightOffset;
-            curB.y = WorldModel.Instance.GetUnifiedHeight(curB.x, curB.z) + roadHeightOffset;
-
-            if (r == 1)
+            int[] flipOrder = { 0, 2, 1 };
+            for (int i = 0; i < 3; i++)
             {
-                allPolys.Add(new Vector3[] { center, curB, curA });
+                var v = tri.GetVertex(flipOrder[i]);
+                Vector2 v2D = new Vector2((float)v.X, (float)v.Y);
+
+                if (!vertexWeldMap.TryGetValue(v2D, out int vertexIndex))
+                {
+                    float finalY = 0f;
+                    Vector3 finalNormal = Vector3.up;
+                    bool isBoundary = false;
+
+                    if (exactBoundaryDict.TryGetValue(v2D, out BoundaryData bData))
+                    {
+                        finalY = bData.Y;
+                        finalNormal = bData.Normal;
+                        isBoundary = true;
+                    }
+                    else
+                    {
+                        foreach (var entry in entries)
+                        {
+                            Vector2 pA = new Vector2(entry.LeftPos.x, entry.LeftPos.z);
+                            Vector2 pB = new Vector2(entry.RightPos.x, entry.RightPos.z);
+                            float l2 = Vector2.SqrMagnitude(pA - pB);
+                            if (l2 > 0.0001f)
+                            {
+                                float t = Mathf.Clamp01(Vector2.Dot(v2D - pA, pB - pA) / l2);
+                                Vector2 proj = pA + t * (pB - pA);
+
+                                if (Vector2.Distance(v2D, proj) < 0.01f)
+                                {
+                                    finalY = Mathf.Lerp(entry.LeftPos.y, entry.RightPos.y, t);
+                                    isBoundary = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (!isBoundary)
+                        finalY = WorldModel.Instance.terrainGrid.SampleHeightRawOnly(v2D.x, v2D.y) + roadHeightOffset;
+
+                    finalVertices.Add(new Vector3(v2D.x, finalY, v2D.y));
+                    finalNormals.Add(finalNormal);
+                    vertexIndex = finalVertices.Count - 1;
+                    vertexWeldMap.Add(v2D, vertexIndex);
+                }
+                finalTriangles.Add(vertexIndex);
             }
-            else
-            {
-                allPolys.Add(new Vector3[] { prevA, curB, prevB });
-                allPolys.Add(new Vector3[] { prevA, curA, curB });
-            }
-            prevA = curA;
-            prevB = curB;
         }
+
+        Mesh mesh = new Mesh { indexFormat = finalVertices.Count > 65000 ? UnityEngine.Rendering.IndexFormat.UInt32 : UnityEngine.Rendering.IndexFormat.UInt16 };
+        mesh.SetVertices(finalVertices);
+        mesh.SetTriangles(finalTriangles, 0);
+        mesh.RecalculateNormals();
+
+        if (isRenderMesh)
+        {
+            Vector3[] meshNormals = mesh.normals;
+            for (int i = 0; i < finalVertices.Count; i++)
+            {
+                Vector2 key = new Vector2(finalVertices[i].x, finalVertices[i].z);
+                if (exactBoundaryDict.ContainsKey(key))
+                {
+                    meshNormals[i] = finalNormals[i];
+                }
+            }
+            mesh.normals = meshNormals;
+        }
+
+        mesh.RecalculateBounds();
+        return mesh;
+    }
+
+    private void CreateJunctionObject(string name, IntersectionMeshData data, Material material, int layer, Transform parent)
+    {
+        GameObject obj = new GameObject(name);
+        obj.layer = layer;
+        obj.transform.SetParent(parent, false);
+        obj.AddComponent<MeshFilter>().sharedMesh = data.RenderMesh;
+        MeshRenderer mr = obj.AddComponent<MeshRenderer>();
+        mr.sharedMaterial = material;
+        mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        MeshCollider mc = obj.AddComponent<MeshCollider>();
+        mc.sharedMesh = data.ColliderMesh;
+    }
+
+    private class Vector2EqualityComparer : IEqualityComparer<Vector2>
+    {
+        public bool Equals(Vector2 v1, Vector2 v2) => Vector2.SqrMagnitude(v1 - v2) < 0.0001f;
+        public int GetHashCode(Vector2 v) => (Mathf.Round(v.x * 100f) + Mathf.Round(v.y * 100f)).GetHashCode();
     }
 
     private float CalculateIntersectionRadius(RoadNode node, float baseRoadWidth)

@@ -26,9 +26,12 @@ public class SimpleAutoDrive : MonoBehaviour
     
     public IntersectionState currentIntersectionState = IntersectionState.Uncontrolled; 
     private int currentDestinationNodeId = -1;
+    private Vector3 stopTargetPosition = Vector3.zero;
+    private bool hasStopTarget = false;
 
     private int reverseCount = 0;
     private SimpleCarController carController;
+    private TrafficManager trafficManager;
     
     private CatmullRomSpline currentSpline;
     private Vector3 finalDestination = Vector3.zero;
@@ -48,6 +51,7 @@ public class SimpleAutoDrive : MonoBehaviour
     {
         carController = GetComponent<SimpleCarController>();
         if (pathPlanner == null) pathPlanner = FindObjectOfType<PathPlanner>();
+        trafficManager = FindObjectOfType<TrafficManager>();
         carController.autoMode = true;
         lastPosition = transform.position;
     }
@@ -72,6 +76,39 @@ public class SimpleAutoDrive : MonoBehaviour
 
     void UpdateSensorData()
     {
+        obstacleDetected = false;
+
+        if (trafficManager != null)
+        {
+            var npcs = trafficManager.ActiveNPCs;
+            if (npcs != null)
+            {
+                Vector3 myPos = transform.position;
+                Vector3 myForward = transform.forward;
+
+                for (int i = 0; i < npcs.Count; i++)
+                {
+                    SimpleAutoDrive other = npcs[i];
+                    if (other == this || other == null) continue;
+
+                    Vector3 otherPos = other.transform.position;
+                    Vector3 dirToOther = otherPos - myPos;
+                    float dist = dirToOther.magnitude;
+
+                    if (dist < safeDistance)
+                    {
+                        Vector3 dirNorm = dirToOther / dist;
+                        float dot = Vector3.Dot(myForward, dirNorm);
+                        if (dot > 0.8f)
+                        {
+                            obstacleDetected = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
         if (currentDestinationNodeId >= 0 && WorldModel.Instance != null)
         {
             currentIntersectionState = WorldModel.Instance.GetIntersectionState(currentDestinationNodeId);
@@ -136,6 +173,12 @@ public class SimpleAutoDrive : MonoBehaviour
     {
         if (currentIntersectionState == IntersectionState.RedLight)
         {
+            StopLine stopLine = WorldModel.Instance.GetNearestStopLine(currentDestinationNodeId, transform.position);
+            if (stopLine != null)
+            {
+                stopTargetPosition = stopLine.Position;
+                hasStopTarget = true;
+            }
             currentState = DriveState.Stopping;
             return;
         }
@@ -203,12 +246,37 @@ public class SimpleAutoDrive : MonoBehaviour
 
     void HandleStoppingState()
     {
-        carController.SetAutoControl(0f, 0f);
         if (currentIntersectionState == IntersectionState.GreenLight || currentIntersectionState == IntersectionState.Uncontrolled)
         {
+            hasStopTarget = false;
             stuckTimer = 0f; stuckCheckTimer = 0f; lastPosition = transform.position; startupDelay = 2f;
             currentState = DriveState.Following;
+            return;
         }
+
+        if (!hasStopTarget)
+        {
+            carController.SetAutoControl(0f, 0f);
+            return;
+        }
+
+        float distToStop = Vector3.Distance(transform.position, stopTargetPosition);
+        if (distToStop < 0.5f)
+        {
+            carController.SetAutoControl(0f, 0f);
+            return;
+        }
+
+        Vector3 dirToStop = (stopTargetPosition - transform.position).normalized;
+        float speed = Mathf.Abs(carController.GetSpeed());
+        float brakingDecel = (speed * speed) / (2f * distToStop);
+        float throttle = Mathf.Clamp01(1f - brakingDecel / 5f) * 0.3f;
+        throttle = Mathf.Min(throttle, distToStop / 8f);
+
+        Vector3 localDir = transform.InverseTransformDirection(dirToStop);
+        float steering = Mathf.Clamp(localDir.x * 2f, -1f, 1f);
+
+        carController.SetAutoControl(throttle, steering);
     }
 
     void HandleWaitingState() => carController.SetAutoControl(0f, 0f);

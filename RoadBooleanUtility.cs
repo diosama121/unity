@@ -205,6 +205,26 @@ public static class RoadBooleanUtility
         return false;
     }
 
+    /// <summary>
+    /// 生成路口扇叶多边形组：每个入口从中心到路边端点构成三角形
+    /// </summary>
+    public static Paths64 BuildJunctionFanBlades(Vector3 center, List<Vector3[]> bladedEdges)
+    {
+        Paths64 blades = new Paths64();
+        foreach (var edge in bladedEdges)
+        {
+            if (edge == null || edge.Length < 2) continue;
+            Path64 blade = new Path64
+            {
+                new Point64((long)(center.x * SCALE), (long)(center.z * SCALE)),
+                new Point64((long)(edge[0].x * SCALE), (long)(edge[0].z * SCALE)),
+                new Point64((long)(edge[1].x * SCALE), (long)(edge[1].z * SCALE))
+            };
+            blades.Add(blade);
+        }
+        return blades;
+    }
+
     public class RoadContourCache
     {
         public Path64 path;

@@ -18,6 +18,55 @@ public static class TriangulationUtility
     }
 
     /// <summary>
+    /// 执行约束 Delaunay 三角剖分（带最大面积约束，用于路口网格密度控制）
+    /// </summary>
+    public static RawMeshData GenerateCDTMeshDataWithQuality(Path64 outerBoundary, Paths64 holePaths, float maxArea)
+    {
+        var poly = new Polygon();
+
+        var outerVerts = outerBoundary.Select(pt => new Vertex(pt.X / 1000.0, pt.Y / 1000.0)).ToList();
+        poly.Add(new Contour(outerVerts));
+
+        foreach (var hole in holePaths)
+        {
+            if (hole.Count < 3) continue;
+            var holeVerts = hole.Select(pt => new Vertex(pt.X / 1000.0, pt.Y / 1000.0)).ToList();
+            poly.Add(new Contour(holeVerts));
+        }
+
+        var meshParams = new ConstraintOptions { ConformingDelaunay = true };
+        var qualityParams = new QualityOptions { MaximumArea = maxArea };
+        var mesh = poly.Triangulate(meshParams, qualityParams);
+
+        var caches = holePaths.Select(p => new RoadContourCache(p)).ToList();
+
+        var vertices = new List<Vector2>();
+        var triangles = new List<int>();
+        var indexMap = new Dictionary<int, int>();
+
+        int[] flipOrder = { 0, 2, 1 };
+
+        foreach (var tri in mesh.Triangles)
+        {
+            if (IsTriangleInsideRoad(tri, caches)) continue;
+
+            for (int i = 0; i < 3; i++)
+            {
+                var v = tri.GetVertex(flipOrder[i]);
+                if (!indexMap.TryGetValue(v.ID, out int newIdx))
+                {
+                    newIdx = vertices.Count;
+                    indexMap[v.ID] = newIdx;
+                    vertices.Add(new Vector2((float)v.X, (float)v.Y));
+                }
+                triangles.Add(newIdx);
+            }
+        }
+
+        return new RawMeshData { vertices = vertices, triangles = triangles };
+    }
+
+    /// <summary>
     /// 执行约束 Delaunay 三角剖分，并剔除越界三角形（四点采样法）。
     /// </summary>
     /// <param name="outerBoundary">外轮廓（裙边），世界单位</param>

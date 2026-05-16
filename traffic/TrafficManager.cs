@@ -12,6 +12,7 @@ public class TrafficManager : MonoBehaviour
     public int npcCount = 3;
     
     private List<SimpleAutoDrive> npcVehicles = new List<SimpleAutoDrive>();
+    public IReadOnlyList<SimpleAutoDrive> ActiveNPCs => npcVehicles;
     private RoadNetworkGenerator roadGen;
     private PathPlanner pathPlanner;
 
