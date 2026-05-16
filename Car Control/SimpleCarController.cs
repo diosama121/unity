@@ -37,6 +37,7 @@ public class SimpleCarController : MonoBehaviour
     private Collider[] allColliders;
     private float autoThrottle = 0f;
     private float autoSteering = 0f;
+    private float autoBrakingDecel = 0f;
 
     void Awake()
     {
@@ -166,8 +167,16 @@ public class SimpleCarController : MonoBehaviour
 
     void HandleAutoDrive()
     {
-        if (autoThrottle >= 0) targetSpeed = Mathf.Lerp(targetSpeed, maxSpeed * autoThrottle, Time.deltaTime * 2f);
-        else targetSpeed = maxSpeed * autoThrottle; 
+        if (autoBrakingDecel > 0.01f && currentSpeed > 0.1f)
+        {
+            float effectiveDecel = Mathf.Max(autoBrakingDecel, brakeDeceleration * 0.3f);
+            targetSpeed = Mathf.Max(0f, currentSpeed - effectiveDecel * Time.deltaTime);
+        }
+        else
+        {
+            if (autoThrottle >= 0) targetSpeed = Mathf.Lerp(targetSpeed, maxSpeed * autoThrottle, Time.deltaTime * 2f);
+            else targetSpeed = maxSpeed * autoThrottle;
+        }
         targetSteering = autoSteering * maxSteeringAngle;
     }
 
@@ -186,6 +195,11 @@ public class SimpleCarController : MonoBehaviour
     {
         this.autoThrottle = throttle;
         this.autoSteering = steering;
+    }
+
+    public void SetAutoBrake(float deceleration)
+    {
+        autoBrakingDecel = Mathf.Max(0f, deceleration);
     }
 
     public float GetSpeed() => currentSpeed;

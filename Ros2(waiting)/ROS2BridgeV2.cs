@@ -202,8 +202,24 @@ public class ROS2BridgeV2 : MonoBehaviour
                 velocity = carController != null ? carController.GetSpeed() : 0f,
                 steering_angle = carController != null ? carController.currentSteeringAngle : 0f,
                 auto_drive_state = (autoDrive != null && autoDrive.enabled) ? autoDrive.GetCurrentState().ToString() : "ROS2_Controlled",
+                // 【Phase 4】语义感知数据
+                lane_id = autoDrive != null ? autoDrive.currentLaneId : -1,
+                stopline_distance = -1f,
+                phase_state = "Uncontrolled",
                 timestamp = Time.time
             };
+
+            // 【Phase 4】填充 stopline_distance 和 phase_state
+            if (autoDrive != null && WorldModel.Instance != null && autoDrive.currentDestinationNodeId >= 0)
+            {
+                var stopLine = WorldModel.Instance.GetNearestStopLine(autoDrive.currentDestinationNodeId, transform.position);
+                if (stopLine != null)
+                {
+                    state.stopline_distance = Vector3.Distance(transform.position, stopLine.Position);
+                    int phaseId = stopLine.AssociatedPhaseId;
+                    state.phase_state = WorldModel.Instance.GetPhaseState(phaseId).ToString();
+                }
+            }
 
             string jsonData = JsonUtility.ToJson(state) + "\n";
             byte[] data = Encoding.UTF8.GetBytes(jsonData);
@@ -308,6 +324,9 @@ public class ROS2BridgeV2 : MonoBehaviour
         public string auto_drive_state;
         public float front_obstacle_distance;
         public float timestamp;
+        public int lane_id;
+        public float stopline_distance;
+        public string phase_state;
     }
 
     [System.Serializable]

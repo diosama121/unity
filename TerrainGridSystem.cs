@@ -38,6 +38,12 @@ public class TerrainGridSystem : MonoBehaviour
     private struct IntersectionData { public Vector3 Center; public float Radius; public float TargetY; }
     private IntersectionData[] _fastIntersectionsCache;
 
+    private struct PolygonCache
+    {
+        public Vector3[] Points;
+        public Rect Bounds;
+    }
+
     private void Awake() 
     {
         if (cellSize > 2.0f) cellSize = 2.0f;
@@ -94,6 +100,14 @@ public class TerrainGridSystem : MonoBehaviour
 
             foreach (var seg in _fastRoadSegmentsCache)
             {
+                float maxRadius = seg.Width * 2.5f;
+                float minX = Mathf.Min(seg.Start.x, seg.End.x) - maxRadius;
+                float maxX = Mathf.Max(seg.Start.x, seg.End.x) + maxRadius;
+                float minZ = Mathf.Min(seg.Start.z, seg.End.z) - maxRadius;
+                float maxZ = Mathf.Max(seg.Start.z, seg.End.z) + maxRadius;
+
+                if (p.x < minX || p.x > maxX || p.y < minZ || p.y > maxZ) continue;
+
                 float sqrD = DistToSegmentSqr(p, new Vector2(seg.Start.x, seg.Start.z), new Vector2(seg.End.x, seg.End.z), out float segT);
                 if (sqrD < minSqrDist)
                 {
@@ -333,6 +347,23 @@ public class TerrainGridSystem : MonoBehaviour
     {
         if (roadPolygons == null || roadPolygons.Count == 0 || _roadMask == null || _heightMap == null) return;
 
+        List<PolygonCache> polyCaches = new List<PolygonCache>();
+        foreach (var poly in roadPolygons)
+        {
+            if (poly.Length < 3) continue;
+            float minX = float.MaxValue, minZ = float.MaxValue;
+            float maxX = float.MinValue, maxZ = float.MinValue;
+            foreach (var pt in poly)
+            {
+                if (pt.x < minX) minX = pt.x;
+                if (pt.x > maxX) maxX = pt.x;
+                if (pt.z < minZ) minZ = pt.z;
+                if (pt.z > maxZ) maxZ = pt.z;
+            }
+            Rect bounds = Rect.MinMaxRect(minX - 0.5f, minZ - 0.5f, maxX + 0.5f, maxZ + 0.5f);
+            polyCaches.Add(new PolygonCache { Points = poly, Bounds = bounds });
+        }
+
         int cellCountX = _dimX - 1;
         int cellCountZ = _dimZ - 1;
 
@@ -346,10 +377,11 @@ public class TerrainGridSystem : MonoBehaviour
                 float cz = _minZ + (j + 0.5f) * cellSize;
                 Vector2 cellCenter = new Vector2(cx, cz);
 
-                foreach (var poly in roadPolygons)
+                foreach (var cache in polyCaches)
                 {
-                    if (poly.Length < 3) continue;
-                    if (PointInPolygonXZ(cellCenter, poly))
+                    if (!cache.Bounds.Contains(cellCenter)) continue;
+
+                    if (PointInPolygonXZ(cellCenter, cache.Points))
                     {
                         _roadMask[i, j] = true;
                         break;
@@ -359,7 +391,7 @@ public class TerrainGridSystem : MonoBehaviour
         }
 
         GenerateTerrainMesh();
-        Debug.Log($"[TerrainGrid] BakeRoadMask完成: 移除 {CountMaskedCells()} 个道路覆盖地形单元");
+        Debug.Log($"[TerrainGrid-优化版] BakeRoadMask完成: 移除 {CountMaskedCells()} 个道路覆盖地形单元");
     }
 
     private bool PointInPolygonXZ(Vector2 point, Vector3[] poly)

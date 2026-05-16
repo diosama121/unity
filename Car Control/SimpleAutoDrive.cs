@@ -23,9 +23,10 @@ public class SimpleAutoDrive : MonoBehaviour
     [Header("调试信息")]
     public float currentT = 0f;
     public bool obstacleDetected = false;
+    public int currentLaneId = -1;
     
     public IntersectionState currentIntersectionState = IntersectionState.Uncontrolled; 
-    private int currentDestinationNodeId = -1;
+    public int currentDestinationNodeId = -1;
     private Vector3 stopTargetPosition = Vector3.zero;
     private bool hasStopTarget = false;
 
@@ -46,6 +47,8 @@ public class SimpleAutoDrive : MonoBehaviour
     private float stuckCheckInterval = 0.5f;
     private float stuckCheckTimer = 0f;
     private float escapeSteering = 0f;
+
+    private float brakeMaxDecel = 8f;
 
     void Start()
     {
@@ -171,12 +174,29 @@ public class SimpleAutoDrive : MonoBehaviour
 
     void HandleFollowingState()
     {
-        if (currentIntersectionState == IntersectionState.RedLight)
+        // 【Phase 3】优先通过 StopLine 获取相位状态
+        IntersectionState effectiveState = IntersectionState.Uncontrolled;
+        StopLine relevantStopLine = null;
+        
+        if (currentDestinationNodeId >= 0 && WorldModel.Instance != null)
         {
-            StopLine stopLine = WorldModel.Instance.GetNearestStopLine(currentDestinationNodeId, transform.position);
-            if (stopLine != null)
+            relevantStopLine = WorldModel.Instance.GetNearestStopLine(currentDestinationNodeId, transform.position);
+            if (relevantStopLine != null)
             {
-                stopTargetPosition = stopLine.Position;
+                effectiveState = WorldModel.Instance.GetPhaseState(relevantStopLine.AssociatedPhaseId);
+            }
+            else
+            {
+                effectiveState = WorldModel.Instance.GetIntersectionState(currentDestinationNodeId);
+            }
+        }
+        currentIntersectionState = effectiveState;
+
+        if (effectiveState == IntersectionState.RedLight)
+        {
+            if (relevantStopLine != null)
+            {
+                stopTargetPosition = relevantStopLine.Position;
                 hasStopTarget = true;
             }
             currentState = DriveState.Stopping;
@@ -250,6 +270,7 @@ public class SimpleAutoDrive : MonoBehaviour
         {
             hasStopTarget = false;
             stuckTimer = 0f; stuckCheckTimer = 0f; lastPosition = transform.position; startupDelay = 2f;
+            carController.SetAutoControl(0f, 0f); // 【新增】重置制动
             currentState = DriveState.Following;
             return;
         }
@@ -261,22 +282,26 @@ public class SimpleAutoDrive : MonoBehaviour
         }
 
         float distToStop = Vector3.Distance(transform.position, stopTargetPosition);
+        float speed = Mathf.Abs(carController.GetSpeed());
+
+        // 【Phase 2核心】：运动学制动公式 v²/2d
+        float brakingDecel = distToStop > 0.01f ? (speed * speed) / (2f * distToStop) : brakeMaxDecel;
+        brakingDecel = Mathf.Clamp(brakingDecel, 0.5f, brakeMaxDecel);
+
         if (distToStop < 0.5f)
         {
             carController.SetAutoControl(0f, 0f);
+            // 【新增】确保完全刹停
+            carController.SetAutoBrake(brakeMaxDecel);
             return;
         }
 
         Vector3 dirToStop = (stopTargetPosition - transform.position).normalized;
-        float speed = Mathf.Abs(carController.GetSpeed());
-        float brakingDecel = (speed * speed) / (2f * distToStop);
-        float throttle = Mathf.Clamp01(1f - brakingDecel / 5f) * 0.3f;
-        throttle = Mathf.Min(throttle, distToStop / 8f);
-
         Vector3 localDir = transform.InverseTransformDirection(dirToStop);
         float steering = Mathf.Clamp(localDir.x * 2f, -1f, 1f);
 
-        carController.SetAutoControl(throttle, steering);
+        carController.SetAutoControl(0f, steering); // 不踩油门
+        carController.SetAutoBrake(brakingDecel);   // 直接注入制动减速度
     }
 
     void HandleWaitingState() => carController.SetAutoControl(0f, 0f);
@@ -293,26 +318,58 @@ public class SimpleAutoDrive : MonoBehaviour
         }
 
         Vector3 posOnSpline = currentSpline.GetPoint(currentT);
-        float nextT = Mathf.Min(currentT + 0.001f, 1f);
-        Vector3 tangent = (currentSpline.GetPoint(nextT) - posOnSpline).normalized;
-        
-        Vector3 rightVector = Vector3.Cross(Vector3.up, tangent).normalized;
-        Vector3 offsetTargetPos = posOnSpline + rightVector * rightLaneOffset;
+
+        Vector3 lateralTarget = posOnSpline;
+        bool hasLaneAnchor = false;
 
         if (WorldModel.Instance != null)
         {
-            offsetTargetPos.y = WorldModel.Instance.GetUnifiedHeight(offsetTargetPos.x, offsetTargetPos.z);
+            currentLaneId = WorldModel.Instance.FindNearestLane(transform.position);
+            if (currentLaneId >= 0 && WorldModel.Instance.GlobalLanes.TryGetValue(currentLaneId, out Lane lane))
+            {
+                float laneT = Mathf.Clamp01(currentT);
+                Vector3 lanePoint = lane.CenterSpline.GetPoint(laneT);
+                lateralTarget.x = lanePoint.x;
+                lateralTarget.z = lanePoint.z;
+                hasLaneAnchor = true;
+            }
         }
 
+        if (!hasLaneAnchor)
+        {
+            float nextT = Mathf.Min(currentT + 0.001f, 1f);
+            Vector3 tangent = (currentSpline.GetPoint(nextT) - posOnSpline).normalized;
+            Vector3 rightVector = Vector3.Cross(Vector3.up, tangent).normalized;
+            lateralTarget = posOnSpline + rightVector * rightLaneOffset;
+        }
+
+        lateralTarget.y = WorldModel.Instance != null ? 
+            WorldModel.Instance.GetUnifiedHeight(lateralTarget.x, lateralTarget.z) : transform.position.y;
+
         float targetLookAheadT = Mathf.Min(currentT + lookAheadT, 1f);
-        Vector3 lookAheadPos = currentSpline.GetPoint(targetLookAheadT) + rightVector * rightLaneOffset;
+        Vector3 lookAheadPos = currentSpline.GetPoint(targetLookAheadT);
+
+        if (hasLaneAnchor && WorldModel.Instance.GlobalLanes.TryGetValue(currentLaneId, out Lane anchorLane))
+        {
+            float laneLookT = Mathf.Clamp01(targetLookAheadT);
+            Vector3 laneLook = anchorLane.CenterSpline.GetPoint(laneLookT);
+            lookAheadPos.x = laneLook.x;
+            lookAheadPos.z = laneLook.z;
+        }
+        else
+        {
+            float nextT = Mathf.Min(currentT + 0.001f, 1f);
+            Vector3 tangent = (currentSpline.GetPoint(nextT) - posOnSpline).normalized;
+            Vector3 rightVector = Vector3.Cross(Vector3.up, tangent).normalized;
+            lookAheadPos = lookAheadPos + rightVector * rightLaneOffset;
+        }
         
         if (WorldModel.Instance != null)
         {
             lookAheadPos.y = WorldModel.Instance.GetUnifiedHeight(lookAheadPos.x, lookAheadPos.z);
         }
 
-        lookAheadPos.y = transform.position.y; 
+        lookAheadPos.y = transform.position.y;
         Vector3 localTarget = transform.InverseTransformPoint(lookAheadPos);
 
         float angle = Mathf.Atan2(localTarget.x, localTarget.z) * Mathf.Rad2Deg;

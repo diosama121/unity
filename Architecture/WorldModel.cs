@@ -37,6 +37,8 @@ public class WorldModel : MonoBehaviour
     public Dictionary<int, Lane> GlobalLanes = new Dictionary<int, Lane>();
     public Dictionary<int, LaneConnector> GlobalConnectors = new Dictionary<int, LaneConnector>();
     public Dictionary<int, List<StopLine>> GlobalStopLines = new Dictionary<int, List<StopLine>>();
+    public Dictionary<int, IntersectionState> PhaseStates = new Dictionary<int, IntersectionState>();
+    public Dictionary<string, List<SplinePoint>> GlobalSplineCache = new Dictionary<string, List<SplinePoint>>();
     private int _nextLaneId = 0;
 
     // 观测接口
@@ -203,6 +205,8 @@ public class WorldModel : MonoBehaviour
 
                 List<SplinePoint> centerSpline = RoadMathUtility.GetRoadSpline(node.Id, neighborId, stepDist, roadWidth);
                 if (centerSpline == null || centerSpline.Count < 2) continue;
+
+                GlobalSplineCache[edgeKey] = centerSpline; // 【新增】共享缓存
 
                 var (fwdPath, revPath) = RoadMathUtility.GenerateLanePathsFromCenter(centerSpline, roadWidth);
                 if (fwdPath.Count < 2 && revPath.Count < 2) continue;
@@ -373,7 +377,21 @@ public class WorldModel : MonoBehaviour
 
     public float GetNodeFixedHeight(int id) => _graph.ContainsKey(id) ? _graph[id].WorldPos.y : 0f;
 
-    public void SetIntersectionState(int id, IntersectionState s) { if (_graph.ContainsKey(id)) _graph[id].State = s; }
+    public void SetIntersectionState(int id, IntersectionState s) 
+    { 
+        if (_graph.ContainsKey(id)) _graph[id].State = s; 
+        PhaseStates[id] = s; // 兼容：phaseId == nodeId 时同步
+    }
+
+    public void SetPhaseState(int phaseId, IntersectionState s)
+    {
+        PhaseStates[phaseId] = s;
+    }
+
+    public IntersectionState GetPhaseState(int phaseId)
+    {
+        return PhaseStates.TryGetValue(phaseId, out var s) ? s : IntersectionState.Uncontrolled;
+    }
 
     public IntersectionState GetIntersectionState(int id) => _graph.GetValueOrDefault(id)?.State ?? IntersectionState.Uncontrolled;
 
@@ -405,5 +423,36 @@ public class WorldModel : MonoBehaviour
             return terrainGrid.SampleHeight(new Vector2(x, z));
         }
         return 0f;
+    }
+
+    public int FindNearestLane(Vector3 worldPos)
+    {
+        int bestLaneId = -1;
+        float bestDist = float.MaxValue;
+        Vector2 posXZ = new Vector2(worldPos.x, worldPos.z);
+        
+        foreach (var kvp in GlobalLanes)
+        {
+            Lane lane = kvp.Value;
+            if (lane.CenterSpline == null) continue;
+            
+            float totalLen = lane.CenterSpline.TotalLength;
+            if (totalLen <= 0) continue;
+            
+            int samples = Mathf.Max(2, Mathf.CeilToInt(totalLen / 5f));
+            for (int i = 0; i <= samples; i++)
+            {
+                float t = (float)i / samples;
+                Vector3 pt = lane.CenterSpline.GetPoint(t);
+                float sqrD = (posXZ.x - pt.x) * (posXZ.x - pt.x) + (posXZ.y - pt.z) * (posXZ.y - pt.z);
+                if (sqrD < bestDist)
+                {
+                    bestDist = sqrD;
+                    bestLaneId = lane.LaneId;
+                }
+            }
+        }
+        
+        return bestLaneId;
     }
 }

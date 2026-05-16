@@ -321,6 +321,8 @@ controller.greenColor = greenColor;
         // 如果白皮书未就绪，不执行握手
         if (WorldModel.Instance == null) return;
 
+        var processedJunctions = new HashSet<int>();
+
         foreach (var tl in trafficLights)
         {
             if (tl.controller == null || tl.lightComponent == null) continue;
@@ -329,16 +331,31 @@ controller.greenColor = greenColor;
             tl.currentState = state;
 
             // 1. 将底层字符串状态转换为白皮书枚举
-            IntersectionState newState = IntersectionState.Uncontrolled;
-            if (state == "Red") newState = IntersectionState.RedLight;
-            else if (state == "Yellow") newState = IntersectionState.YellowLight;
-            else if (state == "Green") newState = IntersectionState.GreenLight;
+            IntersectionState newState = state switch
+            {
+                "Red" => IntersectionState.RedLight,
+                "Yellow" => IntersectionState.YellowLight,
+                "Green" => IntersectionState.GreenLight,
+                _ => IntersectionState.Uncontrolled
+            };
 
             // 2. 事件驱动：只有当红绿灯真正发生跳变时，才写入全局黑板
             if (tl.lastSyncedState != newState)
             {
                 WorldModel.Instance.SetIntersectionState(tl.nodeId, newState);
+                
+                // 【Phase 3】同时写入相位状态，使用 nodeId 作为 phaseId（与StopLine.AssociatedPhaseId一致）
+                WorldModel.Instance.SetPhaseState(tl.nodeId, newState);
+                
                 tl.lastSyncedState = newState;
+            }
+            
+            // 同步灯光
+            switch (state)
+            {
+                case "Red": tl.lightComponent.color = redColor; break;
+                case "Yellow": tl.lightComponent.color = yellowColor; break;
+                case "Green": tl.lightComponent.color = greenColor; break;
             }
         }
     }

@@ -99,7 +99,15 @@ public class ProceduralRoadBuilder : MonoBehaviour
                 if (processedEdges.Contains(edgeKey)) continue;
                 processedEdges.Add(edgeKey);
 
-                List<SplinePoint> spline = RoadMathUtility.GetRoadSpline(node.Id, neighborId, stepDist, roadWidth);
+                List<SplinePoint> spline;
+                if (WorldModel.Instance.GlobalSplineCache.TryGetValue(edgeKey, out var cachedSpline))
+                {
+                    spline = cachedSpline;
+                }
+                else
+                {
+                    spline = RoadMathUtility.GetRoadSpline(node.Id, neighborId, stepDist, roadWidth);
+                }
                 if (spline == null || spline.Count < 2) continue;
 
                 RoadMathUtility.SweptRoadResult swept = RoadMathUtility.SweepSplineToQuadsWithSetback(spline, node.Id, neighborId, roadWidth, uvScale);
@@ -165,7 +173,10 @@ public class ProceduralRoadBuilder : MonoBehaviour
         var terrainGrid = TerrainGridSystem.Instance;
         if (terrainGrid != null)
         {
-            terrainGrid.BakeRoadMask(allPolys);
+            if (roadGen != null && !roadGen.isCountryside)
+            {
+                terrainGrid.BakeRoadMask(allPolys);
+            }
         }
     }
 
@@ -189,6 +200,20 @@ public class ProceduralRoadBuilder : MonoBehaviour
         Vector3 center = junctionNode.WorldPos;
         var sortedEntries = entries.OrderBy(e => Mathf.Atan2(e.OutwardDir.z, e.OutwardDir.x)).ToList();
 
+        // 预修正循环：确保 LeftPos/RightPos 方向一致，并写回列表
+        for (int i = 0; i < sortedEntries.Count; i++)
+        {
+            var entry = sortedEntries[i];
+            Vector3 edgeVec = entry.RightPos - entry.LeftPos;
+            if (Vector3.Cross(entry.OutwardDir, edgeVec).y < 0)
+            {
+                Vector3 temp = entry.LeftPos;
+                entry.LeftPos = entry.RightPos;
+                entry.RightPos = temp;
+                sortedEntries[i] = entry;
+            }
+        }
+
         List<Vector3> authoritativeContour = new List<Vector3>();
         Dictionary<Vector2, BoundaryData> exactBoundaryDict = new Dictionary<Vector2, BoundaryData>(new Vector2EqualityComparer());
 
@@ -196,12 +221,6 @@ public class ProceduralRoadBuilder : MonoBehaviour
         {
             var current = sortedEntries[i];
             var next = sortedEntries[(i + 1) % sortedEntries.Count];
-
-            Vector3 edgeVec = current.RightPos - current.LeftPos;
-            if (Vector3.Cross(current.OutwardDir, edgeVec).y < 0)
-            {
-                (current.LeftPos, current.RightPos) = (current.RightPos, current.LeftPos);
-            }
 
             float boundaryLen = Vector3.Distance(current.LeftPos, current.RightPos);
             int boundarySamples = Mathf.Max(1, Mathf.CeilToInt(boundaryLen / 0.5f));
@@ -256,7 +275,7 @@ public class ProceduralRoadBuilder : MonoBehaviour
     {
         List<Vector3> finalVertices = new List<Vector3>();
         List<int> finalTriangles = new List<int>();
-        Dictionary<Vector2, int> vertexWeldMap = new Dictionary<Vector2, int>(new Vector2EqualityComparer());
+        Dictionary<int, int> vertexWeldMap = new Dictionary<int, int>();
         List<Vector3> finalNormals = new List<Vector3>();
 
         foreach (var tri in triMesh.Triangles)
@@ -267,7 +286,7 @@ public class ProceduralRoadBuilder : MonoBehaviour
                 var v = tri.GetVertex(flipOrder[i]);
                 Vector2 v2D = new Vector2((float)v.X, (float)v.Y);
 
-                if (!vertexWeldMap.TryGetValue(v2D, out int vertexIndex))
+                if (!vertexWeldMap.TryGetValue(v.ID, out int vertexIndex))
                 {
                     float finalY = 0f;
                     Vector3 finalNormal = Vector3.up;
@@ -302,12 +321,12 @@ public class ProceduralRoadBuilder : MonoBehaviour
                     }
 
                     if (!isBoundary)
-                        finalY = WorldModel.Instance.terrainGrid.SampleHeightRawOnly(v2D.x, v2D.y) + roadHeightOffset;
+                        finalY = WorldModel.Instance.GetUnifiedHeight(v2D.x, v2D.y) + roadHeightOffset;
 
                     finalVertices.Add(new Vector3(v2D.x, finalY, v2D.y));
                     finalNormals.Add(finalNormal);
                     vertexIndex = finalVertices.Count - 1;
-                    vertexWeldMap.Add(v2D, vertexIndex);
+                    vertexWeldMap.Add(v.ID, vertexIndex);
                 }
                 finalTriangles.Add(vertexIndex);
             }
