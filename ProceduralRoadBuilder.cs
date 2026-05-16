@@ -156,6 +156,7 @@ public class ProceduralRoadBuilder : MonoBehaviour
             RoadNode juncNode = WorldModel.Instance.GetNode(kvp.Key);
             if (juncNode == null || juncNode.NeighborIds == null || juncNode.NeighborIds.Count < 2) continue;
             IntersectionMeshData juncData = BuildPerfectIntersectionMesh(juncNode, kvp.Value);
+            if (juncData.Contour != null && juncData.Contour.Length >= 3) { allPolys.Add(juncData.Contour); }
             if (juncData.RenderMesh != null)
             {
                 Material junctionMat = useCountrysideUniformMaterials ? countrysideJunctionMaterial : complexJunctionMaterial;
@@ -184,6 +185,7 @@ public class ProceduralRoadBuilder : MonoBehaviour
     {
         public Mesh RenderMesh;
         public Mesh ColliderMesh;
+        public Vector3[] Contour;
     }
 
     private struct BoundaryData
@@ -198,7 +200,7 @@ public class ProceduralRoadBuilder : MonoBehaviour
         if (entries.Count < 2) return result;
 
         Vector3 center = junctionNode.WorldPos;
-        var sortedEntries = entries.OrderBy(e => Mathf.Atan2(e.OutwardDir.z, e.OutwardDir.x)).ToList();
+        var sortedEntries = entries.OrderBy(e => -Mathf.Atan2(e.OutwardDir.z, e.OutwardDir.x)).ToList();
 
         // 预修正循环：确保 LeftPos/RightPos 方向一致，并写回列表
         for (int i = 0; i < sortedEntries.Count; i++)
@@ -268,6 +270,7 @@ public class ProceduralRoadBuilder : MonoBehaviour
         var colliderQuality = new QualityOptions { MinimumAngle = 15 };
         result.ColliderMesh = ProcessMesh(poly.Triangulate(colliderOptions, colliderQuality), sortedEntries, exactBoundaryDict, false);
 
+        result.Contour = authoritativeContour.ToArray();
         return result;
     }
 
@@ -277,6 +280,16 @@ public class ProceduralRoadBuilder : MonoBehaviour
         List<int> finalTriangles = new List<int>();
         Dictionary<int, int> vertexWeldMap = new Dictionary<int, int>();
         List<Vector3> finalNormals = new List<Vector3>();
+
+        // 计算边界顶点平均高度，用于内部顶点的高程
+        float boundaryAvgY = 0f;
+        int boundaryCount = 0;
+        foreach (var kvp in exactBoundaryDict)
+        {
+            boundaryAvgY += kvp.Value.Y;
+            boundaryCount++;
+        }
+        if (boundaryCount > 0) boundaryAvgY /= boundaryCount;
 
         foreach (var tri in triMesh.Triangles)
         {
@@ -321,7 +334,7 @@ public class ProceduralRoadBuilder : MonoBehaviour
                     }
 
                     if (!isBoundary)
-                        finalY = WorldModel.Instance.GetUnifiedHeight(v2D.x, v2D.y) + roadHeightOffset;
+                        finalY = boundaryAvgY + roadHeightOffset;
 
                     finalVertices.Add(new Vector3(v2D.x, finalY, v2D.y));
                     finalNormals.Add(finalNormal);
@@ -335,6 +348,7 @@ public class ProceduralRoadBuilder : MonoBehaviour
         Mesh mesh = new Mesh { indexFormat = finalVertices.Count > 65000 ? UnityEngine.Rendering.IndexFormat.UInt32 : UnityEngine.Rendering.IndexFormat.UInt16 };
         mesh.SetVertices(finalVertices);
         mesh.SetTriangles(finalTriangles, 0);
+        mesh.normals = finalNormals.ToArray();
         mesh.RecalculateNormals();
 
         if (isRenderMesh)
@@ -349,6 +363,17 @@ public class ProceduralRoadBuilder : MonoBehaviour
                 }
             }
             mesh.normals = meshNormals;
+
+            // 生成 UV 坐标
+            Vector2[] uv = new Vector2[finalVertices.Count];
+            for (int i = 0; i < finalVertices.Count; i++)
+            {
+                uv[i] = new Vector2(
+                    finalVertices[i].x * uvScale,
+                    finalVertices[i].z * uvScale
+                );
+            }
+            mesh.uv = uv;
         }
 
         mesh.RecalculateBounds();

@@ -193,7 +193,8 @@ public class TrafficLightManager : MonoBehaviour
         if (facingDir == Vector3.zero) facingDir = Vector3.forward;
         facingDir.Normalize();
 
-        Vector3 basePos = node.position + Vector3.up * heightOffset;
+        float groundY = WorldModel.Instance != null ? WorldModel.Instance.GetUnifiedHeight(node.position.x, node.position.z) : 0f;
+        Vector3 basePos = new Vector3(node.position.x, groundY, node.position.z) + Vector3.up * heightOffset;
         Vector3 rightDir = Vector3.Cross(Vector3.up, facingDir).normalized;
         
         float safeOffset = offsetFromCenter + 1.5f;

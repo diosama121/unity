@@ -197,7 +197,7 @@ public class EnvironmentMeshBuilder : MonoBehaviour
         ClipperOffset co = new ClipperOffset();
         foreach (var path in roadUnion)
             if (Clipper.Area(path) > 0)
-                co.AddPath(path, JoinType.Round, EndType.Joined);
+                co.AddPath(path, JoinType.Miter, EndType.Joined);
 
         long expandDelta = (long)(paramsSource.sidewalkWidth * 1000.0);
         Paths64 expanded = new Paths64();

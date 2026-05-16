@@ -49,6 +49,7 @@ public class SimpleAutoDrive : MonoBehaviour
     private float escapeSteering = 0f;
 
     private float brakeMaxDecel = 8f;
+    private float laneSearchTimer = 0f;
 
     void Start()
     {
@@ -115,7 +116,15 @@ public class SimpleAutoDrive : MonoBehaviour
 
         if (currentDestinationNodeId >= 0 && WorldModel.Instance != null)
         {
-            currentIntersectionState = WorldModel.Instance.GetIntersectionState(currentDestinationNodeId);
+            StopLine relevantStopLine = WorldModel.Instance.GetNearestStopLine(currentDestinationNodeId, transform.position);
+            if (relevantStopLine != null)
+            {
+                currentIntersectionState = WorldModel.Instance.GetPhaseState(relevantStopLine.AssociatedPhaseId);
+            }
+            else
+            {
+                currentIntersectionState = WorldModel.Instance.GetIntersectionState(currentDestinationNodeId);
+            }
         }
         else
         {
@@ -175,30 +184,16 @@ public class SimpleAutoDrive : MonoBehaviour
 
     void HandleFollowingState()
     {
-        // 【Phase 3】优先通过 StopLine 获取相位状态
-        IntersectionState effectiveState = IntersectionState.Uncontrolled;
-        StopLine relevantStopLine = null;
-        
-        if (currentDestinationNodeId >= 0 && WorldModel.Instance != null)
+        if (currentIntersectionState == IntersectionState.RedLight)
         {
-            relevantStopLine = WorldModel.Instance.GetNearestStopLine(currentDestinationNodeId, transform.position);
-            if (relevantStopLine != null)
+            if (currentDestinationNodeId >= 0 && WorldModel.Instance != null)
             {
-                effectiveState = WorldModel.Instance.GetPhaseState(relevantStopLine.AssociatedPhaseId);
-            }
-            else
-            {
-                effectiveState = WorldModel.Instance.GetIntersectionState(currentDestinationNodeId);
-            }
-        }
-        currentIntersectionState = effectiveState;
-
-        if (effectiveState == IntersectionState.RedLight)
-        {
-            if (relevantStopLine != null)
-            {
-                stopTargetPosition = relevantStopLine.Position;
-                hasStopTarget = true;
+                StopLine relevantStopLine = WorldModel.Instance.GetNearestStopLine(currentDestinationNodeId, transform.position);
+                if (relevantStopLine != null)
+                {
+                    stopTargetPosition = relevantStopLine.Position;
+                    hasStopTarget = true;
+                }
             }
             currentState = DriveState.Stopping;
             return;
@@ -313,7 +308,12 @@ public class SimpleAutoDrive : MonoBehaviour
         // 继续更新 LaneId 和 StopLine 距离供 ROS2 遥测
         if (WorldModel.Instance != null)
         {
-            currentLaneId = WorldModel.Instance.FindNearestLane(transform.position);
+            laneSearchTimer += Time.deltaTime;
+            if (laneSearchTimer > 0.2f)
+            {
+                currentLaneId = WorldModel.Instance.FindNearestLane(transform.position);
+                laneSearchTimer = 0f;
+            }
         }
         if (currentDestinationNodeId >= 0 && WorldModel.Instance != null)
         {
@@ -340,7 +340,12 @@ public class SimpleAutoDrive : MonoBehaviour
 
         if (WorldModel.Instance != null)
         {
-            currentLaneId = WorldModel.Instance.FindNearestLane(transform.position);
+            laneSearchTimer += Time.deltaTime;
+            if (laneSearchTimer > 0.2f)
+            {
+                currentLaneId = WorldModel.Instance.FindNearestLane(transform.position);
+                laneSearchTimer = 0f;
+            }
             if (currentLaneId >= 0 && WorldModel.Instance.GlobalLanes.TryGetValue(currentLaneId, out Lane lane))
             {
                 float laneT = Mathf.Clamp01(currentT);

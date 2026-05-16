@@ -82,6 +82,7 @@ public class WorldModel : MonoBehaviour
 
         // 5. 通知 a3 交通层执行
         if (trafficLightManager != null) trafficLightManager.PlaceTrafficLights();
+        if (trafficManager != null) trafficManager.ResetSpawnState();
         if (trafficManager != null) trafficManager.SpawnNPCs();
 
         Debug.Log("[WorldModel] ✨ 世界生成完成，真理层已就绪。");
@@ -432,17 +433,23 @@ public class WorldModel : MonoBehaviour
     public int FindNearestLane(Vector3 worldPos)
     {
         int bestLaneId = -1;
-        float bestDist = float.MaxValue;
+        float bestDist = 900f;
         Vector2 posXZ = new Vector2(worldPos.x, worldPos.z);
-        
+
         foreach (var kvp in GlobalLanes)
         {
             Lane lane = kvp.Value;
             if (lane.CenterSpline == null) continue;
-            
+
             float totalLen = lane.CenterSpline.TotalLength;
             if (totalLen <= 0) continue;
-            
+
+            Vector3 startPt = lane.CenterSpline.GetPoint(0);
+            Vector3 endPt = lane.CenterSpline.GetPoint(1);
+            float d1 = (startPt.x - posXZ.x) * (startPt.x - posXZ.x) + (startPt.z - posXZ.y) * (startPt.z - posXZ.y);
+            float d2 = (endPt.x - posXZ.x) * (endPt.x - posXZ.x) + (endPt.z - posXZ.y) * (endPt.z - posXZ.y);
+            if (d1 > 6400f && d2 > 6400f) continue;
+
             int samples = Mathf.Max(2, Mathf.CeilToInt(totalLen / 5f));
             for (int i = 0; i <= samples; i++)
             {
@@ -456,7 +463,7 @@ public class WorldModel : MonoBehaviour
                 }
             }
         }
-        
+
         return bestLaneId;
     }
 }

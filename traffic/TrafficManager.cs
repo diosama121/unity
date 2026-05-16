@@ -18,6 +18,8 @@ public class TrafficManager : MonoBehaviour
 
     private bool _hasSpawned = false;
 
+    public void ResetSpawnState() { _hasSpawned = false; }
+
     public void SpawnNPCs()
     {
         if (_hasSpawned) { Debug.Log("TrafficManager: NPC已生成，跳过重复调用"); return; }

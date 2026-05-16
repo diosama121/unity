@@ -170,7 +170,7 @@ public class MasterUIManager : MonoBehaviour
         if (btn != null) btn.onClick.AddListener(() => callback());
     }
 
-    void BindInputField(string inputName, System.Action<string> callback)
+    void BindInputField(string inputName, UnityEngine.Events.UnityAction<string> callback)
     {
         Transform t = settingsPanel.transform.Find(inputName);
         if (t == null) return;
