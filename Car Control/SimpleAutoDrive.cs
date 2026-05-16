@@ -15,7 +15,7 @@ public class SimpleAutoDrive : MonoBehaviour
     [Header("=== 交通规则注入 ===")]
     public float rightLaneOffset = 3.5f;
 
-    public enum DriveState { Idle, Following, Avoiding, Stopping, Waiting }
+    public enum DriveState { Idle, Following, Avoiding, Stopping, Waiting, RemoteControlled }
 
     [Header("状态机")]
     public DriveState currentState = DriveState.Idle;
@@ -61,7 +61,7 @@ public class SimpleAutoDrive : MonoBehaviour
 
     void Update()
     {
-        if (!carController.autoMode) return;
+        if (!carController.autoMode && currentState != DriveState.RemoteControlled) return;
         if (avoidCooldown > 0f) avoidCooldown -= Time.deltaTime;
 
         UpdateSensorData();
@@ -74,6 +74,7 @@ public class SimpleAutoDrive : MonoBehaviour
             case DriveState.Avoiding: HandleAvoidingState(); break;
             case DriveState.Stopping: HandleStoppingState(); break;
             case DriveState.Waiting: HandleWaitingState(); break;
+            case DriveState.RemoteControlled: HandleRemoteControlledState(); break;
         }
     }
 
@@ -305,6 +306,21 @@ public class SimpleAutoDrive : MonoBehaviour
     }
 
     void HandleWaitingState() => carController.SetAutoControl(0f, 0f);
+
+    void HandleRemoteControlledState()
+    {
+        // 【Bug2修复】保持语义感知活跃但不输出控制
+        // 继续更新 LaneId 和 StopLine 距离供 ROS2 遥测
+        if (WorldModel.Instance != null)
+        {
+            currentLaneId = WorldModel.Instance.FindNearestLane(transform.position);
+        }
+        if (currentDestinationNodeId >= 0 && WorldModel.Instance != null)
+        {
+            currentIntersectionState = WorldModel.Instance.GetIntersectionState(currentDestinationNodeId);
+        }
+        // 不调用 carController.SetAutoControl() — 控制权归 ROS2
+    }
 
     void FollowPath()
     {

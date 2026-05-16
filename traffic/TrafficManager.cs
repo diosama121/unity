@@ -16,37 +16,18 @@ public class TrafficManager : MonoBehaviour
     private RoadNetworkGenerator roadGen;
     private PathPlanner pathPlanner;
 
-    void Start()
-    {
-        roadGen = FindObjectOfType<RoadNetworkGenerator>();
-        pathPlanner = FindObjectOfType<PathPlanner>();
-        
-        if (roadGen != null && roadGen.nodes != null && roadGen.nodes.Count > 0)
-        {
-            Invoke("SpawnNPCs", 0.5f); 
-        }
-        else
-        {
-            StartCoroutine(WaitAndSpawn());
-        }
-    }
-
-    private System.Collections.IEnumerator WaitAndSpawn()
-    {
-        while (roadGen == null || roadGen.nodes == null || roadGen.nodes.Count == 0)
-        {
-            roadGen = FindObjectOfType<RoadNetworkGenerator>();
-            pathPlanner = FindObjectOfType<PathPlanner>();
-            yield return new WaitForSeconds(0.5f);
-        }
-        yield return new WaitForSeconds(0.5f);
-        SpawnNPCs();
-    }
+    private bool _hasSpawned = false;
 
     public void SpawnNPCs()
     {
+        if (_hasSpawned) { Debug.Log("TrafficManager: NPC已生成，跳过重复调用"); return; }
+        _hasSpawned = true;
+
+        roadGen = FindObjectOfType<RoadNetworkGenerator>();
+        pathPlanner = FindObjectOfType<PathPlanner>();
+
         if (npcVehiclePrefab == null) { Debug.LogError("TrafficManager: 缺少 NPC Prefab!"); return; }
-        if (roadGen.nodes.Count < 2) { Debug.LogWarning("TrafficManager: 路网节点不足，无法生成 NPC"); return; }
+        if (roadGen == null || roadGen.nodes == null || roadGen.nodes.Count < 2) { Debug.LogWarning("TrafficManager: 路网节点不足，无法生成 NPC"); return; }
         
         // 【修复 1：解除封印】恢复对 PathPlanner 的检查
         if (pathPlanner == null) { Debug.LogError("TrafficManager: 缺少 PathPlanner!"); return; }

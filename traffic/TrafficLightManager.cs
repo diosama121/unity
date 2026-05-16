@@ -72,13 +72,14 @@ public class TrafficLightManager : MonoBehaviour
     public class TrafficLightInstance
     {
         public int nodeId;
+        public int directionIndex;
+        public int phaseId; // 【V2.3】世界坐标方位ID，与WorldModel.StopLine.AssociatedPhaseId绝对对齐
         public Vector3 position;
         public GameObject gameObject;
         public TrafficLightController controller;
         public Light lightComponent;
         public string currentState = "Red";
         
-        // 【V2.0 新增】记录上次同步给 WorldModel 的状态，防止每帧重复写入浪费性能
         public IntersectionState lastSyncedState = IntersectionState.Uncontrolled;
     }
 
@@ -123,16 +124,16 @@ public class TrafficLightManager : MonoBehaviour
 
         foreach (var node in roadGen.nodes)
         {
-            // 只在十字路口和T字路口放
             int connections = node.neighbors.Count;
             if (connections < 3) continue;
-
-            // 随机决定是否放置
             if (Random.value > placementChance) continue;
 
-            // 在路口放置交通灯
-            PlaceTrafficLightAtNode(node);
-            placed++;
+            // 【Phase 3 真相位】为每个入口方向创建独立交通灯
+            for (int dirIdx = 0; dirIdx < node.neighbors.Count; dirIdx++)
+            {
+                PlaceTrafficLightAtNode(node, dirIdx);
+                placed++;
+            }
         }
 
         if (showDebugLog)
@@ -182,28 +183,22 @@ public class TrafficLightManager : MonoBehaviour
 {
     return trafficLights.Select(t => t.gameObject).ToList();
 }
-    void PlaceTrafficLightAtNode(RoadNetworkGenerator.WaypointNode node)
+    void PlaceTrafficLightAtNode(RoadNetworkGenerator.WaypointNode node, int directionIndex)
     {
-        // 计算放置位置（路口角落，偏移到路边）
-        Vector3 basePos = node.position + Vector3.up * heightOffset;
-  // 取第一个邻居方向作为朝向参考
-        Vector3 facingDir = Vector3.forward;
-        if (node.neighbors.Count > 0)
-        {
-            facingDir = (roadGen.nodes[node.neighbors[0]].position - node.position); // 去掉 .normalized
-            facingDir.y = 0;
-            facingDir.Normalize(); // 【修复】清除 y 轴后必须重新归一化！
-        }
+        int neighborId = node.neighbors[directionIndex];
+        Vector3 neighborPos = roadGen.nodes[neighborId].position;
         
-        if (facingDir == Vector3.zero) facingDir = Vector3.forward; // 防御性判断
+        Vector3 facingDir = (neighborPos - node.position);
+        facingDir.y = 0;
+        if (facingDir == Vector3.zero) facingDir = Vector3.forward;
+        facingDir.Normalize();
 
-        // 偏移到路口右侧
-       // 偏移到路口右侧
+        Vector3 basePos = node.position + Vector3.up * heightOffset;
         Vector3 rightDir = Vector3.Cross(Vector3.up, facingDir).normalized;
         
-        // 【物理层面修复】将灯柱往人行道内部再退让 1.5 米，给车辆留出转弯切弯的安全冗余空间
         float safeOffset = offsetFromCenter + 1.5f;
         Vector3 spawnPos = basePos + facingDir * safeOffset + rightDir * safeOffset;
+        
         // 创建交通灯GameObject
         GameObject tlObj;
         if (trafficLightPrefab != null)
@@ -217,7 +212,7 @@ public class TrafficLightManager : MonoBehaviour
             tlObj = CreatePlaceholderLight(spawnPos, facingDir);
         }
 
-        tlObj.name = $"TrafficLight_Node{node.id}";
+        tlObj.name = $"TrafficLight_Node{node.id}_Dir{directionIndex}";
 
         // 添加/获取 TrafficLightController
         TrafficLightController controller = tlObj.GetComponent<TrafficLightController>();
@@ -229,21 +224,24 @@ public class TrafficLightManager : MonoBehaviour
         controller.yellowDuration = yellowDuration;
         controller.greenDuration = greenDuration;
 
-        // 错开初始相位，避免所有路口同时变灯
-        float phaseOffset = Random.Range(0f, redDuration + yellowDuration + greenDuration);
+        // 【V2.3 真相位核心】基于世界坐标方位，绝对锁定 NS/EW
+        Vector3 approachDir = (node.position - neighborPos);
+        approachDir.y = 0;
+        bool isNS = Mathf.Abs(approachDir.z) > Mathf.Abs(approachDir.x);
+        int phaseId = node.id * 10 + (isNS ? 0 : 1);
+        float phaseOffset = isNS ? 0f : (greenDuration + yellowDuration);
         controller.SetPhaseOffset(phaseOffset);
 
         // 添加Light组件（挂在子物体上）
-      Light lightComp = AddLightToTrafficLight(tlObj);
+        Light lightComp = AddLightToTrafficLight(tlObj);
 
-// 把Light传给Controller，让Controller直接控制颜色
-controller.managedLight = lightComp;
-controller.redColor = redColor;
-controller.yellowColor = yellowColor;
-controller.greenColor = greenColor;
+        // 把Light传给Controller，让Controller直接控制颜色
+        controller.managedLight = lightComp;
+        controller.redColor = redColor;
+        controller.yellowColor = yellowColor;
+        controller.greenColor = greenColor;
 
         // 添加碰撞体（供RaycastSensor检测）
-      // 添加碰撞体（供RaycastSensor检测）
         if (tlObj.GetComponent<Collider>() == null)
         {
             BoxCollider col = tlObj.AddComponent<BoxCollider>();
@@ -256,6 +254,8 @@ controller.greenColor = greenColor;
         var instance = new TrafficLightInstance
         {
             nodeId = node.id,
+            directionIndex = directionIndex,
+            phaseId = phaseId,
             position = spawnPos,
             gameObject = tlObj,
             controller = controller,
@@ -321,8 +321,6 @@ controller.greenColor = greenColor;
         // 如果白皮书未就绪，不执行握手
         if (WorldModel.Instance == null) return;
 
-        var processedJunctions = new HashSet<int>();
-
         foreach (var tl in trafficLights)
         {
             if (tl.controller == null || tl.lightComponent == null) continue;
@@ -330,7 +328,6 @@ controller.greenColor = greenColor;
             string state = tl.controller.GetCurrentState();
             tl.currentState = state;
 
-            // 1. 将底层字符串状态转换为白皮书枚举
             IntersectionState newState = state switch
             {
                 "Red" => IntersectionState.RedLight,
@@ -339,14 +336,10 @@ controller.greenColor = greenColor;
                 _ => IntersectionState.Uncontrolled
             };
 
-            // 2. 事件驱动：只有当红绿灯真正发生跳变时，才写入全局黑板
             if (tl.lastSyncedState != newState)
             {
                 WorldModel.Instance.SetIntersectionState(tl.nodeId, newState);
-                
-                // 【Phase 3】同时写入相位状态，使用 nodeId 作为 phaseId（与StopLine.AssociatedPhaseId一致）
-                WorldModel.Instance.SetPhaseState(tl.nodeId, newState);
-                
+                WorldModel.Instance.SetPhaseState(tl.phaseId, newState);
                 tl.lastSyncedState = newState;
             }
             

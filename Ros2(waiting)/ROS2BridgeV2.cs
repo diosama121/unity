@@ -37,6 +37,8 @@ public class ROS2BridgeV2 : MonoBehaviour
 
     // 线程安全的并发队列
     private ConcurrentQueue<string> commandQueue = new ConcurrentQueue<string>();
+    private ConcurrentQueue<byte[]> sendQueue = new ConcurrentQueue<byte[]>();
+    private Thread sendThread;
 
     void Start()
     {
@@ -118,6 +120,10 @@ public class ROS2BridgeV2 : MonoBehaviour
                 receiveThread = new Thread(ReceiveData);
                 receiveThread.IsBackground = true;
                 receiveThread.Start();
+
+                sendThread = new Thread(SendLoop);
+                sendThread.IsBackground = true;
+                sendThread.Start();
             }
             catch (Exception e)
             {
@@ -158,9 +164,9 @@ public class ROS2BridgeV2 : MonoBehaviour
             rosAngularVelocity = 0f;
 
             // 唤醒本地的 SimpleAutoDrive 寻路 AI
-            if (autoDrive != null) 
+            if (autoDrive != null && autoDrive.currentState == SimpleAutoDrive.DriveState.RemoteControlled)
             {
-                autoDrive.enabled = true; 
+                autoDrive.currentState = SimpleAutoDrive.DriveState.Following;
             }
         }
 
@@ -177,7 +183,10 @@ public class ROS2BridgeV2 : MonoBehaviour
         // 3. 应用 ROS2 控制 (只有在没超时且连着的时候执行)
         if (useRosControl)
         {
-            if (autoDrive != null && autoDrive.enabled) autoDrive.enabled = false; 
+            if (autoDrive != null && autoDrive.currentState != SimpleAutoDrive.DriveState.RemoteControlled)
+            {
+                autoDrive.currentState = SimpleAutoDrive.DriveState.RemoteControlled;
+            } 
 
             if (carController != null)
             {
@@ -223,11 +232,8 @@ public class ROS2BridgeV2 : MonoBehaviour
 
             string jsonData = JsonUtility.ToJson(state) + "\n";
             byte[] data = Encoding.UTF8.GetBytes(jsonData);
-
-            // 【核心修复】摒弃 BeginWrite，恢复为强制同步写入！
-            // 只要加上 Flush()，数据就会像子弹一样瞬间打到 ROS2 端
-            stream.Write(data, 0, data.Length);
-            stream.Flush();
+            while (sendQueue.TryDequeue(out _)) { }
+            sendQueue.Enqueue(data);
         }
         catch (Exception)
         {
@@ -281,6 +287,30 @@ public class ROS2BridgeV2 : MonoBehaviour
         }
     }
 
+    void SendLoop()
+    {
+        while (isConnected)
+        {
+            while (sendQueue.TryDequeue(out byte[] data))
+            {
+                try
+                {
+                    if (stream != null && stream.CanWrite)
+                    {
+                        stream.Write(data, 0, data.Length);
+                        stream.Flush();
+                    }
+                }
+                catch (Exception)
+                {
+                    isConnected = false;
+                    break;
+                }
+            }
+            Thread.Sleep(5);
+        }
+    }
+
     void ProcessControlCommand(string jsonData)
     {
         try
@@ -309,6 +339,7 @@ public class ROS2BridgeV2 : MonoBehaviour
     {
         isConnected = false;
         if (receiveThread != null && receiveThread.IsAlive) receiveThread.Abort();
+        if (sendThread != null && sendThread.IsAlive) sendThread.Abort();
         if (connectThread != null && connectThread.IsAlive) connectThread.Abort();
         if (stream != null) stream.Close();
         if (client != null) client.Close();

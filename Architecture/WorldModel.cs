@@ -269,24 +269,28 @@ public class WorldModel : MonoBehaviour
             var stopLines = new List<StopLine>();
             Vector3 junctionPos = node.WorldPos;
 
-            foreach (int nbId in node.NeighborIds)
+            for (int dirIdx = 0; dirIdx < node.NeighborIds.Count; dirIdx++)
             {
+                int nbId = node.NeighborIds[dirIdx];
                 if (!_graph.TryGetValue(nbId, out RoadNode nbNode)) continue;
 
-                Vector3 dirToJunction = (junctionPos - nbNode.WorldPos).normalized;
-                dirToJunction.y = 0f;
-                if (dirToJunction.sqrMagnitude < 0.001f) continue;
+                Vector3 approachDir = (junctionPos - nbNode.WorldPos);
+                approachDir.y = 0f;
+                if (approachDir.sqrMagnitude < 0.001f) continue;
 
-                Vector3 stopPos = junctionPos - dirToJunction * 2f;
+                Vector3 stopPos = junctionPos - approachDir.normalized * 2f;
                 stopPos.y = GetUnifiedHeight(stopPos.x, stopPos.z) + 0.1f;
+
+                bool isNS = Mathf.Abs(approachDir.z) > Mathf.Abs(approachDir.x);
+                int phaseId = node.Id * 10 + (isNS ? 0 : 1);
 
                 stopLines.Add(new StopLine
                 {
                     NodeId = node.Id,
                     LaneId = -1,
                     Position = stopPos,
-                    Normal = dirToJunction,
-                    AssociatedPhaseId = node.Id
+                    Normal = approachDir.normalized,
+                    AssociatedPhaseId = phaseId
                 });
             }
 
