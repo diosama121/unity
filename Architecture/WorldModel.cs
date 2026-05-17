@@ -450,9 +450,12 @@ public class WorldModel : MonoBehaviour
 
             Vector3 startPt = lane.CenterSpline.GetPoint(0);
             Vector3 endPt = lane.CenterSpline.GetPoint(1);
-            float d1 = (startPt.x - posXZ.x) * (startPt.x - posXZ.x) + (startPt.z - posXZ.y) * (startPt.z - posXZ.y);
-            float d2 = (endPt.x - posXZ.x) * (endPt.x - posXZ.x) + (endPt.z - posXZ.y) * (endPt.z - posXZ.y);
-            if (d1 > 6400f && d2 > 6400f) continue;
+            float safeExpand = totalLen * 0.5f + 20f;
+            float minX = Mathf.Min(startPt.x, endPt.x) - safeExpand;
+            float maxX = Mathf.Max(startPt.x, endPt.x) + safeExpand;
+            float minZ = Mathf.Min(startPt.z, endPt.z) - safeExpand;
+            float maxZ = Mathf.Max(startPt.z, endPt.z) + safeExpand;
+            if (posXZ.x < minX || posXZ.x > maxX || posXZ.y < minZ || posXZ.y > maxZ) continue;
 
             int samples = Mathf.Max(2, Mathf.CeilToInt(totalLen / 5f));
             for (int i = 0; i <= samples; i++)

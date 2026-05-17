@@ -58,6 +58,7 @@ public class SimpleAutoDrive : MonoBehaviour
         trafficManager = FindObjectOfType<TrafficManager>();
         carController.autoMode = true;
         lastPosition = transform.position;
+        laneSearchTimer = Random.Range(0f, 0.2f);
     }
 
     void Update()
@@ -228,6 +229,11 @@ public class SimpleAutoDrive : MonoBehaviour
         currentState = DriveState.Idle;
         currentSpline = null;
         carController.SetAutoControl(0f, 0f);
+    }
+
+    public void ResetNavigation()
+    {
+        RequestNewRandomPath();
     }
 
     void HandleAvoidingState()

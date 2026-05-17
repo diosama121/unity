@@ -16,9 +16,23 @@ public class MasterUIManager : MonoBehaviour
     private TrafficLightManager trafficLightManager;
     private ROS2BridgeV2 ros2Bridge;
     private CameraController cameraController;
+    private TrafficManager trafficManager;
+    private RoadNetworkGenerator roadGen;
 
     private bool isRebinding = false;
     private bool panelVisible = false;
+
+    // --- Debug Info Section ---
+    private Dictionary<string, Text> debugTexts = new Dictionary<string, Text>();
+    private float debugRefreshInterval = 0.15f;
+    private float debugRefreshTimer = 0f;
+
+    // FPS 计算
+    private float fpsAccum = 0f;
+    private int fpsFrameCount = 0;
+    private float currentFps = 0f;
+    private float fpsRefreshInterval = 0.5f;
+    private float fpsRefreshTimer = 0f;
 
     private static readonly Vector2 refResolution = new Vector2(1920, 1080);
 
@@ -48,6 +62,18 @@ public class MasterUIManager : MonoBehaviour
 
     void Update()
     {
+        // FPS 累积计算（不受面板开关影响，始终记录）
+        fpsAccum += Time.unscaledDeltaTime;
+        fpsFrameCount++;
+        fpsRefreshTimer += Time.unscaledDeltaTime;
+        if (fpsRefreshTimer >= fpsRefreshInterval)
+        {
+            currentFps = fpsFrameCount > 0 ? fpsFrameCount / fpsAccum : 0f;
+            fpsAccum = 0f;
+            fpsFrameCount = 0;
+            fpsRefreshTimer = 0f;
+        }
+
         if (RuntimeInputManager.Instance == null) return;
 
         if (!isRebinding && RuntimeInputManager.Instance.GetKeyDown("ToggleUI"))
@@ -63,6 +89,17 @@ public class MasterUIManager : MonoBehaviour
         if (RuntimeInputManager.Instance.GetKey("Brake") && carController != null)
         {
             carController.SetAutoBrake(carController.brakeDeceleration);
+        }
+
+        // 调试信息定时刷新（仅在面板可见时）
+        if (panelVisible && settingsPanel != null)
+        {
+            debugRefreshTimer += Time.deltaTime;
+            if (debugRefreshTimer >= debugRefreshInterval)
+            {
+                RefreshDebugInfo();
+                debugRefreshTimer = 0f;
+            }
         }
     }
 
@@ -109,12 +146,16 @@ public class MasterUIManager : MonoBehaviour
         trafficLightManager = FindObjectOfType<TrafficLightManager>();
         ros2Bridge = FindObjectOfType<ROS2BridgeV2>();
         cameraController = FindObjectOfType<CameraController>();
+        trafficManager = FindObjectOfType<TrafficManager>();
+        roadGen = FindObjectOfType<RoadNetworkGenerator>();
 
         if (carController == null) Debug.LogWarning("[MasterUIManager] 未找到 SimpleCarController");
         if (autoDrive == null) Debug.LogWarning("[MasterUIManager] 未找到 SimpleAutoDrive");
         if (trafficLightManager == null) Debug.LogWarning("[MasterUIManager] 未找到 TrafficLightManager");
         if (ros2Bridge == null) Debug.LogWarning("[MasterUIManager] 未找到 ROS2BridgeV2");
         if (cameraController == null) Debug.LogWarning("[MasterUIManager] 未找到 CameraController");
+        if (trafficManager == null) Debug.LogWarning("[MasterUIManager] 未找到 TrafficManager");
+        if (roadGen == null) Debug.LogWarning("[MasterUIManager] 未找到 RoadNetworkGenerator");
     }
 
     #endregion
@@ -354,6 +395,141 @@ public class MasterUIManager : MonoBehaviour
 
     #endregion
 
+    #region Debug Info
+
+    /// <summary>
+    /// 刷新所有调试信息只读字段（定时触发，约150ms间隔）
+    /// 使用 FindObjectOfType 容错，找不到静默跳过
+    /// </summary>
+    void RefreshDebugInfo()
+    {
+        if (settingsPanel == null) return;
+
+        // --- FPS ---
+        SetDebugValue("DbgFPS", currentFps.ToString("F1"));
+
+        // --- SimpleCarController ---
+        // 注意：carController 已在 FindAllComponents 中缓存，但可能为 null
+        // 也实时查找确保主车数据（因为可能有多个控制器，第一个为主车）
+        SimpleCarController cc = carController;
+        if (cc == null) { cc = FindObjectOfType<SimpleCarController>(); if (cc != null) carController = cc; }
+
+        SetDebugValue("DbgSpeed", cc != null ? cc.currentSpeed.ToString("F1") + " m/s" : "N/A");
+        SetDebugValue("DbgSteering", cc != null ? cc.currentSteeringAngle.ToString("F1") + " deg" : "N/A");
+        SetDebugValue("DbgAutoMode", cc != null ? (cc.autoMode ? "Yes" : "No") : "N/A");
+        SetDebugValue("DbgIsNPC", cc != null ? (cc.isNPC ? "Yes" : "No") : "N/A");
+
+        // --- SimpleAutoDrive ---
+        SimpleAutoDrive ad = autoDrive;
+        if (ad == null) { ad = FindObjectOfType<SimpleAutoDrive>(); if (ad != null) autoDrive = ad; }
+
+        SetDebugValue("DbgTargetSpeed", ad != null ? ad.targetSpeed.ToString("F1") : "N/A");
+        SetDebugValue("DbgSafeDist", ad != null ? ad.safeDistance.ToString("F1") : "N/A");
+        SetDebugValue("DbgDriveState", ad != null ? ad.currentState.ToString() : "N/A");
+        SetDebugValue("DbgLaneId", ad != null ? ad.currentLaneId.ToString() : "N/A");
+        SetDebugValue("DbgIntersection", ad != null ? ad.currentIntersectionState.ToString() : "N/A");
+        SetDebugValue("DbgObstacle", ad != null ? (ad.obstacleDetected ? "Yes" : "No") : "N/A");
+        SetDebugValue("DbgCurrentT", ad != null ? ad.currentT.ToString("F2") : "N/A");
+
+        // --- TrafficManager ---
+        TrafficManager tm = trafficManager;
+        if (tm == null) { tm = FindObjectOfType<TrafficManager>(); if (tm != null) trafficManager = tm; }
+
+        if (tm != null)
+        {
+            SetDebugValue("DbgNPCCount", tm.npcCount.ToString());
+            // 私有字段 _hasSpawned 通过反射获取
+            bool hasSpawned = false;
+            try
+            {
+                var field = tm.GetType().GetField("_hasSpawned",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                if (field != null) hasSpawned = (bool)field.GetValue(tm);
+            }
+            catch { }
+            SetDebugValue("DbgHasSpawned", hasSpawned ? "Yes" : "No");
+        }
+        else
+        {
+            SetDebugValue("DbgNPCCount", "N/A");
+            SetDebugValue("DbgHasSpawned", "N/A");
+        }
+
+        // --- WorldModel ---
+        WorldModel wm = WorldModel.Instance;
+        if (wm != null)
+        {
+            SetDebugValue("DbgNodeCount", wm.NodeCount.ToString());
+            SetDebugValue("DbgLaneCount", wm.GlobalLanes != null ? wm.GlobalLanes.Count.ToString() : "0");
+            bool isCountry = false;
+            if (wm.roadGenerator != null) isCountry = wm.roadGenerator.isCountryside;
+            else if (roadGen != null) isCountry = roadGen.isCountryside;
+            SetDebugValue("DbgWorldMode", isCountry ? "Countryside" : "City");
+        }
+        else
+        {
+            SetDebugValue("DbgNodeCount", "N/A");
+            SetDebugValue("DbgLaneCount", "N/A");
+            SetDebugValue("DbgWorldMode", "N/A");
+        }
+
+        // --- ROS2BridgeV2 ---
+        ROS2BridgeV2 r2 = ros2Bridge;
+        if (r2 == null) { r2 = FindObjectOfType<ROS2BridgeV2>(); if (r2 != null) ros2Bridge = r2; }
+
+        if (r2 != null)
+        {
+            SetDebugValue("DbgROSConnected", r2.isConnected ? "Yes" : "No");
+            // 私有字段 useRosControl 通过反射获取
+            bool rosCtrl = false;
+            try
+            {
+                var field = r2.GetType().GetField("useRosControl",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                if (field != null) rosCtrl = (bool)field.GetValue(r2);
+            }
+            catch { }
+            SetDebugValue("DbgROSControl", rosCtrl ? "Active" : "Idle");
+        }
+        else
+        {
+            SetDebugValue("DbgROSConnected", "N/A");
+            SetDebugValue("DbgROSControl", "N/A");
+        }
+
+        // --- CameraController ---
+        CameraController cam = cameraController;
+        if (cam == null) { cam = FindObjectOfType<CameraController>(); if (cam != null) cameraController = cam; }
+
+        SetDebugValue("DbgCamModeKey", cam != null ? cam.modeSwitchKey.ToString() : "N/A");
+        SetDebugValue("DbgCamTargetKey", cam != null ? cam.targetSwitchKey.ToString() : "N/A");
+    }
+
+    /// <summary>
+    /// 安全设置调试文本值（找不到 Text 组件则静默跳过）
+    /// </summary>
+    void SetDebugValue(string rowName, string value)
+    {
+        if (settingsPanel == null) return;
+
+        // 先从缓存查找
+        Text txt;
+        if (!debugTexts.TryGetValue(rowName, out txt))
+        {
+            Transform row = settingsPanel.transform.Find(rowName);
+            if (row == null) return;
+            Transform valTransform = row.Find("ValueText");
+            if (valTransform == null) return;
+            txt = valTransform.GetComponent<Text>();
+            if (txt == null) return;
+            debugTexts[rowName] = txt;
+        }
+
+        if (txt != null) txt.text = value;
+    }
+
+    #endregion
+
     #region UI Auto-Generation
 
     [ContextMenu("Generate UI Panel")]
@@ -434,6 +610,35 @@ public class MasterUIManager : MonoBehaviour
         CreateButton(panelGO, "ResetKeysBtn", "Reset All Keys");
 
         CreateButton(panelGO, "ClosePanelBtn", "Close Panel [Esc]");
+
+        CreateSectionHeader(panelGO, "--- Debug Info ---");
+        CreateDebugRow(panelGO, "DbgFPS", "FPS", "0.0");
+        CreateSectionHeaderSub(panelGO, "-- Car Controller --");
+        CreateDebugRow(panelGO, "DbgSpeed", "Speed", "0.0 m/s");
+        CreateDebugRow(panelGO, "DbgSteering", "Steering", "0.0 deg");
+        CreateDebugRow(panelGO, "DbgAutoMode", "Auto Mode", "No");
+        CreateDebugRow(panelGO, "DbgIsNPC", "Is NPC", "No");
+        CreateSectionHeaderSub(panelGO, "-- Auto Drive --");
+        CreateDebugRow(panelGO, "DbgTargetSpeed", "Target Spd", "N/A");
+        CreateDebugRow(panelGO, "DbgSafeDist", "Safe Dist", "N/A");
+        CreateDebugRow(panelGO, "DbgDriveState", "Drive State", "N/A");
+        CreateDebugRow(panelGO, "DbgLaneId", "Lane ID", "N/A");
+        CreateDebugRow(panelGO, "DbgIntersection", "Intersection", "N/A");
+        CreateDebugRow(panelGO, "DbgObstacle", "Obstacle", "N/A");
+        CreateDebugRow(panelGO, "DbgCurrentT", "Current T", "N/A");
+        CreateSectionHeaderSub(panelGO, "-- Traffic Mgr --");
+        CreateDebugRow(panelGO, "DbgNPCCount", "NPC Count", "N/A");
+        CreateDebugRow(panelGO, "DbgHasSpawned", "Has Spawned", "N/A");
+        CreateSectionHeaderSub(panelGO, "-- World Model --");
+        CreateDebugRow(panelGO, "DbgNodeCount", "Nodes", "N/A");
+        CreateDebugRow(panelGO, "DbgLaneCount", "Lanes", "N/A");
+        CreateDebugRow(panelGO, "DbgWorldMode", "Mode", "N/A");
+        CreateSectionHeaderSub(panelGO, "-- ROS2 Bridge --");
+        CreateDebugRow(panelGO, "DbgROSConnected", "Connected", "N/A");
+        CreateDebugRow(panelGO, "DbgROSControl", "ROS Ctrl", "N/A");
+        CreateSectionHeaderSub(panelGO, "-- Camera --");
+        CreateDebugRow(panelGO, "DbgCamModeKey", "Mode Key", "N/A");
+        CreateDebugRow(panelGO, "DbgCamTargetKey", "Target Key", "N/A");
 
         settingsPanel = panelGO;
 
@@ -697,6 +902,67 @@ public class MasterUIManager : MonoBehaviour
         btnTxtRT.sizeDelta = Vector2.zero;
 
         return btnGO;
+    }
+
+    /// <summary>
+    /// 创建只读调试信息行：左侧标签 + 右侧动态值（由 RefreshDebugInfo 定时更新）
+    /// </summary>
+    GameObject CreateDebugRow(GameObject parent, string name, string label, string defaultVal)
+    {
+        GameObject row = new GameObject(name);
+        row.transform.SetParent(parent.transform, false);
+        row.AddComponent<LayoutElement>().minHeight = 22;
+
+        HorizontalLayoutGroup hlg = row.AddComponent<HorizontalLayoutGroup>();
+        hlg.childAlignment = TextAnchor.MiddleLeft;
+        hlg.childControlWidth = true;
+        hlg.childControlHeight = true;
+        hlg.childForceExpandWidth = false;
+        hlg.childForceExpandHeight = true;
+        hlg.spacing = 4;
+
+        // 标签（左侧，偏灰白）
+        GameObject labelGO = new GameObject("Label");
+        labelGO.transform.SetParent(row.transform, false);
+        Text labelTxt = labelGO.AddComponent<Text>();
+        labelTxt.text = label;
+        labelTxt.font = GetDefaultFont();
+        labelTxt.fontSize = 11;
+        labelTxt.color = new Color(0.65f, 0.65f, 0.7f);
+        labelTxt.alignment = TextAnchor.MiddleLeft;
+        labelGO.AddComponent<LayoutElement>().minWidth = 80;
+
+        // 值（右侧，亮色高亮）
+        GameObject valGO = new GameObject("ValueText");
+        valGO.transform.SetParent(row.transform, false);
+        Text valTxt = valGO.AddComponent<Text>();
+        valTxt.text = defaultVal;
+        valTxt.font = GetDefaultFont();
+        valTxt.fontSize = 11;
+        valTxt.fontStyle = FontStyle.Bold;
+        valTxt.color = new Color(0.4f, 0.9f, 0.6f);
+        valTxt.alignment = TextAnchor.MiddleRight;
+        valGO.AddComponent<LayoutElement>().flexibleWidth = 1;
+
+        return row;
+    }
+
+    /// <summary>
+    /// 创建子节标题（字体更小、颜色更淡，用于分组调试字段）
+    /// </summary>
+    GameObject CreateSectionHeaderSub(GameObject parent, string text)
+    {
+        GameObject go = new GameObject("SubHeader_" + text.GetHashCode());
+        go.transform.SetParent(parent.transform, false);
+        go.AddComponent<LayoutElement>().minHeight = 18;
+        Text txt = go.AddComponent<Text>();
+        txt.text = text;
+        txt.font = GetDefaultFont();
+        txt.fontSize = 10;
+        txt.fontStyle = FontStyle.Italic;
+        txt.color = new Color(0.45f, 0.45f, 0.5f);
+        txt.alignment = TextAnchor.MiddleLeft;
+        return go;
     }
 
     Font GetDefaultFont()

@@ -33,6 +33,7 @@ public class SimpleCarController : MonoBehaviour
     private Rigidbody rb;
     private float targetSpeed = 0f;
     private float targetSteering = 0f;
+    private Vector3 originalPosition;
     
     private Collider[] allColliders;
     private float autoThrottle = 0f;
@@ -70,10 +71,34 @@ public class SimpleCarController : MonoBehaviour
 
       //  sensor = GetComponent<RaycastSensor>();
         this.enabled = true;
+        originalPosition = transform.position;
     }
 
     void Update()
     {
+        // WASD 手动操控：任一WASD键按下即切回手动模式
+        if (Input.GetKey(KeyCode.W) || Input.GetKey(KeyCode.A) || Input.GetKey(KeyCode.S) || Input.GetKey(KeyCode.D))
+        {
+            if (autoMode) autoMode = false;
+            float t = (Input.GetKey(KeyCode.W) ? 1f : 0f) - (Input.GetKey(KeyCode.S) ? 1f : 0f);
+            float s = (Input.GetKey(KeyCode.D) ? 1f : 0f) - (Input.GetKey(KeyCode.A) ? 1f : 0f);
+            SetAutoControl(t, s);
+        }
+
+        // N键：重置导航路径
+        if (Input.GetKeyDown(KeyCode.N))
+        {
+            SimpleAutoDrive autoDrive = GetComponent<SimpleAutoDrive>();
+            if (autoDrive == null) autoDrive = FindObjectOfType<SimpleAutoDrive>();
+            if (autoDrive != null) autoDrive.ResetNavigation();
+        }
+
+        // R键：回归初始位置
+        if (Input.GetKeyDown(KeyCode.R))
+        {
+            ResetPosition();
+        }
+
         if (!isNPC)
         {
             currentSpeed = Vector3.Dot(rb.velocity, transform.forward);
@@ -215,5 +240,12 @@ public class SimpleCarController : MonoBehaviour
             autoDrive.currentState = SimpleAutoDrive.DriveState.Idle;
             SetAutoControl(0f, 0f);
         }
+    }
+
+    public void ResetPosition()
+    {
+        transform.position = originalPosition;
+        targetSpeed = 0f;
+        currentSpeed = 0f;
     }
 }

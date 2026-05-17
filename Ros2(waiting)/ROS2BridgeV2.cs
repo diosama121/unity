@@ -27,7 +27,7 @@ public class ROS2BridgeV2 : MonoBehaviour
     private Thread receiveThread;
     private Thread connectThread; // 新增：专门用于连接的后台线程
 
-    private volatile bool isConnected = false;
+    public volatile bool isConnected = false;
     private float lastSendTime = 0f;
 
     // ROS2 控制指令

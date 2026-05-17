@@ -339,7 +339,8 @@ public class TrafficLightManager : MonoBehaviour
 
             if (tl.lastSyncedState != newState)
             {
-                WorldModel.Instance.SetIntersectionState(tl.nodeId, newState);
+                // 已注释：多灯共享同一nodeId互相覆写，改为只使用SetPhaseState
+                // WorldModel.Instance.SetIntersectionState(tl.nodeId, newState);
                 WorldModel.Instance.SetPhaseState(tl.phaseId, newState);
                 tl.lastSyncedState = newState;
             }

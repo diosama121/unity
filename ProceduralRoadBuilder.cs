@@ -233,12 +233,11 @@ public class ProceduralRoadBuilder : MonoBehaviour
                 Vector3 edgePt = Vector3.Lerp(current.LeftPos, current.RightPos, t);
                 Vector3 edgeNormal = Vector3.up;
 
-                authoritativeContour.Add(edgePt);
-
                 Vector2 key = new Vector2(edgePt.x, edgePt.z);
                 if (!exactBoundaryDict.ContainsKey(key))
                 {
                     exactBoundaryDict.Add(key, new BoundaryData { Y = edgePt.y, Normal = edgeNormal });
+                    authoritativeContour.Add(edgePt);
                 }
             }
 
@@ -255,7 +254,12 @@ public class ProceduralRoadBuilder : MonoBehaviour
                 float t = (float)s / cornerSamples;
                 float u = 1f - t;
                 Vector3 curvePt = u * u * current.RightPos + 2f * u * t * controlPoint + t * t * next.LeftPos;
-                authoritativeContour.Add(curvePt);
+                Vector2 keyCurve = new Vector2(curvePt.x, curvePt.z);
+                if (!exactBoundaryDict.ContainsKey(keyCurve))
+                {
+                    exactBoundaryDict.Add(keyCurve, new BoundaryData { Y = curvePt.y, Normal = Vector3.up });
+                    authoritativeContour.Add(curvePt);
+                }
             }
         }
 
