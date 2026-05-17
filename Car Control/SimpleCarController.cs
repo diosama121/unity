@@ -140,7 +140,6 @@ public class SimpleCarController : MonoBehaviour
     {
         if (isNPC || rb == null) return;
 
-        currentSpeed = Mathf.Lerp(currentSpeed, targetSpeed, Time.fixedDeltaTime * 3f);
         RaycastHit hit;
         bool isGrounded = Physics.Raycast(transform.position + Vector3.up * 0.3f, Vector3.down, out hit, 2.0f);
 
@@ -152,7 +151,7 @@ public class SimpleCarController : MonoBehaviour
 
         ApplySteering();
         Vector3 moveDir = isGrounded ? Vector3.ProjectOnPlane(transform.forward, hit.normal).normalized : transform.forward;
-        Vector3 newVelocity = moveDir * currentSpeed;
+        Vector3 newVelocity = moveDir * targetSpeed;
         if (!isGrounded) newVelocity.y = rb.velocity.y;
         Vector3 localVel = transform.InverseTransformDirection(newVelocity);
         localVel.x *= slipFactor;

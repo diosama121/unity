@@ -118,7 +118,7 @@ public class SimpleAutoDrive : MonoBehaviour
         if (currentDestinationNodeId >= 0 && WorldModel.Instance != null)
         {
             StopLine relevantStopLine = WorldModel.Instance.GetNearestStopLine(currentDestinationNodeId, transform.position);
-            if (relevantStopLine != null)
+            if (relevantStopLine != null && Vector3.Distance(transform.position, relevantStopLine.Position) < 20f)
             {
                 currentIntersectionState = WorldModel.Instance.GetPhaseState(relevantStopLine.AssociatedPhaseId);
             }
@@ -213,16 +213,18 @@ public class SimpleAutoDrive : MonoBehaviour
     {
         if (WorldModel.Instance != null && pathPlanner != null)
         {
-            int randTargetId = Random.Range(0, WorldModel.Instance.NodeCount);
-            RoadNode targetNode = WorldModel.Instance.GetNode(randTargetId);
-            
-            if (targetNode != null)
+            for (int i = 0; i < 10; i++)
             {
-                CatmullRomSpline newSpline = pathPlanner.PlanPathSpline(transform.position, targetNode.WorldPos);
-                if (newSpline != null && newSpline.TotalLength > 0)
+                int randTargetId = Random.Range(0, WorldModel.Instance.NodeCount);
+                RoadNode targetNode = WorldModel.Instance.GetNode(randTargetId);
+                if (targetNode != null)
                 {
-                    SetSplinePath(newSpline, targetNode.Id);
-                    return;
+                    CatmullRomSpline newSpline = pathPlanner.PlanPathSpline(transform.position, targetNode.WorldPos);
+                    if (newSpline != null && newSpline.TotalLength > 0)
+                    {
+                        SetSplinePath(newSpline, targetNode.Id);
+                        return;
+                    }
                 }
             }
         }
@@ -376,16 +378,19 @@ public class SimpleAutoDrive : MonoBehaviour
 
                 if (minDistSqr < 36f)
                 {
-                    Vector3 lanePoint = lane.CenterSpline.GetPoint(bestLaneT);
-                    lateralTarget.x = lanePoint.x;
-                    lateralTarget.z = lanePoint.z;
-
-                    float laneLookT = Mathf.Clamp01(bestLaneT + (lookAheadT * 2f));
-                    Vector3 laneLook = lane.CenterSpline.GetPoint(laneLookT);
-                    lookAheadPos.x = laneLook.x;
-                    lookAheadPos.z = laneLook.z;
-
-                    hasLaneAnchor = true;
+                    float checkT = Mathf.Min(bestLaneT + 0.05f, 1f);
+                    Vector3 laneDirection = (lane.CenterSpline.GetPoint(checkT) - lane.CenterSpline.GetPoint(bestLaneT)).normalized;
+                    if (Vector3.Dot(transform.forward, laneDirection) > 0f)
+                    {
+                        Vector3 lanePoint = lane.CenterSpline.GetPoint(bestLaneT);
+                        lateralTarget.x = lanePoint.x;
+                        lateralTarget.z = lanePoint.z;
+                        float laneLookT = Mathf.Clamp01(bestLaneT + (lookAheadT * 2f));
+                        Vector3 laneLook = lane.CenterSpline.GetPoint(laneLookT);
+                        lookAheadPos.x = laneLook.x;
+                        lookAheadPos.z = laneLook.z;
+                        hasLaneAnchor = true;
+                    }
                 }
             }
         }
