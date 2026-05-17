@@ -148,7 +148,7 @@ public class TrafficLightManager : MonoBehaviour
         trafficLights.Clear();
 
         Transform root = transform.Find("TrafficLights");
-        if (root != null) DestroyImmediate(root.gameObject);
+        if (root != null) { if (Application.isPlaying) Destroy(root.gameObject); else DestroyImmediate(root.gameObject); }
     }
 
     /// <summary>

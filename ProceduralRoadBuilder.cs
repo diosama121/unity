@@ -413,9 +413,9 @@ public class ProceduralRoadBuilder : MonoBehaviour
 
     void ClearRoads()
     {
-        if (meshRoot != null) DestroyImmediate(meshRoot);
+        if (meshRoot != null) { if (Application.isPlaying) Destroy(meshRoot); else DestroyImmediate(meshRoot); }
         foreach (Transform child in transform) {
-            if (child.name.StartsWith("Combined_Road_")) DestroyImmediate(child.gameObject);
+            if (child.name.StartsWith("Combined_Road_")) { if (Application.isPlaying) Destroy(child.gameObject); else DestroyImmediate(child.gameObject); }
         }
     }
 

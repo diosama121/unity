@@ -340,9 +340,11 @@ public class SimpleAutoDrive : MonoBehaviour
         }
 
         Vector3 posOnSpline = currentSpline.GetPoint(currentT);
-
         Vector3 lateralTarget = posOnSpline;
         bool hasLaneAnchor = false;
+
+        float targetLookAheadT = Mathf.Min(currentT + lookAheadT, 1f);
+        Vector3 lookAheadPos = currentSpline.GetPoint(targetLookAheadT);
 
         if (WorldModel.Instance != null)
         {
@@ -352,13 +354,38 @@ public class SimpleAutoDrive : MonoBehaviour
                 currentLaneId = WorldModel.Instance.FindNearestLane(transform.position);
                 laneSearchTimer = 0f;
             }
+
             if (currentLaneId >= 0 && WorldModel.Instance.GlobalLanes.TryGetValue(currentLaneId, out Lane lane))
             {
-                float laneT = Mathf.Clamp01(currentT);
-                Vector3 lanePoint = lane.CenterSpline.GetPoint(laneT);
-                lateralTarget.x = lanePoint.x;
-                lateralTarget.z = lanePoint.z;
-                hasLaneAnchor = true;
+                float bestLaneT = 0f;
+                float minDistSqr = float.MaxValue;
+                int searchSteps = 20;
+
+                for (int i = 0; i <= searchSteps; i++)
+                {
+                    float t = i / (float)searchSteps;
+                    Vector3 pt = lane.CenterSpline.GetPoint(t);
+                    float sqrD = (pt.x - posOnSpline.x) * (pt.x - posOnSpline.x) + (pt.z - posOnSpline.z) * (pt.z - posOnSpline.z);
+                    if (sqrD < minDistSqr)
+                    {
+                        minDistSqr = sqrD;
+                        bestLaneT = t;
+                    }
+                }
+
+                if (minDistSqr < 36f)
+                {
+                    Vector3 lanePoint = lane.CenterSpline.GetPoint(bestLaneT);
+                    lateralTarget.x = lanePoint.x;
+                    lateralTarget.z = lanePoint.z;
+
+                    float laneLookT = Mathf.Clamp01(bestLaneT + (lookAheadT * 2f));
+                    Vector3 laneLook = lane.CenterSpline.GetPoint(laneLookT);
+                    lookAheadPos.x = laneLook.x;
+                    lookAheadPos.z = laneLook.z;
+
+                    hasLaneAnchor = true;
+                }
             }
         }
 
@@ -367,33 +394,9 @@ public class SimpleAutoDrive : MonoBehaviour
             float nextT = Mathf.Min(currentT + 0.001f, 1f);
             Vector3 tangent = (currentSpline.GetPoint(nextT) - posOnSpline).normalized;
             Vector3 rightVector = Vector3.Cross(Vector3.up, tangent).normalized;
+
             lateralTarget = posOnSpline + rightVector * rightLaneOffset;
-        }
-
-        lateralTarget.y = WorldModel.Instance != null ? 
-            WorldModel.Instance.GetUnifiedHeight(lateralTarget.x, lateralTarget.z) : transform.position.y;
-
-        float targetLookAheadT = Mathf.Min(currentT + lookAheadT, 1f);
-        Vector3 lookAheadPos = currentSpline.GetPoint(targetLookAheadT);
-
-        if (hasLaneAnchor && WorldModel.Instance.GlobalLanes.TryGetValue(currentLaneId, out Lane anchorLane))
-        {
-            float laneLookT = Mathf.Clamp01(targetLookAheadT);
-            Vector3 laneLook = anchorLane.CenterSpline.GetPoint(laneLookT);
-            lookAheadPos.x = laneLook.x;
-            lookAheadPos.z = laneLook.z;
-        }
-        else
-        {
-            float nextT = Mathf.Min(currentT + 0.001f, 1f);
-            Vector3 tangent = (currentSpline.GetPoint(nextT) - posOnSpline).normalized;
-            Vector3 rightVector = Vector3.Cross(Vector3.up, tangent).normalized;
             lookAheadPos = lookAheadPos + rightVector * rightLaneOffset;
-        }
-        
-        if (WorldModel.Instance != null)
-        {
-            lookAheadPos.y = WorldModel.Instance.GetUnifiedHeight(lookAheadPos.x, lookAheadPos.z);
         }
 
         lookAheadPos.y = transform.position.y;
