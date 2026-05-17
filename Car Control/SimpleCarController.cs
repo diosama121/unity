@@ -40,6 +40,10 @@ public class SimpleCarController : MonoBehaviour
     private float autoSteering = 0f;
     private float autoBrakingDecel = 0f;
 
+    // Bug2修复: WASD临时接管，不永久修改autoMode
+    private bool wasdOverride = false;
+    private bool autoModeBeforeOverride = false;
+
     void Awake()
     {
         allColliders = GetComponentsInChildren<Collider>();
@@ -76,27 +80,44 @@ public class SimpleCarController : MonoBehaviour
 
     void Update()
     {
-        // WASD 手动操控：任一WASD键按下即切回手动模式
-        if (Input.GetKey(KeyCode.W) || Input.GetKey(KeyCode.A) || Input.GetKey(KeyCode.S) || Input.GetKey(KeyCode.D))
+        // WASD 手动操控：临时接管，不永久修改autoMode
+        // 松开WASD后自动恢复之前的autoMode状态
+        bool wasdActive = Input.GetKey(KeyCode.W) || Input.GetKey(KeyCode.A) || Input.GetKey(KeyCode.S) || Input.GetKey(KeyCode.D);
+        if (wasdActive)
         {
-            if (autoMode) autoMode = false;
+            if (!wasdOverride)
+            {
+                // 第一帧按下WASD：保存当前autoMode，临时切手动
+                wasdOverride = true;
+                autoModeBeforeOverride = autoMode;
+                autoMode = false;
+            }
             float t = (Input.GetKey(KeyCode.W) ? 1f : 0f) - (Input.GetKey(KeyCode.S) ? 1f : 0f);
             float s = (Input.GetKey(KeyCode.D) ? 1f : 0f) - (Input.GetKey(KeyCode.A) ? 1f : 0f);
             SetAutoControl(t, s);
         }
-
-        // N键：重置导航路径
-        if (Input.GetKeyDown(KeyCode.N))
+        else if (wasdOverride)
         {
-            SimpleAutoDrive autoDrive = GetComponent<SimpleAutoDrive>();
-            if (autoDrive == null) autoDrive = FindObjectOfType<SimpleAutoDrive>();
-            if (autoDrive != null) autoDrive.ResetNavigation();
+            // WASD松开：恢复之前的autoMode状态
+            wasdOverride = false;
+            autoMode = autoModeBeforeOverride;
         }
 
         // R键：回归初始位置
         if (Input.GetKeyDown(KeyCode.R))
         {
             ResetPosition();
+        }
+
+        // N键：重置导航路径
+        if (Input.GetKeyDown(KeyCode.N))
+        {
+            wasdOverride = false;
+            autoMode = true;
+            SetAutoBrake(0f);
+            SimpleAutoDrive autoDrive = GetComponent<SimpleAutoDrive>();
+            if (autoDrive == null) autoDrive = FindObjectOfType<SimpleAutoDrive>();
+            if (autoDrive != null) autoDrive.ResetNavigation();
         }
 
         if (!isNPC)

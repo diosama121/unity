@@ -52,7 +52,8 @@ public class MasterUIManager : MonoBehaviour
         FindAllComponents();
         BindAllEvents();
         SyncUIFromComponents();
-        settingsPanel.SetActive(false);
+        panelVisible = true;
+        settingsPanel.SetActive(true);
 
         if (RuntimeInputManager.Instance != null)
         {
@@ -611,6 +612,9 @@ public class MasterUIManager : MonoBehaviour
 
         CreateButton(panelGO, "ClosePanelBtn", "Close Panel [Esc]");
 
+        // 提示文字
+        CreateHintText(panelGO, "按 ESC 切换面板  |  T 切换自动驾驶  |  N 重置AI导航");
+
         CreateSectionHeader(panelGO, "--- Debug Info ---");
         CreateDebugRow(panelGO, "DbgFPS", "FPS", "0.0");
         CreateSectionHeaderSub(panelGO, "-- Car Controller --");
@@ -962,6 +966,24 @@ public class MasterUIManager : MonoBehaviour
         txt.fontStyle = FontStyle.Italic;
         txt.color = new Color(0.45f, 0.45f, 0.5f);
         txt.alignment = TextAnchor.MiddleLeft;
+        return go;
+    }
+
+    /// <summary>
+    /// 创建提示文字行（小号、灰色、居中）
+    /// </summary>
+    GameObject CreateHintText(GameObject parent, string text)
+    {
+        GameObject go = new GameObject("HintText");
+        go.transform.SetParent(parent.transform, false);
+        go.AddComponent<LayoutElement>().minHeight = 20;
+        Text txt = go.AddComponent<Text>();
+        txt.text = text;
+        txt.font = GetDefaultFont();
+        txt.fontSize = 11;
+        txt.fontStyle = FontStyle.Normal;
+        txt.color = new Color(0.5f, 0.5f, 0.55f);
+        txt.alignment = TextAnchor.MiddleCenter;
         return go;
     }
 

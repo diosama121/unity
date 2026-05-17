@@ -273,6 +273,7 @@ public class SimpleAutoDrive : MonoBehaviour
             hasStopTarget = false;
             stuckTimer = 0f; stuckCheckTimer = 0f; lastPosition = transform.position; startupDelay = 2f;
             carController.SetAutoControl(0f, 0f); // 【新增】重置制动
+            carController.SetAutoBrake(0f);
             currentState = DriveState.Following;
             return;
         }
@@ -412,6 +413,7 @@ public class SimpleAutoDrive : MonoBehaviour
 
         float throttle = (targetSpeed * speedFactor) / carController.maxSpeed;
         carController.SetAutoControl(throttle, steering);
+        carController.SetAutoBrake(0f);
     }
 
     public void SetSplinePath(CatmullRomSpline spline, int destinationNodeId)

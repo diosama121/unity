@@ -20,9 +20,7 @@ public class PathPlanner : MonoBehaviour
         }
     }
 
-    private WorldModel _worldModel;
-
-    void Awake() => _worldModel = WorldModel.Instance;
+    private WorldModel _worldModel => WorldModel.Instance;
 
     /// <summary>
     /// 离散路径（拓扑节点ID序列）
