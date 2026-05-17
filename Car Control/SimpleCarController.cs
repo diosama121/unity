@@ -144,18 +144,22 @@ public partial class SimpleCarController : MonoBehaviour
         // ====================================================================
         if (WorldModel.Instance != null)
         {
-            // [核心修改] 废弃 GetTerrainHeight，调用 V4.1 统一高程公共契约
-            float trueGroundY = WorldModel.Instance.GetUnifiedHeight(transform.position.x, transform.position.z)+0.2f;
-            
+            float baseGroundY = WorldModel.Instance.GetUnifiedHeight(transform.position.x, transform.position.z);
+            float frontY = WorldModel.Instance.GetUnifiedHeight(transform.position.x + transform.forward.x, transform.position.z + transform.forward.z);
+
             Vector3 pos = transform.position;
-            // 叠加悬挂高度偏移
-            pos.y = trueGroundY + npcSuspensionHeight;
+            pos.y = baseGroundY + npcSuspensionHeight;
             transform.position = pos;
 
-            // 脱离物理法线后，强制锁定 Pitch 与 Roll 轴，实现绝对的“轨道车”匀速贴地飞行
-            float frontY = WorldModel.Instance.GetUnifiedHeight(transform.position.x + transform.forward.x, transform.position.z + transform.forward.z);
-            Vector3 slopeForward = new Vector3(transform.forward.x, frontY - trueGroundY, transform.forward.z).normalized;
-            transform.rotation = Quaternion.LookRotation(slopeForward, Vector3.up);
+            Vector3 slopeForward = new Vector3(transform.forward.x, frontY - baseGroundY, transform.forward.z).normalized;
+
+            float leftY = WorldModel.Instance.GetUnifiedHeight(transform.position.x - transform.right.x, transform.position.z - transform.right.z);
+            float rightY = WorldModel.Instance.GetUnifiedHeight(transform.position.x + transform.right.x, transform.position.z + transform.right.z);
+            Vector3 slopeRight = new Vector3(transform.right.x, rightY - leftY, transform.right.z).normalized;
+
+            Vector3 trueUp = Vector3.Cross(slopeForward, slopeRight).normalized;
+
+            transform.rotation = Quaternion.LookRotation(slopeForward, trueUp);
         }
     }
 

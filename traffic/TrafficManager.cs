@@ -24,6 +24,9 @@ public class TrafficManager : MonoBehaviour
     {
         if (_hasSpawned) { Debug.Log("TrafficManager: NPC已生成，跳过重复调用"); return; }
 
+        npcVehicles.RemoveAll(npc => npc == null);
+        npcVehicles.Clear();
+
         roadGen = FindObjectOfType<RoadNetworkGenerator>();
         pathPlanner = FindObjectOfType<PathPlanner>();
 

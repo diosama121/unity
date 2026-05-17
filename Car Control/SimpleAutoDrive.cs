@@ -85,7 +85,8 @@ public partial class SimpleAutoDrive : MonoBehaviour
         RaycastHit hit;
         if (Physics.SphereCast(transform.position + Vector3.up * 0.5f, 1.5f, transform.forward, out hit, safeDistance))
         {
-            if (hit.collider.GetComponentInParent<SimpleCarController>() != null)
+            var otherCar = hit.collider.GetComponentInParent<SimpleCarController>();
+            if (otherCar != null && otherCar != this.carController)
             {
                 obstacleDetected = true;
             }
@@ -98,7 +99,14 @@ public partial class SimpleAutoDrive : MonoBehaviour
             {
                 StopLine relevantStopLine = WorldModel.Instance.GetNearestStopLine(nearestNode.Id, transform.position);
                 if (relevantStopLine != null && Vector3.Distance(transform.position, relevantStopLine.Position) < 20f)
-                    currentIntersectionState = WorldModel.Instance.GetPhaseState(relevantStopLine.AssociatedPhaseId);
+                {
+                    Vector3 dirToStopLine = relevantStopLine.Position - transform.position;
+                    if (Vector3.Dot(transform.forward, dirToStopLine) > 0)
+                    {
+                        currentIntersectionState = WorldModel.Instance.GetPhaseState(relevantStopLine.AssociatedPhaseId);
+                    }
+                    else currentIntersectionState = IntersectionState.Uncontrolled;
+                }
                 else
                     currentIntersectionState = IntersectionState.Uncontrolled;
             }
@@ -200,14 +208,19 @@ public partial class SimpleAutoDrive : MonoBehaviour
     void RerouteToDestination()
     {
         if (pathPlanner == null) return;
-        Vector3 target = finalDestination != Vector3.zero ? finalDestination : transform.position + transform.forward * 20f;
-        
-        CatmullRomSpline newSpline = pathPlanner.PlanPathSpline(transform.position, target);
-        if (newSpline != null && newSpline.TotalLength > 0)
+
+        if (finalDestination != Vector3.zero)
         {
-            currentSpline = newSpline;
-            currentT = 0f;
+            CatmullRomSpline newSpline = pathPlanner.PlanPathSpline(transform.position, finalDestination);
+            if (newSpline != null && newSpline.TotalLength > 0)
+            {
+                currentSpline = newSpline;
+                currentT = 0f;
+                return;
+            }
         }
+
+        RequestNewRandomPath();
     }
 
     public void SetDestination(Vector3 destination)

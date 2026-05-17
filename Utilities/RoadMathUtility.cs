@@ -10,8 +10,8 @@ public static class RoadMathUtility
         WorldModel wm = WorldModel.Instance;
         if (wm == null) return points;
 
-        (Vector3 p0, Vector3 _) = wm.GetNodeData(nodeIdA);
-        (Vector3 p1, Vector3 _) = wm.GetNodeData(nodeIdB);
+        (Vector3 p0, Vector3 t0) = wm.GetNodeData(nodeIdA);
+        (Vector3 p1, Vector3 t1) = wm.GetNodeData(nodeIdB);
 
         p0.y = wm.GetUnifiedHeight(p0.x, p0.z) + 0.1f;
         p1.y = wm.GetUnifiedHeight(p1.x, p1.z) + 0.1f;
@@ -22,8 +22,11 @@ public static class RoadMathUtility
         Vector3 edgeDir = (p1 - p0).normalized;
 
         float maxTangentMag = dist * 0.35f;
-        Vector3 m0 = edgeDir * Mathf.Min(dist * 0.5f, maxTangentMag);
-        Vector3 m1 = edgeDir * Mathf.Min(dist * 0.5f, maxTangentMag);
+        if (Vector3.Dot(t0, edgeDir) < 0) t0 = -t0;
+        if (Vector3.Dot(t1, edgeDir) > 0) t1 = -t1;
+
+        Vector3 m0 = t0 * Mathf.Min(dist * 0.5f, maxTangentMag);
+        Vector3 m1 = t1 * Mathf.Min(dist * 0.5f, maxTangentMag);
 
         float actualStep = Mathf.Clamp(stepDistance, 0.1f, 0.5f);
         int steps = Mathf.Max(2, Mathf.CeilToInt(dist / actualStep));
@@ -253,6 +256,13 @@ public static class RoadMathUtility
             return result;
 
         List<SplinePoint> clipped = new List<SplinePoint>();
+        if (startIdx > 0 && cumulativeDists[startIdx - 1] < startRadius)
+        {
+            float frac = (startRadius - cumulativeDists[startIdx - 1]) / (cumulativeDists[startIdx] - cumulativeDists[startIdx - 1]);
+            Vector3 interpPos = Vector3.Lerp(spline[startIdx - 1].Pos, spline[startIdx].Pos, frac);
+            Vector3 interpNormal = Vector3.Lerp(spline[startIdx - 1].Normal, spline[startIdx].Normal, frac).normalized;
+            clipped.Add(new SplinePoint { Pos = interpPos, Normal = interpNormal });
+        }
         for (int i = startIdx; i <= endIdx; i++)
             clipped.Add(spline[i]);
 

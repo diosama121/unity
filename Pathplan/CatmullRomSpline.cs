@@ -126,9 +126,9 @@ public class CatmullRomSpline
         float alpha = 0.5f;
         
         float t0 = 0f;
-        float t1 = t0 + Mathf.Pow(Vector3.Distance(p0, p1), alpha);
-        float t2 = t1 + Mathf.Pow(Vector3.Distance(p1, p2), alpha);
-        float t3 = t2 + Mathf.Pow(Vector3.Distance(p2, p3), alpha);
+        float t1 = t0 + Mathf.Pow(Mathf.Max(0.0001f, Vector3.Distance(p0, p1)), alpha);
+        float t2 = t1 + Mathf.Pow(Mathf.Max(0.0001f, Vector3.Distance(p1, p2)), alpha);
+        float t3 = t2 + Mathf.Pow(Mathf.Max(0.0001f, Vector3.Distance(p2, p3)), alpha);
         
         float u = Mathf.InverseLerp(t1, t2, t1 + t * (t2 - t1));
         

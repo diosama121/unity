@@ -465,7 +465,7 @@ public class WorldModel : MonoBehaviour
             float maxZ = Mathf.Max(startPt.z, endPt.z) + safeExpand;
             if (posXZ.x < minX || posXZ.x > maxX || posXZ.y < minZ || posXZ.y > maxZ) continue;
 
-            int samples = Mathf.Max(2, Mathf.CeilToInt(totalLen / 5f));
+            int samples = Mathf.Max(10, Mathf.CeilToInt(totalLen / 1f));
             for (int i = 0; i <= samples; i++)
             {
                 float t = (float)i / samples;
