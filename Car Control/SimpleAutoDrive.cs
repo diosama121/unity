@@ -124,7 +124,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
             }
             else
             {
-                currentIntersectionState = WorldModel.Instance.GetIntersectionState(currentDestinationNodeId);
+                currentIntersectionState = IntersectionState.Uncontrolled;
             }
         }
         else
