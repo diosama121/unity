@@ -32,7 +32,6 @@ public partial class SimpleAutoDrive : MonoBehaviour
 
     private int reverseCount = 0;
     private SimpleCarController carController;
-    private TrafficManager trafficManager;
     
     private CatmullRomSpline currentSpline;
     private Vector3 finalDestination = Vector3.zero;
@@ -55,7 +54,6 @@ public partial class SimpleAutoDrive : MonoBehaviour
     {
         carController = GetComponent<SimpleCarController>();
         if (pathPlanner == null) pathPlanner = FindObjectOfType<PathPlanner>();
-        trafficManager = FindObjectOfType<TrafficManager>();
         carController.autoMode = true;
         lastPosition = transform.position;
         laneSearchTimer = Random.Range(0f, 0.2f);
@@ -84,38 +82,12 @@ public partial class SimpleAutoDrive : MonoBehaviour
     {
         obstacleDetected = false;
 
-        if (trafficManager != null)
+        RaycastHit hit;
+        if (Physics.SphereCast(transform.position + Vector3.up * 0.5f, 1.5f, transform.forward, out hit, safeDistance))
         {
-            var npcs = trafficManager.ActiveNPCs;
-            if (npcs != null)
+            if (hit.collider.GetComponentInParent<SimpleCarController>() != null)
             {
-                Vector3 myPos = transform.position;
-                Vector3 myForward = transform.forward;
-
-                for (int i = 0; i < npcs.Count; i++)
-                {
-                    SimpleAutoDrive other = npcs[i];
-                    if (other == this || other == null) continue;
-
-                    Vector3 otherPos = other.transform.position;
-                    Vector3 dirToOther = otherPos - myPos;
-                    float dist = dirToOther.magnitude;
-
-                    if (dist < safeDistance)
-                    {
-                        float faceDot = Vector3.Dot(myForward, other.transform.forward);
-                        if (faceDot > 0f)
-                        {
-                            Vector3 dirNorm = dirToOther / dist;
-                            float dot = Vector3.Dot(myForward, dirNorm);
-                            if (dot > 0.8f)
-                            {
-                                obstacleDetected = true;
-                                break;
-                            }
-                        }
-                    }
-                }
+                obstacleDetected = true;
             }
         }
 

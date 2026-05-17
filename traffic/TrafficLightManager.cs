@@ -221,7 +221,7 @@ public class TrafficLightManager : MonoBehaviour
             controller = tlObj.AddComponent<TrafficLightController>();
 
         // 配置时间
-        controller.redDuration = redDuration;
+        controller.redDuration = greenDuration + yellowDuration;
         controller.yellowDuration = yellowDuration;
         controller.greenDuration = greenDuration;
 

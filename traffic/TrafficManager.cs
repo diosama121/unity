@@ -64,6 +64,12 @@ public class TrafficManager : MonoBehaviour
                 CatmullRomSpline spline = pathPlanner.PlanPathSpline(startNode.position, targetNode.position);
                 if (spline != null && spline.TotalLength > 0)
                 {
+                    Vector3 startTangent = (spline.GetPoint(0.01f) - spline.GetPoint(0f)).normalized;
+                    if (startTangent != Vector3.zero)
+                    {
+                        npcObj.transform.rotation = Quaternion.LookRotation(startTangent);
+                    }
+
                     autoDrive.SetSplinePath(spline, targetNode.id);
                     npcVehicles.Add(autoDrive);
                     spawnedCount++;

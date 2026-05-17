@@ -262,21 +262,21 @@ public class ROS2BridgeV2 : MonoBehaviour
                     string data = Encoding.UTF8.GetString(buffer, 0, bytesRead);
                     messageBuffer.Append(data);
 
-                    string bufferString = messageBuffer.ToString();
-                    int newlineIndex;
+                    string currentBuffer = messageBuffer.ToString();
+                    string[] messages = currentBuffer.Split(new char[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
 
-                    while ((newlineIndex = bufferString.IndexOf('\n')) != -1)
+                    for (int i = 0; i < messages.Length; i++)
                     {
-                        string message = bufferString.Substring(0, newlineIndex);
-                        bufferString = bufferString.Substring(newlineIndex + 1);
-
-                        if (!string.IsNullOrEmpty(message))
+                        if (i == messages.Length - 1 && !currentBuffer.EndsWith("\n"))
                         {
-                            commandQueue.Enqueue(message);
+                            messageBuffer.Clear();
+                            messageBuffer.Append(messages[i]);
+                            break;
                         }
+                        commandQueue.Enqueue(messages[i]);
                     }
-                    messageBuffer.Clear();
-                    messageBuffer.Append(bufferString);
+
+                    if (currentBuffer.EndsWith("\n")) messageBuffer.Clear();
                 }
             }
             catch (Exception)

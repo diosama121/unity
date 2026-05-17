@@ -363,6 +363,8 @@ public static class RoadMathUtility
             reverseLane.Add(revPos);
         }
 
+        reverseLane.Reverse();
+
         return (forwardLane, reverseLane);
     }
 }

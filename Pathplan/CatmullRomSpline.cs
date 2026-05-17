@@ -162,6 +162,6 @@ public class CatmullRomSpline
         float totalSegments = numSegments * SAMPLES_PER_SEGMENT;
         float globalT = (index - 1 + segmentT) / totalSegments;
         
-        return globalT * (ControlPoints.Count - 1);
+        return globalT;
     }
 }

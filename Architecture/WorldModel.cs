@@ -283,7 +283,8 @@ public class WorldModel : MonoBehaviour
                 approachDir.y = 0f;
                 if (approachDir.sqrMagnitude < 0.001f) continue;
 
-                Vector3 stopPos = junctionPos - approachDir.normalized * 2f;
+                float safeStopDistance = Mathf.Clamp(node.IntersectionRadius, 6f, 15f) + 2f;
+                Vector3 stopPos = junctionPos - approachDir.normalized * safeStopDistance;
                 stopPos.y = GetUnifiedHeight(stopPos.x, stopPos.z) + 0.1f;
 
                 bool isNS = Mathf.Abs(approachDir.z) > Mathf.Abs(approachDir.x);
@@ -326,6 +327,13 @@ public class WorldModel : MonoBehaviour
     private Vector3 CalculateNodeTangent(RoadNode node)
     {
         if (node.NeighborIds.Count == 0) return Vector3.forward;
+
+        if (node.NeighborIds.Count == 2)
+        {
+            Vector3 p0 = _graph[node.NeighborIds[0]].WorldPos;
+            Vector3 p1 = _graph[node.NeighborIds[1]].WorldPos;
+            return (p1 - p0).normalized;
+        }
 
         Vector3 avgDir = Vector3.zero;
         foreach (var nbId in node.NeighborIds)

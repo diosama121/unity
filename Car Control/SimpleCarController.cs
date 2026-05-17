@@ -117,7 +117,8 @@ public partial class SimpleCarController : MonoBehaviour
         if (!isGrounded) newVelocity.y = rb.velocity.y;
         Vector3 localVel = transform.InverseTransformDirection(newVelocity);
         localVel.x *= slipFactor;
-        rb.velocity = transform.TransformDirection(localVel);
+        Vector3 targetVel = transform.TransformDirection(localVel);
+        rb.velocity = Vector3.Lerp(rb.velocity, targetVel, Time.fixedDeltaTime * 10f);
     }
 
     // 纯数学更新 (仅 NPC 模式使用)
@@ -194,9 +195,18 @@ public partial class SimpleCarController : MonoBehaviour
         if (Mathf.Abs(currentSpeed) > 0.01f)
         {
             float speedFactor = Mathf.Clamp(Mathf.Pow(1f - (Mathf.Abs(currentSpeed) / maxSpeed), 2), 0.2f, 1f);
-        float normalizedSteering = targetSteering / maxSteeringAngle;
-        float turnRate = normalizedSteering * speedFactor * steeringSpeed * Time.fixedDeltaTime;
-            transform.Rotate(0, turnRate, 0);
+            float normalizedSteering = targetSteering / maxSteeringAngle;
+            float turnRate = normalizedSteering * speedFactor * steeringSpeed * Time.fixedDeltaTime;
+
+            if (!isNPC && rb != null)
+            {
+                Quaternion turnRotation = Quaternion.Euler(0f, turnRate, 0f);
+                rb.MoveRotation(rb.rotation * turnRotation);
+            }
+            else
+            {
+                transform.Rotate(0, turnRate, 0);
+            }
         }
     }
 

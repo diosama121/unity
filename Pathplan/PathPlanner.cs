@@ -62,12 +62,13 @@ public class PathPlanner : MonoBehaviour
 
         CatmullRomSpline spline = new CatmullRomSpline(controlPoints, useCentripetal: false);
 
-        List<Vector3> smoothPath = new List<Vector3>();
+        List<Vector3> smoothPath = new List<Vector3> { spline.GetPoint(0f) };
+
         int totalSegments = controlPoints.Count - 1;
         int pointsPerSegment = 10;
         for (int i = 0; i < totalSegments; i++)
         {
-            for (int j = 0; j <= pointsPerSegment; j++)
+            for (int j = 1; j <= pointsPerSegment; j++)
             {
                 float globalT = (i + (float)j / pointsPerSegment) / totalSegments;
                 smoothPath.Add(spline.GetPoint(globalT));
@@ -108,14 +109,32 @@ public class PathPlanner : MonoBehaviour
         startNode.HCost = HeuristicCost(startId, targetId);
         openSet.Add(startId, startNode);
 
+        PathNode cachedBest = null;
+        int cachedBestId = -1;
+
         while (openSet.Count > 0)
         {
-            PathNode currentNode = null;
-            foreach (var node in openSet.Values)
+            PathNode currentNode;
+            if (cachedBest != null && openSet.ContainsKey(cachedBestId))
             {
-                if (currentNode == null || node.FCost < currentNode.FCost)
-                    currentNode = node;
+                currentNode = cachedBest;
             }
+            else
+            {
+                currentNode = null;
+                foreach (var kvp in openSet)
+                {
+                    if (currentNode == null || kvp.Value.FCost < currentNode.FCost)
+                    {
+                        currentNode = kvp.Value;
+                        cachedBestId = kvp.Key;
+                    }
+                }
+                cachedBest = currentNode;
+            }
+
+            openSet.Remove(currentNode.NodeId);
+            cachedBest = null;
 
             if (currentNode.NodeId == targetId)
             {
@@ -136,7 +155,6 @@ public class PathPlanner : MonoBehaviour
                 return path;
             }
 
-            openSet.Remove(currentNode.NodeId);
             closedSet.Add(currentNode.NodeId, currentNode);
 
             RoadNode currentRoadNode = _worldModel.GetNode(currentNode.NodeId);
