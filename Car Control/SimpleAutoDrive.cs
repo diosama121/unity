@@ -103,29 +103,34 @@ public partial class SimpleAutoDrive : MonoBehaviour
 
                     if (dist < safeDistance)
                     {
-                        Vector3 dirNorm = dirToOther / dist;
-                        float dot = Vector3.Dot(myForward, dirNorm);
-                        if (dot > 0.8f)
+                        float faceDot = Vector3.Dot(myForward, other.transform.forward);
+                        if (faceDot > 0f)
                         {
-                            obstacleDetected = true;
-                            break;
+                            Vector3 dirNorm = dirToOther / dist;
+                            float dot = Vector3.Dot(myForward, dirNorm);
+                            if (dot > 0.8f)
+                            {
+                                obstacleDetected = true;
+                                break;
+                            }
                         }
                     }
                 }
             }
         }
 
-        if (currentDestinationNodeId >= 0 && WorldModel.Instance != null)
+        if (WorldModel.Instance != null)
         {
-            StopLine relevantStopLine = WorldModel.Instance.GetNearestStopLine(currentDestinationNodeId, transform.position);
-            if (relevantStopLine != null && Vector3.Distance(transform.position, relevantStopLine.Position) < 20f)
+            RoadNode nearestNode = WorldModel.Instance.GetNearestNode(transform.position);
+            if (nearestNode != null && (nearestNode.Type == NodeType.Intersection || nearestNode.Type == NodeType.Merge))
             {
-                currentIntersectionState = WorldModel.Instance.GetPhaseState(relevantStopLine.AssociatedPhaseId);
+                StopLine relevantStopLine = WorldModel.Instance.GetNearestStopLine(nearestNode.Id, transform.position);
+                if (relevantStopLine != null && Vector3.Distance(transform.position, relevantStopLine.Position) < 20f)
+                    currentIntersectionState = WorldModel.Instance.GetPhaseState(relevantStopLine.AssociatedPhaseId);
+                else
+                    currentIntersectionState = IntersectionState.Uncontrolled;
             }
-            else
-            {
-                currentIntersectionState = IntersectionState.Uncontrolled;
-            }
+            else currentIntersectionState = IntersectionState.Uncontrolled;
         }
         else
         {

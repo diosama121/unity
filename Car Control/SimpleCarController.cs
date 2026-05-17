@@ -132,7 +132,7 @@ public partial class SimpleCarController : MonoBehaviour
         // 2. 纯数学转向计算
         if (Mathf.Abs(targetSpeed) > 0.01f)
         {
-            float speedFactor = Mathf.Pow(1f - (Mathf.Abs(targetSpeed) / maxSpeed), 2);
+            float speedFactor = Mathf.Clamp(Mathf.Pow(1f - (Mathf.Abs(targetSpeed) / maxSpeed), 2), 0.2f, 1f);
             float normalizedSteering = targetSteering / maxSteeringAngle;
             float turnAmount = normalizedSteering * speedFactor * steeringSpeed * Time.deltaTime;
             transform.Rotate(0, turnAmount, 0);
@@ -152,7 +152,9 @@ public partial class SimpleCarController : MonoBehaviour
             transform.position = pos;
 
             // 脱离物理法线后，强制锁定 Pitch 与 Roll 轴，实现绝对的“轨道车”匀速贴地飞行
-            transform.rotation = Quaternion.Euler(0f, transform.eulerAngles.y, 0f);
+            float frontY = WorldModel.Instance.GetUnifiedHeight(transform.position.x + transform.forward.x, transform.position.z + transform.forward.z);
+            Vector3 slopeForward = new Vector3(transform.forward.x, frontY - trueGroundY, transform.forward.z).normalized;
+            transform.rotation = Quaternion.LookRotation(slopeForward, Vector3.up);
         }
     }
 
@@ -182,7 +184,7 @@ public partial class SimpleCarController : MonoBehaviour
         else
         {
             if (autoThrottle >= 0) targetSpeed = Mathf.Lerp(targetSpeed, maxSpeed * autoThrottle, Time.deltaTime * 2f);
-            else targetSpeed = maxSpeed * autoThrottle;
+            else targetSpeed = Mathf.Lerp(targetSpeed, maxSpeed * autoThrottle, Time.deltaTime * 2f);
         }
         targetSteering = autoSteering * maxSteeringAngle;
     }
@@ -191,9 +193,9 @@ public partial class SimpleCarController : MonoBehaviour
     {
         if (Mathf.Abs(currentSpeed) > 0.01f)
         {
-            float speedFactor = Mathf.Pow(1f - (Mathf.Abs(currentSpeed) / maxSpeed), 2);
-            float normalizedSteering = targetSteering / maxSteeringAngle;
-            float turnRate = normalizedSteering * speedFactor * steeringSpeed * Time.fixedDeltaTime;
+            float speedFactor = Mathf.Clamp(Mathf.Pow(1f - (Mathf.Abs(currentSpeed) / maxSpeed), 2), 0.2f, 1f);
+        float normalizedSteering = targetSteering / maxSteeringAngle;
+        float turnRate = normalizedSteering * speedFactor * steeringSpeed * Time.fixedDeltaTime;
             transform.Rotate(0, turnRate, 0);
         }
     }
