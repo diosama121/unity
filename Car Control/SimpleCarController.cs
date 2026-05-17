@@ -5,7 +5,7 @@ using UnityEngine;
 /// 玩家模式：保留物理射线与 Rigidbody 驱动。
 /// NPC模式：彻底切断物理引擎与旧版接口，通过 V4.1 统一高程真理层进行纯数学轨道飞行。
 /// </summary>
-public class SimpleCarController : MonoBehaviour
+public partial class SimpleCarController : MonoBehaviour
 {
     [Header("车辆参数")]
     public float maxSpeed = 30f;
@@ -80,45 +80,7 @@ public class SimpleCarController : MonoBehaviour
 
     void Update()
     {
-        // WASD 手动操控：临时接管，不永久修改autoMode
-        // 松开WASD后自动恢复之前的autoMode状态
-        bool wasdActive = Input.GetKey(KeyCode.W) || Input.GetKey(KeyCode.A) || Input.GetKey(KeyCode.S) || Input.GetKey(KeyCode.D);
-        if (wasdActive)
-        {
-            if (!wasdOverride)
-            {
-                // 第一帧按下WASD：保存当前autoMode，临时切手动
-                wasdOverride = true;
-                autoModeBeforeOverride = autoMode;
-                autoMode = false;
-            }
-            float t = (Input.GetKey(KeyCode.W) ? 1f : 0f) - (Input.GetKey(KeyCode.S) ? 1f : 0f);
-            float s = (Input.GetKey(KeyCode.D) ? 1f : 0f) - (Input.GetKey(KeyCode.A) ? 1f : 0f);
-            SetAutoControl(t, s);
-        }
-        else if (wasdOverride)
-        {
-            // WASD松开：恢复之前的autoMode状态
-            wasdOverride = false;
-            autoMode = autoModeBeforeOverride;
-        }
-
-        // R键：回归初始位置
-        if (Input.GetKeyDown(KeyCode.R))
-        {
-            ResetPosition();
-        }
-
-        // N键：重置导航路径
-        if (Input.GetKeyDown(KeyCode.N))
-        {
-            wasdOverride = false;
-            autoMode = true;
-            SetAutoBrake(0f);
-            SimpleAutoDrive autoDrive = GetComponent<SimpleAutoDrive>();
-            if (autoDrive == null) autoDrive = FindObjectOfType<SimpleAutoDrive>();
-            if (autoDrive != null) autoDrive.ResetNavigation();
-        }
+        HandlePlayerInput();
 
         if (!isNPC)
         {

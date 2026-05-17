@@ -585,411 +585,68 @@ public class MasterUIManager : MonoBehaviour
         ContentSizeFitter csf = panelGO.AddComponent<ContentSizeFitter>();
         csf.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-        CreateTitle(panelGO, "A5 Master Control Panel");
+        UIPanelBuilder.CreateTitle(panelGO, "A5 Master Control Panel");
 
-        CreateSectionHeader(panelGO, "--- Vehicle Control ---");
-        CreateSliderRow(panelGO, "MaxSpeedSlider", "Max Speed", 5f, 100f, 30f, "F0");
-        CreateSliderRow(panelGO, "SteeringSlider", "Steering Angle", 10f, 90f, 45f, "F0");
-        CreateSliderRow(panelGO, "BrakeDecelSlider", "Brake Force", 1f, 30f, 10f, "F0");
-        CreateSliderRow(panelGO, "AccelerationSlider", "Acceleration", 1f, 15f, 4f, "F0");
+        UIPanelBuilder.CreateSectionHeader(panelGO, "--- Vehicle Control ---");
+        UIPanelBuilder.CreateSliderRow(panelGO, "MaxSpeedSlider", "Max Speed", 5f, 100f, 30f, "F0");
+        UIPanelBuilder.CreateSliderRow(panelGO, "SteeringSlider", "Steering Angle", 10f, 90f, 45f, "F0");
+        UIPanelBuilder.CreateSliderRow(panelGO, "BrakeDecelSlider", "Brake Force", 1f, 30f, 10f, "F0");
+        UIPanelBuilder.CreateSliderRow(panelGO, "AccelerationSlider", "Acceleration", 1f, 15f, 4f, "F0");
 
-        CreateSectionHeader(panelGO, "--- Traffic Light ---");
-        CreateSliderRow(panelGO, "GreenDurationSlider", "Green (s)", 3f, 60f, 8f, "F0");
-        CreateSliderRow(panelGO, "RedDurationSlider", "Red (s)", 3f, 60f, 8f, "F0");
-        CreateSliderRow(panelGO, "YellowDurationSlider", "Yellow (s)", 1f, 5f, 2f, "F0");
+        UIPanelBuilder.CreateSectionHeader(panelGO, "--- Traffic Light ---");
+        UIPanelBuilder.CreateSliderRow(panelGO, "GreenDurationSlider", "Green (s)", 3f, 60f, 8f, "F0");
+        UIPanelBuilder.CreateSliderRow(panelGO, "RedDurationSlider", "Red (s)", 3f, 60f, 8f, "F0");
+        UIPanelBuilder.CreateSliderRow(panelGO, "YellowDurationSlider", "Yellow (s)", 1f, 5f, 2f, "F0");
 
-        CreateSectionHeader(panelGO, "--- ROS2 Connection ---");
-        CreateInputRow(panelGO, "RosIPInput", "IP", "172.21.16.202", InputField.ContentType.Standard);
-        CreateInputRow(panelGO, "RosPortInput", "Port", "10086", InputField.ContentType.IntegerNumber);
-        CreateButton(panelGO, "ReconnectBtn", "Reconnect");
+        UIPanelBuilder.CreateSectionHeader(panelGO, "--- ROS2 Connection ---");
+        UIPanelBuilder.CreateInputRow(panelGO, "RosIPInput", "IP", "172.21.16.202", InputField.ContentType.Standard);
+        UIPanelBuilder.CreateInputRow(panelGO, "RosPortInput", "Port", "10086", InputField.ContentType.IntegerNumber);
+        UIPanelBuilder.CreateButton(panelGO, "ReconnectBtn", "Reconnect");
 
-        CreateSectionHeader(panelGO, "--- Key Bindings ---");
-        CreateKeybindRow(panelGO, "BrakeKeyRow", "Brake", "Space");
-        CreateKeybindRow(panelGO, "ToggleAutoKeyRow", "Toggle Auto", "T");
-        CreateKeybindRow(panelGO, "SwitchCamKeyRow", "Switch Cam", "C");
-        CreateKeybindRow(panelGO, "ToggleUIKeyRow", "Toggle UI", "Escape");
-        CreateButton(panelGO, "ResetKeysBtn", "Reset All Keys");
+        UIPanelBuilder.CreateSectionHeader(panelGO, "--- Key Bindings ---");
+        UIPanelBuilder.CreateKeybindRow(panelGO, "BrakeKeyRow", "Brake", "Space");
+        UIPanelBuilder.CreateKeybindRow(panelGO, "ToggleAutoKeyRow", "Toggle Auto", "T");
+        UIPanelBuilder.CreateKeybindRow(panelGO, "SwitchCamKeyRow", "Switch Cam", "C");
+        UIPanelBuilder.CreateKeybindRow(panelGO, "ToggleUIKeyRow", "Toggle UI", "Escape");
+        UIPanelBuilder.CreateButton(panelGO, "ResetKeysBtn", "Reset All Keys");
 
-        CreateButton(panelGO, "ClosePanelBtn", "Close Panel [Esc]");
+        UIPanelBuilder.CreateButton(panelGO, "ClosePanelBtn", "Close Panel [Esc]");
 
         // 提示文字
-        CreateHintText(panelGO, "按 ESC 切换面板  |  T 切换自动驾驶  |  N 重置AI导航");
+        UIPanelBuilder.CreateHintText(panelGO, "按 ESC 切换面板  |  T 切换自动驾驶  |  N 重置AI导航");
 
-        CreateSectionHeader(panelGO, "--- Debug Info ---");
-        CreateDebugRow(panelGO, "DbgFPS", "FPS", "0.0");
-        CreateSectionHeaderSub(panelGO, "-- Car Controller --");
-        CreateDebugRow(panelGO, "DbgSpeed", "Speed", "0.0 m/s");
-        CreateDebugRow(panelGO, "DbgSteering", "Steering", "0.0 deg");
-        CreateDebugRow(panelGO, "DbgAutoMode", "Auto Mode", "No");
-        CreateDebugRow(panelGO, "DbgIsNPC", "Is NPC", "No");
-        CreateSectionHeaderSub(panelGO, "-- Auto Drive --");
-        CreateDebugRow(panelGO, "DbgTargetSpeed", "Target Spd", "N/A");
-        CreateDebugRow(panelGO, "DbgSafeDist", "Safe Dist", "N/A");
-        CreateDebugRow(panelGO, "DbgDriveState", "Drive State", "N/A");
-        CreateDebugRow(panelGO, "DbgLaneId", "Lane ID", "N/A");
-        CreateDebugRow(panelGO, "DbgIntersection", "Intersection", "N/A");
-        CreateDebugRow(panelGO, "DbgObstacle", "Obstacle", "N/A");
-        CreateDebugRow(panelGO, "DbgCurrentT", "Current T", "N/A");
-        CreateSectionHeaderSub(panelGO, "-- Traffic Mgr --");
-        CreateDebugRow(panelGO, "DbgNPCCount", "NPC Count", "N/A");
-        CreateDebugRow(panelGO, "DbgHasSpawned", "Has Spawned", "N/A");
-        CreateSectionHeaderSub(panelGO, "-- World Model --");
-        CreateDebugRow(panelGO, "DbgNodeCount", "Nodes", "N/A");
-        CreateDebugRow(panelGO, "DbgLaneCount", "Lanes", "N/A");
-        CreateDebugRow(panelGO, "DbgWorldMode", "Mode", "N/A");
-        CreateSectionHeaderSub(panelGO, "-- ROS2 Bridge --");
-        CreateDebugRow(panelGO, "DbgROSConnected", "Connected", "N/A");
-        CreateDebugRow(panelGO, "DbgROSControl", "ROS Ctrl", "N/A");
-        CreateSectionHeaderSub(panelGO, "-- Camera --");
-        CreateDebugRow(panelGO, "DbgCamModeKey", "Mode Key", "N/A");
-        CreateDebugRow(panelGO, "DbgCamTargetKey", "Target Key", "N/A");
+        UIPanelBuilder.CreateSectionHeader(panelGO, "--- Debug Info ---");
+        UIPanelBuilder.CreateDebugRow(panelGO, "DbgFPS", "FPS", "0.0");
+        UIPanelBuilder.CreateSectionHeaderSub(panelGO, "-- Car Controller --");
+        UIPanelBuilder.CreateDebugRow(panelGO, "DbgSpeed", "Speed", "0.0 m/s");
+        UIPanelBuilder.CreateDebugRow(panelGO, "DbgSteering", "Steering", "0.0 deg");
+        UIPanelBuilder.CreateDebugRow(panelGO, "DbgAutoMode", "Auto Mode", "No");
+        UIPanelBuilder.CreateDebugRow(panelGO, "DbgIsNPC", "Is NPC", "No");
+        UIPanelBuilder.CreateSectionHeaderSub(panelGO, "-- Auto Drive --");
+        UIPanelBuilder.CreateDebugRow(panelGO, "DbgTargetSpeed", "Target Spd", "N/A");
+        UIPanelBuilder.CreateDebugRow(panelGO, "DbgSafeDist", "Safe Dist", "N/A");
+        UIPanelBuilder.CreateDebugRow(panelGO, "DbgDriveState", "Drive State", "N/A");
+        UIPanelBuilder.CreateDebugRow(panelGO, "DbgLaneId", "Lane ID", "N/A");
+        UIPanelBuilder.CreateDebugRow(panelGO, "DbgIntersection", "Intersection", "N/A");
+        UIPanelBuilder.CreateDebugRow(panelGO, "DbgObstacle", "Obstacle", "N/A");
+        UIPanelBuilder.CreateDebugRow(panelGO, "DbgCurrentT", "Current T", "N/A");
+        UIPanelBuilder.CreateSectionHeaderSub(panelGO, "-- Traffic Mgr --");
+        UIPanelBuilder.CreateDebugRow(panelGO, "DbgNPCCount", "NPC Count", "N/A");
+        UIPanelBuilder.CreateDebugRow(panelGO, "DbgHasSpawned", "Has Spawned", "N/A");
+        UIPanelBuilder.CreateSectionHeaderSub(panelGO, "-- World Model --");
+        UIPanelBuilder.CreateDebugRow(panelGO, "DbgNodeCount", "Nodes", "N/A");
+        UIPanelBuilder.CreateDebugRow(panelGO, "DbgLaneCount", "Lanes", "N/A");
+        UIPanelBuilder.CreateDebugRow(panelGO, "DbgWorldMode", "Mode", "N/A");
+        UIPanelBuilder.CreateSectionHeaderSub(panelGO, "-- ROS2 Bridge --");
+        UIPanelBuilder.CreateDebugRow(panelGO, "DbgROSConnected", "Connected", "N/A");
+        UIPanelBuilder.CreateDebugRow(panelGO, "DbgROSControl", "ROS Ctrl", "N/A");
+        UIPanelBuilder.CreateSectionHeaderSub(panelGO, "-- Camera --");
+        UIPanelBuilder.CreateDebugRow(panelGO, "DbgCamModeKey", "Mode Key", "N/A");
+        UIPanelBuilder.CreateDebugRow(panelGO, "DbgCamTargetKey", "Target Key", "N/A");
 
         settingsPanel = panelGO;
 
         Debug.Log("[MasterUIManager] UI 面板已自动生成在 Canvas 下");
-    }
-
-    GameObject CreateTitle(GameObject parent, string text)
-    {
-        GameObject go = new GameObject("Title");
-        go.transform.SetParent(parent.transform, false);
-        go.AddComponent<LayoutElement>().minHeight = 30;
-        Text txt = go.AddComponent<Text>();
-        txt.text = text;
-        txt.font = GetDefaultFont();
-        txt.fontSize = 18;
-        txt.fontStyle = FontStyle.Bold;
-        txt.color = new Color(0.3f, 0.8f, 1f);
-        txt.alignment = TextAnchor.MiddleCenter;
-        return go;
-    }
-
-    GameObject CreateSectionHeader(GameObject parent, string text)
-    {
-        GameObject go = new GameObject("Header_" + text.GetHashCode());
-        go.transform.SetParent(parent.transform, false);
-        go.AddComponent<LayoutElement>().minHeight = 24;
-        Text txt = go.AddComponent<Text>();
-        txt.text = text;
-        txt.font = GetDefaultFont();
-        txt.fontSize = 13;
-        txt.fontStyle = FontStyle.Bold;
-        txt.color = new Color(0.6f, 0.6f, 0.7f);
-        txt.alignment = TextAnchor.MiddleLeft;
-        return go;
-    }
-
-    GameObject CreateSliderRow(GameObject parent, string name, string label, float min, float max, float defaultValue, string format)
-    {
-        GameObject row = new GameObject(name);
-        row.transform.SetParent(parent.transform, false);
-        row.AddComponent<LayoutElement>().minHeight = 32;
-
-        HorizontalLayoutGroup hlg = row.AddComponent<HorizontalLayoutGroup>();
-        hlg.childAlignment = TextAnchor.MiddleLeft;
-        hlg.childControlWidth = true;
-        hlg.childControlHeight = true;
-        hlg.childForceExpandWidth = false;
-        hlg.childForceExpandHeight = true;
-        hlg.spacing = 6;
-
-        GameObject labelGO = new GameObject("Label");
-        labelGO.transform.SetParent(row.transform, false);
-        Text labelTxt = labelGO.AddComponent<Text>();
-        labelTxt.text = label;
-        labelTxt.font = GetDefaultFont();
-        labelTxt.fontSize = 13;
-        labelTxt.color = Color.white;
-        labelTxt.alignment = TextAnchor.MiddleLeft;
-        labelGO.AddComponent<LayoutElement>().minWidth = 90;
-
-        GameObject sliderGO = new GameObject("Slider");
-        sliderGO.transform.SetParent(row.transform, false);
-        Slider slider = sliderGO.AddComponent<Slider>();
-        slider.minValue = min;
-        slider.maxValue = max;
-        slider.value = defaultValue;
-        sliderGO.AddComponent<LayoutElement>().flexibleWidth = 1;
-
-        RectTransform sliderRT = sliderGO.GetComponent<RectTransform>();
-        sliderRT.sizeDelta = new Vector2(0, 20);
-
-        GameObject bgGO = new GameObject("Background");
-        bgGO.transform.SetParent(sliderGO.transform, false);
-        Image bgImg = bgGO.AddComponent<Image>();
-        bgImg.color = new Color(0.2f, 0.2f, 0.25f);
-        slider.targetGraphic = bgImg;
-
-        GameObject fillGO = new GameObject("Fill");
-        fillGO.transform.SetParent(sliderGO.transform, false);
-        Image fillImg = fillGO.AddComponent<Image>();
-        fillImg.color = new Color(0.3f, 0.7f, 1f);
-        RectTransform fillRT = fillGO.GetComponent<RectTransform>();
-        fillRT.anchorMin = Vector2.zero;
-        fillRT.anchorMax = Vector2.one;
-        fillRT.sizeDelta = Vector2.zero;
-        slider.fillRect = fillRT;
-        slider.targetGraphic = fillImg;
-
-        GameObject handleGO = new GameObject("Handle");
-        handleGO.transform.SetParent(sliderGO.transform, false);
-        Image handleImg = handleGO.AddComponent<Image>();
-        handleImg.color = new Color(0.9f, 0.9f, 0.95f);
-        RectTransform handleRT = handleGO.GetComponent<RectTransform>();
-        handleRT.sizeDelta = new Vector2(12, 18);
-        slider.handleRect = handleRT;
-
-        GameObject valGO = new GameObject("ValueText");
-        valGO.transform.SetParent(row.transform, false);
-        Text valTxt = valGO.AddComponent<Text>();
-        valTxt.text = defaultValue.ToString(format);
-        valTxt.font = GetDefaultFont();
-        valTxt.fontSize = 13;
-        valTxt.color = new Color(0.3f, 0.8f, 1f);
-        valTxt.alignment = TextAnchor.MiddleRight;
-        valGO.AddComponent<LayoutElement>().minWidth = 36;
-
-        return row;
-    }
-
-    GameObject CreateInputRow(GameObject parent, string name, string placeholder, string defaultValue, InputField.ContentType contentType)
-    {
-        GameObject row = new GameObject(name);
-        row.transform.SetParent(parent.transform, false);
-        row.AddComponent<LayoutElement>().minHeight = 30;
-
-        HorizontalLayoutGroup hlg = row.AddComponent<HorizontalLayoutGroup>();
-        hlg.childAlignment = TextAnchor.MiddleLeft;
-        hlg.childControlWidth = true;
-        hlg.childControlHeight = true;
-        hlg.childForceExpandWidth = false;
-        hlg.childForceExpandHeight = true;
-        hlg.spacing = 6;
-
-        GameObject labelGO = new GameObject("Label");
-        labelGO.transform.SetParent(row.transform, false);
-        Text labelTxt = labelGO.AddComponent<Text>();
-        labelTxt.text = placeholder;
-        labelTxt.font = GetDefaultFont();
-        labelTxt.fontSize = 13;
-        labelTxt.color = Color.white;
-        labelTxt.alignment = TextAnchor.MiddleLeft;
-        labelGO.AddComponent<LayoutElement>().minWidth = 50;
-
-        GameObject inputGO = new GameObject("Input");
-        inputGO.transform.SetParent(row.transform, false);
-        InputField input = inputGO.AddComponent<InputField>();
-        input.text = defaultValue;
-        input.contentType = contentType;
-        inputGO.AddComponent<LayoutElement>().flexibleWidth = 1;
-
-        GameObject textGO = new GameObject("Text");
-        textGO.transform.SetParent(inputGO.transform, false);
-        Text inputText = textGO.AddComponent<Text>();
-        inputText.text = defaultValue;
-        inputText.font = GetDefaultFont();
-        inputText.fontSize = 13;
-        inputText.color = Color.black;
-        inputText.alignment = TextAnchor.MiddleLeft;
-        inputText.supportRichText = false;
-        RectTransform textRT = textGO.GetComponent<RectTransform>();
-        textRT.anchorMin = Vector2.zero;
-        textRT.anchorMax = Vector2.one;
-        textRT.sizeDelta = Vector2.zero;
-        input.textComponent = inputText;
-
-        GameObject placeholderGO = new GameObject("Placeholder");
-        placeholderGO.transform.SetParent(inputGO.transform, false);
-        Text placeholderTxt = placeholderGO.AddComponent<Text>();
-        placeholderTxt.text = placeholder;
-        placeholderTxt.font = GetDefaultFont();
-        placeholderTxt.fontSize = 13;
-        placeholderTxt.fontStyle = FontStyle.Italic;
-        placeholderTxt.color = new Color(0.5f, 0.5f, 0.5f);
-        placeholderTxt.alignment = TextAnchor.MiddleLeft;
-        RectTransform phRT = placeholderGO.GetComponent<RectTransform>();
-        phRT.anchorMin = Vector2.zero;
-        phRT.anchorMax = Vector2.one;
-        phRT.sizeDelta = Vector2.zero;
-        input.placeholder = placeholderTxt;
-
-        Image inputBg = inputGO.AddComponent<Image>();
-        inputBg.color = Color.white;
-
-        return row;
-    }
-
-    GameObject CreateKeybindRow(GameObject parent, string name, string label, string defaultKey)
-    {
-        GameObject row = new GameObject(name);
-        row.transform.SetParent(parent.transform, false);
-        row.AddComponent<LayoutElement>().minHeight = 28;
-
-        HorizontalLayoutGroup hlg = row.AddComponent<HorizontalLayoutGroup>();
-        hlg.childAlignment = TextAnchor.MiddleLeft;
-        hlg.childControlWidth = true;
-        hlg.childControlHeight = true;
-        hlg.childForceExpandWidth = false;
-        hlg.childForceExpandHeight = true;
-        hlg.spacing = 6;
-
-        GameObject labelGO = new GameObject("Label");
-        labelGO.transform.SetParent(row.transform, false);
-        Text labelTxt = labelGO.AddComponent<Text>();
-        labelTxt.text = label;
-        labelTxt.font = GetDefaultFont();
-        labelTxt.fontSize = 13;
-        labelTxt.color = Color.white;
-        labelTxt.alignment = TextAnchor.MiddleLeft;
-        labelGO.AddComponent<LayoutElement>().minWidth = 75;
-
-        GameObject keyGO = new GameObject("KeyText");
-        keyGO.transform.SetParent(row.transform, false);
-        Text keyTxt = keyGO.AddComponent<Text>();
-        keyTxt.text = defaultKey;
-        keyTxt.font = GetDefaultFont();
-        keyTxt.fontSize = 13;
-        keyTxt.fontStyle = FontStyle.Bold;
-        keyTxt.color = new Color(1f, 0.85f, 0.2f);
-        keyTxt.alignment = TextAnchor.MiddleCenter;
-        keyGO.AddComponent<LayoutElement>().minWidth = 70;
-
-        GameObject btnGO = new GameObject("RebindBtn");
-        btnGO.transform.SetParent(row.transform, false);
-        Button btn = btnGO.AddComponent<Button>();
-        btnGO.AddComponent<LayoutElement>().minWidth = 80;
-        btnGO.AddComponent<LayoutElement>().minHeight = 24;
-
-        Image btnImg = btnGO.AddComponent<Image>();
-        btnImg.color = new Color(0.25f, 0.25f, 0.35f);
-        btn.targetGraphic = btnImg;
-
-        GameObject btnTextGO = new GameObject("Text");
-        btnTextGO.transform.SetParent(btnGO.transform, false);
-        Text btnTxt = btnTextGO.AddComponent<Text>();
-        btnTxt.text = "Rebind";
-        btnTxt.font = GetDefaultFont();
-        btnTxt.fontSize = 12;
-        btnTxt.color = Color.white;
-        btnTxt.alignment = TextAnchor.MiddleCenter;
-        RectTransform btnTxtRT = btnTextGO.GetComponent<RectTransform>();
-        btnTxtRT.anchorMin = Vector2.zero;
-        btnTxtRT.anchorMax = Vector2.one;
-        btnTxtRT.sizeDelta = Vector2.zero;
-
-        return row;
-    }
-
-    GameObject CreateButton(GameObject parent, string name, string label)
-    {
-        GameObject btnGO = new GameObject(name);
-        btnGO.transform.SetParent(parent.transform, false);
-        btnGO.AddComponent<LayoutElement>().minHeight = 32;
-
-        Button btn = btnGO.AddComponent<Button>();
-        Image btnImg = btnGO.AddComponent<Image>();
-        btnImg.color = new Color(0.2f, 0.4f, 0.6f);
-        btn.targetGraphic = btnImg;
-
-        GameObject btnTextGO = new GameObject("Text");
-        btnTextGO.transform.SetParent(btnGO.transform, false);
-        Text btnTxt = btnTextGO.AddComponent<Text>();
-        btnTxt.text = label;
-        btnTxt.font = GetDefaultFont();
-        btnTxt.fontSize = 14;
-        btnTxt.fontStyle = FontStyle.Bold;
-        btnTxt.color = Color.white;
-        btnTxt.alignment = TextAnchor.MiddleCenter;
-        RectTransform btnTxtRT = btnTextGO.GetComponent<RectTransform>();
-        btnTxtRT.anchorMin = Vector2.zero;
-        btnTxtRT.anchorMax = Vector2.one;
-        btnTxtRT.sizeDelta = Vector2.zero;
-
-        return btnGO;
-    }
-
-    /// <summary>
-    /// 创建只读调试信息行：左侧标签 + 右侧动态值（由 RefreshDebugInfo 定时更新）
-    /// </summary>
-    GameObject CreateDebugRow(GameObject parent, string name, string label, string defaultVal)
-    {
-        GameObject row = new GameObject(name);
-        row.transform.SetParent(parent.transform, false);
-        row.AddComponent<LayoutElement>().minHeight = 22;
-
-        HorizontalLayoutGroup hlg = row.AddComponent<HorizontalLayoutGroup>();
-        hlg.childAlignment = TextAnchor.MiddleLeft;
-        hlg.childControlWidth = true;
-        hlg.childControlHeight = true;
-        hlg.childForceExpandWidth = false;
-        hlg.childForceExpandHeight = true;
-        hlg.spacing = 4;
-
-        // 标签（左侧，偏灰白）
-        GameObject labelGO = new GameObject("Label");
-        labelGO.transform.SetParent(row.transform, false);
-        Text labelTxt = labelGO.AddComponent<Text>();
-        labelTxt.text = label;
-        labelTxt.font = GetDefaultFont();
-        labelTxt.fontSize = 11;
-        labelTxt.color = new Color(0.65f, 0.65f, 0.7f);
-        labelTxt.alignment = TextAnchor.MiddleLeft;
-        labelGO.AddComponent<LayoutElement>().minWidth = 80;
-
-        // 值（右侧，亮色高亮）
-        GameObject valGO = new GameObject("ValueText");
-        valGO.transform.SetParent(row.transform, false);
-        Text valTxt = valGO.AddComponent<Text>();
-        valTxt.text = defaultVal;
-        valTxt.font = GetDefaultFont();
-        valTxt.fontSize = 11;
-        valTxt.fontStyle = FontStyle.Bold;
-        valTxt.color = new Color(0.4f, 0.9f, 0.6f);
-        valTxt.alignment = TextAnchor.MiddleRight;
-        valGO.AddComponent<LayoutElement>().flexibleWidth = 1;
-
-        return row;
-    }
-
-    /// <summary>
-    /// 创建子节标题（字体更小、颜色更淡，用于分组调试字段）
-    /// </summary>
-    GameObject CreateSectionHeaderSub(GameObject parent, string text)
-    {
-        GameObject go = new GameObject("SubHeader_" + text.GetHashCode());
-        go.transform.SetParent(parent.transform, false);
-        go.AddComponent<LayoutElement>().minHeight = 18;
-        Text txt = go.AddComponent<Text>();
-        txt.text = text;
-        txt.font = GetDefaultFont();
-        txt.fontSize = 10;
-        txt.fontStyle = FontStyle.Italic;
-        txt.color = new Color(0.45f, 0.45f, 0.5f);
-        txt.alignment = TextAnchor.MiddleLeft;
-        return go;
-    }
-
-    /// <summary>
-    /// 创建提示文字行（小号、灰色、居中）
-    /// </summary>
-    GameObject CreateHintText(GameObject parent, string text)
-    {
-        GameObject go = new GameObject("HintText");
-        go.transform.SetParent(parent.transform, false);
-        go.AddComponent<LayoutElement>().minHeight = 20;
-        Text txt = go.AddComponent<Text>();
-        txt.text = text;
-        txt.font = GetDefaultFont();
-        txt.fontSize = 11;
-        txt.fontStyle = FontStyle.Normal;
-        txt.color = new Color(0.5f, 0.5f, 0.55f);
-        txt.alignment = TextAnchor.MiddleCenter;
-        return go;
-    }
-
-    Font GetDefaultFont()
-    {
-        return Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
     }
 
     #endregion
