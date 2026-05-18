@@ -8,9 +8,6 @@ public class MasterUIManager : MonoBehaviour
     [Header("=== Auto Setup ===")]
     public bool autoGenerateUI = true;
 
-    [Header("=== Panel Reference (手动赋值可跳过自动生成) ===")]
-    public GameObject settingsPanel;
-
     private SimpleCarController carController;
     private SimpleAutoDrive autoDrive;
     private TrafficLightManager trafficLightManager;
@@ -18,42 +15,54 @@ public class MasterUIManager : MonoBehaviour
     private CameraController cameraController;
     private TrafficManager trafficManager;
     private RoadNetworkGenerator roadGen;
+    private ProceduralRoadBuilder roadBuilder;
 
     private bool isRebinding = false;
-    private bool panelVisible = false;
 
-    // --- Debug Info Section ---
-    private Dictionary<string, Text> debugTexts = new Dictionary<string, Text>();
-    private float debugRefreshInterval = 0.15f;
-    private float debugRefreshTimer = 0f;
+    private Canvas mainCanvas;
+    private GameObject topBar;
+    private GameObject leftPanel;
+    private GameObject rightPanel;
+    private GameObject hudPanel;
+    private GameObject keyPanel;
+    private GameObject rightScrollContent;
 
-    // FPS 计算
-    private float fpsAccum = 0f;
-    private int fpsFrameCount = 0;
-    private float currentFps = 0f;
-    private float fpsRefreshInterval = 0.5f;
-    private float fpsRefreshTimer = 0f;
+    private GameObject moduleBaseSettings;
+    private GameObject moduleTerrain;
+    private GameObject moduleTraffic;
+    private GameObject moduleSystem;
+    private GameObject moduleCamera;
+
+    private GameObject citySubPanel;
+    private GameObject countrysideSubPanel;
+
+    private Dictionary<string, Text> hudTexts = new Dictionary<string, Text>();
+    private Dictionary<string, Text> keyTexts = new Dictionary<string, Text>();
+    private Dictionary<string, InputField> inputFields = new Dictionary<string, InputField>();
+    private Dictionary<string, Toggle> toggles = new Dictionary<string, Toggle>();
+    private Dictionary<string, Dropdown> dropdowns = new Dictionary<string, Dropdown>();
+
+    private float hudRefreshInterval = 0.2f;
+    private float hudRefreshTimer = 0f;
 
     private static readonly Vector2 refResolution = new Vector2(1920, 1080);
 
+    private bool isMinimalMode = false;
+
+    void Awake()
+    {
+        FindAllComponents();
+
+        if (autoGenerateUI)
+        {
+            BuildCompleteUI();
+        }
+    }
+
     void Start()
     {
-        if (autoGenerateUI && settingsPanel == null)
-        {
-            GenerateUIPanel();
-        }
-
-        if (settingsPanel == null)
-        {
-            Debug.LogWarning("[MasterUIManager] 未找到设置面板，UI 系统已静默禁用");
-            return;
-        }
-
-        FindAllComponents();
-        BindAllEvents();
-        SyncUIFromComponents();
-        panelVisible = true;
-        settingsPanel.SetActive(true);
+        SyncAllUIFromComponents();
+        BindAllUIEvents();
 
         if (RuntimeInputManager.Instance != null)
         {
@@ -63,44 +72,31 @@ public class MasterUIManager : MonoBehaviour
 
     void Update()
     {
-        // FPS 累积计算（不受面板开关影响，始终记录）
-        fpsAccum += Time.unscaledDeltaTime;
-        fpsFrameCount++;
-        fpsRefreshTimer += Time.unscaledDeltaTime;
-        if (fpsRefreshTimer >= fpsRefreshInterval)
-        {
-            currentFps = fpsFrameCount > 0 ? fpsFrameCount / fpsAccum : 0f;
-            fpsAccum = 0f;
-            fpsFrameCount = 0;
-            fpsRefreshTimer = 0f;
-        }
-
         if (RuntimeInputManager.Instance == null) return;
 
-        if (!isRebinding && RuntimeInputManager.Instance.GetKeyDown("ToggleUI"))
+        if (!isRebinding)
         {
-            TogglePanel();
-        }
-
-        if (RuntimeInputManager.Instance.GetKeyDown("ToggleAuto"))
-        {
-            ToggleAutoDrive();
-        }
-
-        if (RuntimeInputManager.Instance.GetKey("Brake") && carController != null)
-        {
-            carController.SetAutoBrake(carController.brakeDeceleration);
-        }
-
-        // 调试信息定时刷新（仅在面板可见时）
-        if (panelVisible && settingsPanel != null)
-        {
-            debugRefreshTimer += Time.deltaTime;
-            if (debugRefreshTimer >= debugRefreshInterval)
+            if (RuntimeInputManager.Instance.GetKeyDown("ToggleUI"))
             {
-                RefreshDebugInfo();
-                debugRefreshTimer = 0f;
+                ToggleMinimalMode();
             }
+
+            if (RuntimeInputManager.Instance.GetKeyDown("ToggleAuto"))
+            {
+                ToggleAutoDrive();
+            }
+
+            if (RuntimeInputManager.Instance.GetKey("Brake") && carController != null)
+            {
+                carController.SetAutoBrake(carController.brakeDeceleration);
+            }
+        }
+
+        hudRefreshTimer += Time.deltaTime;
+        if (hudRefreshTimer >= hudRefreshInterval)
+        {
+            RefreshHUD();
+            hudRefreshTimer = 0f;
         }
     }
 
@@ -118,25 +114,8 @@ public class MasterUIManager : MonoBehaviour
         {
             cameraController.modeSwitchKey = newKey;
         }
+        RefreshAllKeyTexts();
     }
-
-    #region Panel Toggle & Shortcuts
-
-    void TogglePanel()
-    {
-        panelVisible = !panelVisible;
-        if (settingsPanel != null) settingsPanel.SetActive(panelVisible);
-    }
-
-    void ToggleAutoDrive()
-    {
-        if (autoDrive != null)
-        {
-            autoDrive.ToggleAutoDrive();
-        }
-    }
-
-    #endregion
 
     #region Component Discovery
 
@@ -149,393 +128,42 @@ public class MasterUIManager : MonoBehaviour
         cameraController = FindObjectOfType<CameraController>();
         trafficManager = FindObjectOfType<TrafficManager>();
         roadGen = FindObjectOfType<RoadNetworkGenerator>();
+        roadBuilder = FindObjectOfType<ProceduralRoadBuilder>();
 
-        if (carController == null) Debug.LogWarning("[MasterUIManager] 未找到 SimpleCarController");
-        if (autoDrive == null) Debug.LogWarning("[MasterUIManager] 未找到 SimpleAutoDrive");
-        if (trafficLightManager == null) Debug.LogWarning("[MasterUIManager] 未找到 TrafficLightManager");
-        if (ros2Bridge == null) Debug.LogWarning("[MasterUIManager] 未找到 ROS2BridgeV2");
-        if (cameraController == null) Debug.LogWarning("[MasterUIManager] 未找到 CameraController");
-        if (trafficManager == null) Debug.LogWarning("[MasterUIManager] 未找到 TrafficManager");
-        if (roadGen == null) Debug.LogWarning("[MasterUIManager] 未找到 RoadNetworkGenerator");
+        if (carController == null) Debug.LogWarning("[MasterUIManager] SimpleCarController not found");
+        if (autoDrive == null) Debug.LogWarning("[MasterUIManager] SimpleAutoDrive not found");
+        if (trafficLightManager == null) Debug.LogWarning("[MasterUIManager] TrafficLightManager not found");
+        if (cameraController == null) Debug.LogWarning("[MasterUIManager] CameraController not found");
+        if (trafficManager == null) Debug.LogWarning("[MasterUIManager] TrafficManager not found");
+        if (roadGen == null) Debug.LogWarning("[MasterUIManager] RoadNetworkGenerator not found");
     }
 
     #endregion
 
-    #region Event Binding
+    #region Toggle & Shortcuts
 
-    void BindAllEvents()
+    void ToggleMinimalMode()
     {
-        SliderWithLabel("MaxSpeedSlider", (v) => { if (carController) carController.maxSpeed = v; });
-        SliderWithLabel("SteeringSlider", (v) => { if (carController) carController.maxSteeringAngle = v; });
-        SliderWithLabel("BrakeDecelSlider", (v) => { if (carController) carController.brakeDeceleration = v; });
-        SliderWithLabel("AccelerationSlider", (v) => { if (carController) carController.acceleration = v; });
-
-        SliderWithLabel("GreenDurationSlider", OnGreenDurationChanged);
-        SliderWithLabel("RedDurationSlider", OnRedDurationChanged);
-        SliderWithLabel("YellowDurationSlider", OnYellowDurationChanged);
-
-        BindButton("ReconnectBtn", OnReconnectROS2);
-        BindInputField("RosIPInput", OnRosIPChanged);
-        BindInputField("RosPortInput", OnRosPortChanged);
-
-        BindKeybindRow("BrakeKeyRow", "Brake");
-        BindKeybindRow("ToggleAutoKeyRow", "ToggleAuto");
-        BindKeybindRow("SwitchCamKeyRow", "SwitchCam");
-        BindKeybindRow("ToggleUIKeyRow", "ToggleUI");
-
-        BindButton("ResetKeysBtn", OnResetAllKeys);
-        BindButton("ClosePanelBtn", () => { panelVisible = false; if (settingsPanel) settingsPanel.SetActive(false); });
+        isMinimalMode = !isMinimalMode;
+        if (rightPanel != null) rightPanel.SetActive(!isMinimalMode);
     }
 
-    void SliderWithLabel(string sliderName, System.Action<float> callback)
+    void ToggleAutoDrive()
     {
-        Transform t = settingsPanel.transform.Find(sliderName);
-        if (t == null) return;
-        Slider slider = t.GetComponent<Slider>();
-        if (slider == null) return;
-
-        Transform valTransform = t.Find("ValueText");
-        Text valueText = valTransform != null ? valTransform.GetComponent<Text>() : null;
-
-        slider.onValueChanged.AddListener((v) =>
+        if (autoDrive != null)
         {
-            callback(v);
-            if (valueText != null) valueText.text = v.ToString("F0");
-        });
-    }
-
-    void BindButton(string buttonName, System.Action callback)
-    {
-        Transform t = settingsPanel.transform.Find(buttonName);
-        if (t == null) return;
-        Button btn = t.GetComponent<Button>();
-        if (btn != null) btn.onClick.AddListener(() => callback());
-    }
-
-    void BindInputField(string inputName, UnityEngine.Events.UnityAction<string> callback)
-    {
-        Transform t = settingsPanel.transform.Find(inputName);
-        if (t == null) return;
-        InputField input = t.GetComponent<InputField>();
-        if (input != null) input.onEndEdit.AddListener(callback);
-    }
-
-    void BindKeybindRow(string rowName, string actionName)
-    {
-        Transform t = settingsPanel.transform.Find(rowName);
-        if (t == null) return;
-
-        Transform btnTransform = t.Find("RebindBtn");
-        Transform txtTransform = t.Find("KeyText");
-
-        if (btnTransform == null || txtTransform == null) return;
-
-        Button rebindBtn = btnTransform.GetComponent<Button>();
-        Text keyText = txtTransform.GetComponent<Text>();
-
-        if (rebindBtn == null || keyText == null) return;
-
-        if (RuntimeInputManager.Instance != null)
-        {
-            keyText.text = RuntimeInputManager.Instance.GetKeyCode(actionName).ToString();
-        }
-
-        rebindBtn.onClick.AddListener(() =>
-        {
-            if (!isRebinding && RuntimeInputManager.Instance != null)
-            {
-                isRebinding = true;
-                StartCoroutine(RebindAndRestore(actionName, keyText));
-            }
-        });
-    }
-
-    IEnumerator RebindAndRestore(string actionName, Text keyText)
-    {
-        yield return StartCoroutine(RuntimeInputManager.Instance.RebindKey(actionName, keyText));
-        isRebinding = false;
-    }
-
-    #endregion
-
-    #region Slider Callbacks
-
-    void OnGreenDurationChanged(float value)
-    {
-        if (trafficLightManager != null) trafficLightManager.greenDuration = value;
-        foreach (var ctrl in FindObjectsOfType<TrafficLightController>())
-            ctrl.greenDuration = value;
-    }
-
-    void OnRedDurationChanged(float value)
-    {
-        if (trafficLightManager != null) trafficLightManager.redDuration = value;
-        foreach (var ctrl in FindObjectsOfType<TrafficLightController>())
-            ctrl.redDuration = value;
-    }
-
-    void OnYellowDurationChanged(float value)
-    {
-        if (trafficLightManager != null) trafficLightManager.yellowDuration = value;
-        foreach (var ctrl in FindObjectsOfType<TrafficLightController>())
-            ctrl.yellowDuration = value;
-    }
-
-    #endregion
-
-    #region ROS2 Callbacks
-
-    void OnRosIPChanged(string value)
-    {
-        if (ros2Bridge != null && !string.IsNullOrWhiteSpace(value))
-        {
-            ros2Bridge.rosIP = value.Trim();
-            Debug.Log($"[MasterUIManager] ROS2 IP 已更新: {ros2Bridge.rosIP}");
-        }
-    }
-
-    void OnRosPortChanged(string value)
-    {
-        if (ros2Bridge != null && int.TryParse(value, out int port) && port > 0 && port < 65536)
-        {
-            ros2Bridge.rosPort = port;
-            Debug.Log($"[MasterUIManager] ROS2 Port 已更新: {ros2Bridge.rosPort}");
-        }
-    }
-
-    void OnReconnectROS2()
-    {
-        if (ros2Bridge != null)
-        {
-            ros2Bridge.Reconnect();
-        }
-        else
-        {
-            Debug.LogWarning("[MasterUIManager] 未找到 ROS2BridgeV2 组件，无法重连");
+            autoDrive.ToggleAutoDrive();
         }
     }
 
     #endregion
 
-    #region Key Reset
+    #region Complete UI Build
 
-    void OnResetAllKeys()
+    void BuildCompleteUI()
     {
-        if (RuntimeInputManager.Instance != null)
-        {
-            RuntimeInputManager.Instance.ResetAllToDefault();
-            RefreshAllKeyTexts();
-        }
-    }
+        Font font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
 
-    void RefreshAllKeyTexts()
-    {
-        if (RuntimeInputManager.Instance == null || settingsPanel == null) return;
-
-        RefreshKeyText("BrakeKeyRow", "Brake");
-        RefreshKeyText("ToggleAutoKeyRow", "ToggleAuto");
-        RefreshKeyText("SwitchCamKeyRow", "SwitchCam");
-        RefreshKeyText("ToggleUIKeyRow", "ToggleUI");
-    }
-
-    void RefreshKeyText(string rowName, string actionName)
-    {
-        Transform t = settingsPanel.transform.Find(rowName);
-        if (t == null) return;
-        Transform txtTransform = t.Find("KeyText");
-        if (txtTransform == null) return;
-        Text keyText = txtTransform.GetComponent<Text>();
-        if (keyText != null)
-        {
-            keyText.text = RuntimeInputManager.Instance.GetKeyCode(actionName).ToString();
-        }
-    }
-
-    #endregion
-
-    #region Sync UI from Components
-
-    void SyncUIFromComponents()
-    {
-        SyncSlider("MaxSpeedSlider", carController != null ? carController.maxSpeed : 30f);
-        SyncSlider("SteeringSlider", carController != null ? carController.maxSteeringAngle : 45f);
-        SyncSlider("BrakeDecelSlider", carController != null ? carController.brakeDeceleration : 10f);
-        SyncSlider("AccelerationSlider", carController != null ? carController.acceleration : 4f);
-        SyncSlider("GreenDurationSlider", trafficLightManager != null ? trafficLightManager.greenDuration : 8f);
-        SyncSlider("RedDurationSlider", trafficLightManager != null ? trafficLightManager.redDuration : 8f);
-        SyncSlider("YellowDurationSlider", trafficLightManager != null ? trafficLightManager.yellowDuration : 2f);
-
-        SyncInputField("RosIPInput", ros2Bridge != null ? ros2Bridge.rosIP : "172.21.16.202");
-        SyncInputField("RosPortInput", ros2Bridge != null ? ros2Bridge.rosPort.ToString() : "10086");
-    }
-
-    void SyncSlider(string name, float value)
-    {
-        if (settingsPanel == null) return;
-        Transform t = settingsPanel.transform.Find(name);
-        if (t == null) return;
-        Slider slider = t.GetComponent<Slider>();
-        if (slider != null) slider.value = value;
-
-        Transform valTransform = t.Find("ValueText");
-        if (valTransform != null)
-        {
-            Text valueText = valTransform.GetComponent<Text>();
-            if (valueText != null) valueText.text = value.ToString("F0");
-        }
-    }
-
-    void SyncInputField(string name, string value)
-    {
-        if (settingsPanel == null) return;
-        Transform t = settingsPanel.transform.Find(name);
-        if (t == null) return;
-        InputField input = t.GetComponent<InputField>();
-        if (input != null) input.text = value;
-    }
-
-    #endregion
-
-    #region Debug Info
-
-    /// <summary>
-    /// 刷新所有调试信息只读字段（定时触发，约150ms间隔）
-    /// 使用 FindObjectOfType 容错，找不到静默跳过
-    /// </summary>
-    void RefreshDebugInfo()
-    {
-        if (settingsPanel == null) return;
-
-        // --- FPS ---
-        SetDebugValue("DbgFPS", currentFps.ToString("F1"));
-
-        // --- SimpleCarController ---
-        // 注意：carController 已在 FindAllComponents 中缓存，但可能为 null
-        // 也实时查找确保主车数据（因为可能有多个控制器，第一个为主车）
-        SimpleCarController cc = carController;
-        if (cc == null) { cc = FindObjectOfType<SimpleCarController>(); if (cc != null) carController = cc; }
-
-        SetDebugValue("DbgSpeed", cc != null ? cc.currentSpeed.ToString("F1") + " m/s" : "N/A");
-        SetDebugValue("DbgSteering", cc != null ? cc.currentSteeringAngle.ToString("F1") + " deg" : "N/A");
-        SetDebugValue("DbgAutoMode", cc != null ? (cc.autoMode ? "Yes" : "No") : "N/A");
-        SetDebugValue("DbgIsNPC", cc != null ? (cc.isNPC ? "Yes" : "No") : "N/A");
-
-        // --- SimpleAutoDrive ---
-        SimpleAutoDrive ad = autoDrive;
-        if (ad == null) { ad = FindObjectOfType<SimpleAutoDrive>(); if (ad != null) autoDrive = ad; }
-
-        SetDebugValue("DbgTargetSpeed", ad != null ? ad.targetSpeed.ToString("F1") : "N/A");
-        SetDebugValue("DbgSafeDist", ad != null ? ad.safeDistance.ToString("F1") : "N/A");
-        SetDebugValue("DbgDriveState", ad != null ? ad.currentState.ToString() : "N/A");
-        SetDebugValue("DbgLaneId", ad != null ? ad.currentLaneId.ToString() : "N/A");
-        SetDebugValue("DbgIntersection", ad != null ? ad.currentIntersectionState.ToString() : "N/A");
-        SetDebugValue("DbgObstacle", ad != null ? (ad.obstacleDetected ? "Yes" : "No") : "N/A");
-        SetDebugValue("DbgCurrentT", ad != null ? ad.currentT.ToString("F2") : "N/A");
-
-        // --- TrafficManager ---
-        TrafficManager tm = trafficManager;
-        if (tm == null) { tm = FindObjectOfType<TrafficManager>(); if (tm != null) trafficManager = tm; }
-
-        if (tm != null)
-        {
-            SetDebugValue("DbgNPCCount", tm.npcCount.ToString());
-            // 私有字段 _hasSpawned 通过反射获取
-            bool hasSpawned = false;
-            try
-            {
-                var field = tm.GetType().GetField("_hasSpawned",
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                if (field != null) hasSpawned = (bool)field.GetValue(tm);
-            }
-            catch { }
-            SetDebugValue("DbgHasSpawned", hasSpawned ? "Yes" : "No");
-        }
-        else
-        {
-            SetDebugValue("DbgNPCCount", "N/A");
-            SetDebugValue("DbgHasSpawned", "N/A");
-        }
-
-        // --- WorldModel ---
-        WorldModel wm = WorldModel.Instance;
-        if (wm != null)
-        {
-            SetDebugValue("DbgNodeCount", wm.NodeCount.ToString());
-            SetDebugValue("DbgLaneCount", wm.GlobalLanes != null ? wm.GlobalLanes.Count.ToString() : "0");
-            bool isCountry = false;
-            if (wm.roadGenerator != null) isCountry = wm.roadGenerator.isCountryside;
-            else if (roadGen != null) isCountry = roadGen.isCountryside;
-            SetDebugValue("DbgWorldMode", isCountry ? "Countryside" : "City");
-        }
-        else
-        {
-            SetDebugValue("DbgNodeCount", "N/A");
-            SetDebugValue("DbgLaneCount", "N/A");
-            SetDebugValue("DbgWorldMode", "N/A");
-        }
-
-        // --- ROS2BridgeV2 ---
-        ROS2BridgeV2 r2 = ros2Bridge;
-        if (r2 == null) { r2 = FindObjectOfType<ROS2BridgeV2>(); if (r2 != null) ros2Bridge = r2; }
-
-        if (r2 != null)
-        {
-            SetDebugValue("DbgROSConnected", r2.isConnected ? "Yes" : "No");
-            // 私有字段 useRosControl 通过反射获取
-            bool rosCtrl = false;
-            try
-            {
-                var field = r2.GetType().GetField("useRosControl",
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                if (field != null) rosCtrl = (bool)field.GetValue(r2);
-            }
-            catch { }
-            SetDebugValue("DbgROSControl", rosCtrl ? "Active" : "Idle");
-        }
-        else
-        {
-            SetDebugValue("DbgROSConnected", "N/A");
-            SetDebugValue("DbgROSControl", "N/A");
-        }
-
-        // --- CameraController ---
-        CameraController cam = cameraController;
-        if (cam == null) { cam = FindObjectOfType<CameraController>(); if (cam != null) cameraController = cam; }
-
-        SetDebugValue("DbgCamModeKey", cam != null ? cam.modeSwitchKey.ToString() : "N/A");
-        SetDebugValue("DbgCamTargetKey", cam != null ? cam.targetSwitchKey.ToString() : "N/A");
-    }
-
-    /// <summary>
-    /// 安全设置调试文本值（找不到 Text 组件则静默跳过）
-    /// </summary>
-    void SetDebugValue(string rowName, string value)
-    {
-        if (settingsPanel == null) return;
-
-        // 先从缓存查找
-        Text txt;
-        if (!debugTexts.TryGetValue(rowName, out txt))
-        {
-            Transform row = settingsPanel.transform.Find(rowName);
-            if (row == null) return;
-            Transform valTransform = row.Find("ValueText");
-            if (valTransform == null) return;
-            txt = valTransform.GetComponent<Text>();
-            if (txt == null) return;
-            debugTexts[rowName] = txt;
-        }
-
-        if (txt != null) txt.text = value;
-    }
-
-    #endregion
-
-    #region UI Auto-Generation
-
-    [ContextMenu("Generate UI Panel")]
-    public void GenerateUIPanel()
-    {
         Canvas canvas = FindObjectOfType<Canvas>();
         if (canvas == null)
         {
@@ -543,110 +171,1376 @@ public class MasterUIManager : MonoBehaviour
             canvas = canvasGO.AddComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
             canvas.sortingOrder = 100;
-
             CanvasScaler scaler = canvasGO.AddComponent<CanvasScaler>();
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
             scaler.referenceResolution = refResolution;
-
             canvasGO.AddComponent<GraphicRaycaster>();
         }
+        mainCanvas = canvas;
 
-        Transform existing = canvas.transform.Find("MasterSettingsPanel");
+        Transform existing = canvas.transform.Find("MasterUIRoot");
         if (existing != null)
         {
-            if (Application.isPlaying)
-                Destroy(existing.gameObject);
-            else
-                DestroyImmediate(existing.gameObject);
+            if (Application.isPlaying) Destroy(existing.gameObject);
+            else DestroyImmediate(existing.gameObject);
         }
 
-        GameObject panelGO = new GameObject("MasterSettingsPanel");
-        panelGO.transform.SetParent(canvas.transform, false);
+        GameObject root = new GameObject("MasterUIRoot");
+        root.transform.SetParent(canvas.transform, false);
+        RectTransform rootRT = root.AddComponent<RectTransform>();
+        rootRT.anchorMin = Vector2.zero;
+        rootRT.anchorMax = Vector2.one;
+        rootRT.offsetMin = Vector2.zero;
+        rootRT.offsetMax = Vector2.zero;
 
-        RectTransform panelRT = panelGO.AddComponent<RectTransform>();
-        panelRT.anchorMin = new Vector2(1, 1);
-        panelRT.anchorMax = new Vector2(1, 1);
-        panelRT.pivot = new Vector2(1, 1);
-        panelRT.anchoredPosition = new Vector2(-20, -20);
-        panelRT.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, 340);
+        BuildTopBar(root, font);
+        BuildLeftPanel(root, font);
+        BuildRightPanel(root, font);
 
-        Image bgImage = panelGO.AddComponent<Image>();
-        bgImage.color = new Color(0.08f, 0.08f, 0.12f, 0.92f);
+        if (rightPanel != null) rightPanel.SetActive(true);
+        if (moduleBaseSettings != null) moduleBaseSettings.SetActive(true);
+        SwitchToModule(moduleBaseSettings);
+    }
 
-        VerticalLayoutGroup vlg = panelGO.AddComponent<VerticalLayoutGroup>();
-        vlg.padding = new RectOffset(16, 16, 12, 12);
-        vlg.spacing = 4;
-        vlg.childAlignment = TextAnchor.UpperCenter;
-        vlg.childControlWidth = true;
-        vlg.childControlHeight = false;
-        vlg.childForceExpandWidth = true;
-        vlg.childForceExpandHeight = false;
+    void BuildTopBar(GameObject root, Font font)
+    {
+        topBar = new GameObject("TopBar");
+        topBar.transform.SetParent(root.transform, false);
+        RectTransform tbRT = topBar.AddComponent<RectTransform>();
+        tbRT.anchorMin = new Vector2(0, 0.93f);
+        tbRT.anchorMax = new Vector2(1, 1);
+        tbRT.offsetMin = Vector2.zero;
+        tbRT.offsetMax = Vector2.zero;
 
-        ContentSizeFitter csf = panelGO.AddComponent<ContentSizeFitter>();
-        csf.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+        Image tbBg = topBar.AddComponent<Image>();
+        tbBg.color = new Color(0.06f, 0.06f, 0.1f, 0.95f);
 
-        UIPanelBuilder.CreateTitle(panelGO, "A5 Master Control Panel");
+        HorizontalLayoutGroup tbh = topBar.AddComponent<HorizontalLayoutGroup>();
+        tbh.padding = new RectOffset(12, 12, 6, 6);
+        tbh.spacing = 8;
+        tbh.childAlignment = TextAnchor.MiddleLeft;
+        tbh.childControlWidth = false;
+        tbh.childControlHeight = true;
+        tbh.childForceExpandWidth = false;
+        tbh.childForceExpandHeight = true;
 
-        UIPanelBuilder.CreateSectionHeader(panelGO, "--- Vehicle Control ---");
-        UIPanelBuilder.CreateSliderRow(panelGO, "MaxSpeedSlider", "Max Speed", 5f, 100f, 30f, "F0");
-        UIPanelBuilder.CreateSliderRow(panelGO, "SteeringSlider", "Steering Angle", 10f, 90f, 45f, "F0");
-        UIPanelBuilder.CreateSliderRow(panelGO, "BrakeDecelSlider", "Brake Force", 1f, 30f, 10f, "F0");
-        UIPanelBuilder.CreateSliderRow(panelGO, "AccelerationSlider", "Acceleration", 1f, 15f, 4f, "F0");
+        CreateNavButton(topBar, "NavHUD", "HUD", font, () => SwitchToModule(moduleBaseSettings));
+        CreateNavButton(topBar, "NavTerrain", "Terrain", font, () => SwitchToModule(moduleTerrain));
+        CreateNavButton(topBar, "NavTraffic", "Traffic", font, () => SwitchToModule(moduleTraffic));
+        CreateNavButton(topBar, "NavSystem", "System", font, () => SwitchToModule(moduleSystem));
+        CreateNavButton(topBar, "NavCamera", "Camera", font, () => SwitchToModule(moduleCamera));
 
-        UIPanelBuilder.CreateSectionHeader(panelGO, "--- Traffic Light ---");
-        UIPanelBuilder.CreateSliderRow(panelGO, "GreenDurationSlider", "Green (s)", 3f, 60f, 8f, "F0");
-        UIPanelBuilder.CreateSliderRow(panelGO, "RedDurationSlider", "Red (s)", 3f, 60f, 8f, "F0");
-        UIPanelBuilder.CreateSliderRow(panelGO, "YellowDurationSlider", "Yellow (s)", 1f, 5f, 2f, "F0");
+        GameObject spacer = new GameObject("Spacer");
+        spacer.transform.SetParent(topBar.transform, false);
+        spacer.AddComponent<LayoutElement>().flexibleWidth = 1;
 
-        UIPanelBuilder.CreateSectionHeader(panelGO, "--- ROS2 Connection ---");
-        UIPanelBuilder.CreateInputRow(panelGO, "RosIPInput", "IP", "172.21.16.202", InputField.ContentType.Standard);
-        UIPanelBuilder.CreateInputRow(panelGO, "RosPortInput", "Port", "10086", InputField.ContentType.IntegerNumber);
-        UIPanelBuilder.CreateButton(panelGO, "ReconnectBtn", "Reconnect");
+        GameObject genWorldBtn = new GameObject("BtnGenerateWorld");
+        genWorldBtn.transform.SetParent(topBar.transform, false);
+        genWorldBtn.AddComponent<LayoutElement>().minWidth = 160;
+        genWorldBtn.AddComponent<LayoutElement>().minHeight = 36;
+        Button genBtn = genWorldBtn.AddComponent<Button>();
+        Image genImg = genWorldBtn.AddComponent<Image>();
+        genImg.color = new Color(0.85f, 0.25f, 0.25f);
+        genBtn.targetGraphic = genImg;
+        GameObject genTxtGO = new GameObject("Text");
+        genTxtGO.transform.SetParent(genWorldBtn.transform, false);
+        Text genTxt = genTxtGO.AddComponent<Text>();
+        genTxt.text = "Generate World";
+        genTxt.font = font;
+        genTxt.fontSize = 14;
+        genTxt.fontStyle = FontStyle.Bold;
+        genTxt.color = Color.white;
+        genTxt.alignment = TextAnchor.MiddleCenter;
+        RectTransform genTxtRT = genTxtGO.GetComponent<RectTransform>();
+        genTxtRT.anchorMin = Vector2.zero;
+        genTxtRT.anchorMax = Vector2.one;
+        genTxtRT.sizeDelta = Vector2.zero;
+        genBtn.onClick.AddListener(() =>
+        {
+            if (WorldModel.Instance != null)
+            {
+                WorldModel.Instance.TriggerWorldGeneration();
+            }
+        });
 
-        UIPanelBuilder.CreateSectionHeader(panelGO, "--- Key Bindings ---");
-        UIPanelBuilder.CreateKeybindRow(panelGO, "BrakeKeyRow", "Brake", "Space");
-        UIPanelBuilder.CreateKeybindRow(panelGO, "ToggleAutoKeyRow", "Toggle Auto", "T");
-        UIPanelBuilder.CreateKeybindRow(panelGO, "SwitchCamKeyRow", "Switch Cam", "C");
-        UIPanelBuilder.CreateKeybindRow(panelGO, "ToggleUIKeyRow", "Toggle UI", "Escape");
-        UIPanelBuilder.CreateButton(panelGO, "ResetKeysBtn", "Reset All Keys");
+        GameObject rosDotGO = new GameObject("RosStatusDot");
+        rosDotGO.transform.SetParent(topBar.transform, false);
+        rosDotGO.AddComponent<LayoutElement>().minWidth = 20;
+        rosDotGO.AddComponent<LayoutElement>().minHeight = 20;
+        Text rosDot = rosDotGO.AddComponent<Text>();
+        rosDot.text = "ROS2";
+        rosDot.font = font;
+        rosDot.fontSize = 11;
+        rosDot.color = new Color(0.5f, 0.5f, 0.5f);
+        rosDot.alignment = TextAnchor.MiddleCenter;
+        rosDotGO.name = "RosStatusDot";
 
-        UIPanelBuilder.CreateButton(panelGO, "ClosePanelBtn", "Close Panel [Esc]");
+        GameObject timeLabelGO = new GameObject("TimeLabel");
+        timeLabelGO.transform.SetParent(topBar.transform, false);
+        timeLabelGO.AddComponent<LayoutElement>().minWidth = 80;
+        Text timeLabel = timeLabelGO.AddComponent<Text>();
+        timeLabel.text = "Time x1";
+        timeLabel.font = font;
+        timeLabel.fontSize = 12;
+        timeLabel.color = new Color(0.3f, 0.8f, 1f);
+        timeLabel.alignment = TextAnchor.MiddleCenter;
+        timeLabelGO.name = "TimeLabel";
+    }
 
-        // 提示文字
-        UIPanelBuilder.CreateHintText(panelGO, "按 ESC 切换面板  |  T 切换自动驾驶  |  N 重置AI导航");
+    void CreateNavButton(GameObject parent, string name, string label, Font font, UnityEngine.Events.UnityAction callback)
+    {
+        GameObject btnGO = new GameObject(name);
+        btnGO.transform.SetParent(parent.transform, false);
+        btnGO.AddComponent<LayoutElement>().minWidth = 70;
+        btnGO.AddComponent<LayoutElement>().minHeight = 30;
+        Button btn = btnGO.AddComponent<Button>();
+        Image btnImg = btnGO.AddComponent<Image>();
+        btnImg.color = new Color(0.18f, 0.22f, 0.32f);
+        btn.targetGraphic = btnImg;
+        GameObject txtGO = new GameObject("Text");
+        txtGO.transform.SetParent(btnGO.transform, false);
+        Text txt = txtGO.AddComponent<Text>();
+        txt.text = label;
+        txt.font = font;
+        txt.fontSize = 13;
+        txt.fontStyle = FontStyle.Bold;
+        txt.color = Color.white;
+        txt.alignment = TextAnchor.MiddleCenter;
+        RectTransform txtRT = txtGO.GetComponent<RectTransform>();
+        txtRT.anchorMin = Vector2.zero;
+        txtRT.anchorMax = Vector2.one;
+        txtRT.sizeDelta = Vector2.zero;
+        btn.onClick.AddListener(callback);
+    }
 
-        UIPanelBuilder.CreateSectionHeader(panelGO, "--- Debug Info ---");
-        UIPanelBuilder.CreateDebugRow(panelGO, "DbgFPS", "FPS", "0.0");
-        UIPanelBuilder.CreateSectionHeaderSub(panelGO, "-- Car Controller --");
-        UIPanelBuilder.CreateDebugRow(panelGO, "DbgSpeed", "Speed", "0.0 m/s");
-        UIPanelBuilder.CreateDebugRow(panelGO, "DbgSteering", "Steering", "0.0 deg");
-        UIPanelBuilder.CreateDebugRow(panelGO, "DbgAutoMode", "Auto Mode", "No");
-        UIPanelBuilder.CreateDebugRow(panelGO, "DbgIsNPC", "Is NPC", "No");
-        UIPanelBuilder.CreateSectionHeaderSub(panelGO, "-- Auto Drive --");
-        UIPanelBuilder.CreateDebugRow(panelGO, "DbgTargetSpeed", "Target Spd", "N/A");
-        UIPanelBuilder.CreateDebugRow(panelGO, "DbgSafeDist", "Safe Dist", "N/A");
-        UIPanelBuilder.CreateDebugRow(panelGO, "DbgDriveState", "Drive State", "N/A");
-        UIPanelBuilder.CreateDebugRow(panelGO, "DbgLaneId", "Lane ID", "N/A");
-        UIPanelBuilder.CreateDebugRow(panelGO, "DbgIntersection", "Intersection", "N/A");
-        UIPanelBuilder.CreateDebugRow(panelGO, "DbgObstacle", "Obstacle", "N/A");
-        UIPanelBuilder.CreateDebugRow(panelGO, "DbgCurrentT", "Current T", "N/A");
-        UIPanelBuilder.CreateSectionHeaderSub(panelGO, "-- Traffic Mgr --");
-        UIPanelBuilder.CreateDebugRow(panelGO, "DbgNPCCount", "NPC Count", "N/A");
-        UIPanelBuilder.CreateDebugRow(panelGO, "DbgHasSpawned", "Has Spawned", "N/A");
-        UIPanelBuilder.CreateSectionHeaderSub(panelGO, "-- World Model --");
-        UIPanelBuilder.CreateDebugRow(panelGO, "DbgNodeCount", "Nodes", "N/A");
-        UIPanelBuilder.CreateDebugRow(panelGO, "DbgLaneCount", "Lanes", "N/A");
-        UIPanelBuilder.CreateDebugRow(panelGO, "DbgWorldMode", "Mode", "N/A");
-        UIPanelBuilder.CreateSectionHeaderSub(panelGO, "-- ROS2 Bridge --");
-        UIPanelBuilder.CreateDebugRow(panelGO, "DbgROSConnected", "Connected", "N/A");
-        UIPanelBuilder.CreateDebugRow(panelGO, "DbgROSControl", "ROS Ctrl", "N/A");
-        UIPanelBuilder.CreateSectionHeaderSub(panelGO, "-- Camera --");
-        UIPanelBuilder.CreateDebugRow(panelGO, "DbgCamModeKey", "Mode Key", "N/A");
-        UIPanelBuilder.CreateDebugRow(panelGO, "DbgCamTargetKey", "Target Key", "N/A");
+    void BuildLeftPanel(GameObject root, Font font)
+    {
+        leftPanel = new GameObject("LeftPanel");
+        leftPanel.transform.SetParent(root.transform, false);
+        RectTransform lpRT = leftPanel.AddComponent<RectTransform>();
+        lpRT.anchorMin = new Vector2(0, 0);
+        lpRT.anchorMax = new Vector2(0.25f, 0.93f);
+        lpRT.offsetMin = new Vector2(8, 4);
+        lpRT.offsetMax = new Vector2(0, 0);
 
-        settingsPanel = panelGO;
+        VerticalLayoutGroup lpVLG = leftPanel.AddComponent<VerticalLayoutGroup>();
+        lpVLG.padding = new RectOffset(0, 0, 0, 0);
+        lpVLG.spacing = 4;
+        lpVLG.childAlignment = TextAnchor.UpperCenter;
+        lpVLG.childControlWidth = true;
+        lpVLG.childControlHeight = false;
+        lpVLG.childForceExpandWidth = true;
+        lpVLG.childForceExpandHeight = false;
 
-        Debug.Log("[MasterUIManager] UI 面板已自动生成在 Canvas 下");
+        BuildHUDPanel(leftPanel, font);
+        BuildKeyPanel(leftPanel, font);
+    }
+
+    void BuildHUDPanel(GameObject parent, Font font)
+    {
+        hudPanel = new GameObject("HUDPanel");
+        hudPanel.transform.SetParent(parent.transform, false);
+        hudPanel.AddComponent<LayoutElement>().minHeight = 280;
+        Image hudBg = hudPanel.AddComponent<Image>();
+        hudBg.color = new Color(0.06f, 0.08f, 0.16f, 0.92f);
+
+        VerticalLayoutGroup hudVLG = hudPanel.AddComponent<VerticalLayoutGroup>();
+        hudVLG.padding = new RectOffset(12, 12, 10, 10);
+        hudVLG.spacing = 3;
+        hudVLG.childAlignment = TextAnchor.UpperCenter;
+        hudVLG.childControlWidth = true;
+        hudVLG.childControlHeight = false;
+        hudVLG.childForceExpandWidth = true;
+        hudVLG.childForceExpandHeight = false;
+
+        UIPanelBuilder.CreateTitle(hudPanel, "Vehicle HUD");
+
+        hudTexts["HUDSpeed"] = CreateHUDLabel(hudPanel, "Speed", "0.0 m/s", font);
+        hudTexts["HUDSteering"] = CreateHUDLabel(hudPanel, "Steering", "0.0 deg", font);
+        hudTexts["HUDAutoMode"] = CreateHUDLabel(hudPanel, "Auto Mode", "No", font);
+        hudTexts["HUDState"] = CreateHUDLabel(hudPanel, "State", "Idle", font);
+        hudTexts["HUDLaneId"] = CreateHUDLabel(hudPanel, "Lane ID", "N/A", font);
+        hudTexts["HUDCoords"] = CreateHUDLabel(hudPanel, "Position", "0,0,0", font);
+        hudTexts["HUDTimeScale"] = CreateHUDLabel(hudPanel, "Time Scale", "x1", font);
+    }
+
+    Text CreateHUDLabel(GameObject parent, string label, string defaultValue, Font font)
+    {
+        GameObject row = new GameObject("HUD_" + label);
+        row.transform.SetParent(parent.transform, false);
+        row.AddComponent<LayoutElement>().minHeight = 26;
+
+        HorizontalLayoutGroup hlg = row.AddComponent<HorizontalLayoutGroup>();
+        hlg.childAlignment = TextAnchor.MiddleLeft;
+        hlg.childControlWidth = true;
+        hlg.childControlHeight = true;
+        hlg.childForceExpandWidth = false;
+        hlg.childForceExpandHeight = true;
+        hlg.spacing = 8;
+
+        GameObject lGO = new GameObject("Label");
+        lGO.transform.SetParent(row.transform, false);
+        Text lTxt = lGO.AddComponent<Text>();
+        lTxt.text = label + ":";
+        lTxt.font = font;
+        lTxt.fontSize = 13;
+        lTxt.color = new Color(0.7f, 0.7f, 0.75f);
+        lTxt.alignment = TextAnchor.MiddleLeft;
+        lGO.AddComponent<LayoutElement>().minWidth = 75;
+
+        GameObject vGO = new GameObject("Value");
+        vGO.transform.SetParent(row.transform, false);
+        Text vTxt = vGO.AddComponent<Text>();
+        vTxt.text = defaultValue;
+        vTxt.font = font;
+        vTxt.fontSize = 14;
+        vTxt.fontStyle = FontStyle.Bold;
+        vTxt.color = new Color(0.2f, 0.9f, 0.5f);
+        vTxt.alignment = TextAnchor.MiddleLeft;
+        vGO.AddComponent<LayoutElement>().flexibleWidth = 1;
+
+        return vTxt;
+    }
+
+    void BuildKeyPanel(GameObject parent, Font font)
+    {
+        keyPanel = new GameObject("KeyPanel");
+        keyPanel.transform.SetParent(parent.transform, false);
+        keyPanel.AddComponent<LayoutElement>().minHeight = 180;
+        Image kpBg = keyPanel.AddComponent<Image>();
+        kpBg.color = new Color(0.06f, 0.08f, 0.16f, 0.92f);
+
+        VerticalLayoutGroup kpVLG = keyPanel.AddComponent<VerticalLayoutGroup>();
+        kpVLG.padding = new RectOffset(12, 12, 10, 10);
+        kpVLG.spacing = 3;
+        kpVLG.childAlignment = TextAnchor.UpperCenter;
+        kpVLG.childControlWidth = true;
+        kpVLG.childControlHeight = false;
+        kpVLG.childForceExpandWidth = true;
+        kpVLG.childForceExpandHeight = false;
+
+        UIPanelBuilder.CreateTitle(keyPanel, "Key Bindings");
+
+        keyTexts["W"] = CreateKeyDisplay(keyPanel, "W / Up", "Forward", font);
+        keyTexts["S"] = CreateKeyDisplay(keyPanel, "S / Down", "Reverse", font);
+        keyTexts["A"] = CreateKeyDisplay(keyPanel, "A", "Turn Left", font);
+        keyTexts["D"] = CreateKeyDisplay(keyPanel, "D", "Turn Right", font);
+        keyTexts["N"] = CreateKeyDisplay(keyPanel, "N", "Reset Nav", font);
+        keyTexts["R"] = CreateKeyDisplay(keyPanel, "R", "Reset Pos", font);
+        keyTexts["Space"] = CreateKeyDisplay(keyPanel, "Space", "Brake", font);
+    }
+
+    Text CreateKeyDisplay(GameObject parent, string key, string desc, Font font)
+    {
+        GameObject row = new GameObject("Key_" + key);
+        row.transform.SetParent(parent.transform, false);
+        row.AddComponent<LayoutElement>().minHeight = 22;
+
+        HorizontalLayoutGroup hlg = row.AddComponent<HorizontalLayoutGroup>();
+        hlg.childAlignment = TextAnchor.MiddleLeft;
+        hlg.childControlWidth = true;
+        hlg.childControlHeight = true;
+        hlg.childForceExpandWidth = false;
+        hlg.childForceExpandHeight = true;
+        hlg.spacing = 8;
+
+        GameObject kGO = new GameObject("KeyLabel");
+        kGO.transform.SetParent(row.transform, false);
+        Text kTxt = kGO.AddComponent<Text>();
+        kTxt.text = key;
+        kTxt.font = font;
+        kTxt.fontSize = 12;
+        kTxt.fontStyle = FontStyle.Bold;
+        kTxt.color = new Color(1f, 0.85f, 0.2f);
+        kTxt.alignment = TextAnchor.MiddleLeft;
+        kGO.AddComponent<LayoutElement>().minWidth = 70;
+
+        GameObject dGO = new GameObject("DescLabel");
+        dGO.transform.SetParent(row.transform, false);
+        Text dTxt = dGO.AddComponent<Text>();
+        dTxt.text = desc;
+        dTxt.font = font;
+        dTxt.fontSize = 11;
+        dTxt.color = new Color(0.55f, 0.55f, 0.6f);
+        dTxt.alignment = TextAnchor.MiddleLeft;
+        dGO.AddComponent<LayoutElement>().flexibleWidth = 1;
+
+        return dTxt;
+    }
+
+    void BuildRightPanel(GameObject root, Font font)
+    {
+        rightPanel = new GameObject("RightPanel");
+        rightPanel.transform.SetParent(root.transform, false);
+        RectTransform rpRT = rightPanel.AddComponent<RectTransform>();
+        rpRT.anchorMin = new Vector2(0.25f, 0);
+        rpRT.anchorMax = new Vector2(1, 0.93f);
+        rpRT.offsetMin = new Vector2(4, 4);
+        rpRT.offsetMax = new Vector2(-8, 0);
+
+        Image rpBg = rightPanel.AddComponent<Image>();
+        rpBg.color = new Color(0.07f, 0.07f, 0.13f, 0.94f);
+
+        ScrollRect scrollRect = rightPanel.AddComponent<ScrollRect>();
+        scrollRect.horizontal = false;
+        scrollRect.vertical = true;
+
+        GameObject viewportGO = new GameObject("Viewport");
+        viewportGO.transform.SetParent(rightPanel.transform, false);
+        RectTransform vpRT = viewportGO.AddComponent<RectTransform>();
+        vpRT.anchorMin = Vector2.zero;
+        vpRT.anchorMax = Vector2.one;
+        vpRT.offsetMin = Vector2.zero;
+        vpRT.offsetMax = Vector2.zero;
+        Image vpImg = viewportGO.AddComponent<Image>();
+        vpImg.color = new Color(0, 0, 0, 0);
+        Mask vpMask = viewportGO.AddComponent<Mask>();
+        vpMask.showMaskGraphic = false;
+
+        rightScrollContent = new GameObject("ScrollContent");
+        rightScrollContent.transform.SetParent(viewportGO.transform, false);
+        RectTransform scRT = rightScrollContent.AddComponent<RectTransform>();
+        scRT.anchorMin = new Vector2(0, 1);
+        scRT.anchorMax = new Vector2(1, 1);
+        scRT.pivot = new Vector2(0.5f, 1);
+        scRT.anchoredPosition = Vector2.zero;
+        scRT.sizeDelta = new Vector2(0, 0);
+
+        VerticalLayoutGroup scVLG = rightScrollContent.AddComponent<VerticalLayoutGroup>();
+        scVLG.padding = new RectOffset(16, 16, 12, 12);
+        scVLG.spacing = 4;
+        scVLG.childAlignment = TextAnchor.UpperCenter;
+        scVLG.childControlWidth = true;
+        scVLG.childControlHeight = false;
+        scVLG.childForceExpandWidth = true;
+        scVLG.childForceExpandHeight = false;
+
+        ContentSizeFitter scCSF = rightScrollContent.AddComponent<ContentSizeFitter>();
+        scCSF.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+        scrollRect.viewport = vpRT;
+        scrollRect.content = scRT;
+
+        BuildAllModules(rightScrollContent, font);
+    }
+
+    void BuildAllModules(GameObject content, Font font)
+    {
+        moduleBaseSettings = BuildModule1BaseSettings(content, font);
+        moduleTerrain = BuildModule2Terrain(content, font);
+        moduleTraffic = BuildModule3Traffic(content, font);
+        moduleSystem = BuildModule4System(content, font);
+        moduleCamera = BuildModule5Camera(content, font);
+
+        BuildModule6GlobalButtons(content, font);
+    }
+
+    void SwitchToModule(GameObject targetModule)
+    {
+        if (moduleBaseSettings != null) moduleBaseSettings.SetActive(targetModule == moduleBaseSettings);
+        if (moduleTerrain != null) moduleTerrain.SetActive(targetModule == moduleTerrain);
+        if (moduleTraffic != null) moduleTraffic.SetActive(targetModule == moduleTraffic);
+        if (moduleSystem != null) moduleSystem.SetActive(targetModule == moduleSystem);
+        if (moduleCamera != null) moduleCamera.SetActive(targetModule == moduleCamera);
+    }
+
+    GameObject BuildFoldoutSection(GameObject parent, string title, Font font)
+    {
+        GameObject section = new GameObject("Foldout_" + title);
+        section.transform.SetParent(parent.transform, false);
+        section.AddComponent<LayoutElement>().minHeight = 30;
+
+        VerticalLayoutGroup secVLG = section.AddComponent<VerticalLayoutGroup>();
+        secVLG.padding = new RectOffset(0, 0, 0, 0);
+        secVLG.spacing = 0;
+        secVLG.childAlignment = TextAnchor.UpperCenter;
+        secVLG.childControlWidth = true;
+        secVLG.childControlHeight = false;
+        secVLG.childForceExpandWidth = true;
+        secVLG.childForceExpandHeight = false;
+
+        GameObject headerGO = new GameObject("FoldoutHeader");
+        headerGO.transform.SetParent(section.transform, false);
+        headerGO.AddComponent<LayoutElement>().minHeight = 32;
+        Image hdrBg = headerGO.AddComponent<Image>();
+        hdrBg.color = new Color(0.12f, 0.18f, 0.28f);
+        Button hdrBtn = headerGO.AddComponent<Button>();
+        hdrBtn.targetGraphic = hdrBg;
+
+        HorizontalLayoutGroup hdrHLG = headerGO.AddComponent<HorizontalLayoutGroup>();
+        hdrHLG.padding = new RectOffset(10, 10, 0, 0);
+        hdrHLG.childAlignment = TextAnchor.MiddleLeft;
+        hdrHLG.childControlWidth = true;
+        hdrHLG.childControlHeight = true;
+        hdrHLG.childForceExpandWidth = false;
+        hdrHLG.childForceExpandHeight = true;
+
+        GameObject arrowGO = new GameObject("Arrow");
+        arrowGO.transform.SetParent(headerGO.transform, false);
+        Text arrowTxt = arrowGO.AddComponent<Text>();
+        arrowTxt.text = "v";
+        arrowTxt.font = font;
+        arrowTxt.fontSize = 14;
+        arrowTxt.color = new Color(0.3f, 0.8f, 1f);
+        arrowTxt.alignment = TextAnchor.MiddleCenter;
+        arrowGO.AddComponent<LayoutElement>().minWidth = 20;
+
+        GameObject titleGO = new GameObject("Title");
+        titleGO.transform.SetParent(headerGO.transform, false);
+        Text titleTxt = titleGO.AddComponent<Text>();
+        titleTxt.text = title;
+        titleTxt.font = font;
+        titleTxt.fontSize = 14;
+        titleTxt.fontStyle = FontStyle.Bold;
+        titleTxt.color = new Color(0.85f, 0.85f, 0.9f);
+        titleTxt.alignment = TextAnchor.MiddleLeft;
+        titleGO.AddComponent<LayoutElement>().flexibleWidth = 1;
+
+        GameObject contentGO = new GameObject("FoldoutContent");
+        contentGO.transform.SetParent(section.transform, false);
+        contentGO.AddComponent<LayoutElement>().minHeight = 20;
+
+        VerticalLayoutGroup cntVLG = contentGO.AddComponent<VerticalLayoutGroup>();
+        cntVLG.padding = new RectOffset(8, 8, 6, 6);
+        cntVLG.spacing = 3;
+        cntVLG.childAlignment = TextAnchor.UpperCenter;
+        cntVLG.childControlWidth = true;
+        cntVLG.childControlHeight = false;
+        cntVLG.childForceExpandWidth = true;
+        cntVLG.childForceExpandHeight = false;
+
+        ContentSizeFitter cntCSF = contentGO.AddComponent<ContentSizeFitter>();
+        cntCSF.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+        contentGO.SetActive(true);
+
+        hdrBtn.onClick.AddListener(() =>
+        {
+            bool newState = !contentGO.activeSelf;
+            contentGO.SetActive(newState);
+            if (arrowTxt != null) arrowTxt.text = newState ? "v" : ">";
+        });
+
+        return contentGO;
+    }
+
+    GameObject BuildModule1BaseSettings(GameObject parent, Font font)
+    {
+        GameObject module = new GameObject("Module_BaseSettings");
+        module.transform.SetParent(parent.transform, false);
+        module.AddComponent<LayoutElement>().minHeight = 100;
+        VerticalLayoutGroup mVLG = module.AddComponent<VerticalLayoutGroup>();
+        mVLG.padding = new RectOffset(0, 0, 0, 0);
+        mVLG.spacing = 2;
+        mVLG.childAlignment = TextAnchor.UpperCenter;
+        mVLG.childControlWidth = true;
+        mVLG.childControlHeight = false;
+        mVLG.childForceExpandWidth = true;
+        mVLG.childForceExpandHeight = false;
+        ContentSizeFitter mCSF = module.AddComponent<ContentSizeFitter>();
+        mCSF.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+        UIPanelBuilder.CreateTitle(module, "Base Settings");
+
+        GameObject foldContent = BuildFoldoutSection(module, "Road Network", font);
+
+        RegisterInputField(UIPanelBuilder.CreateInputRow(foldContent, "CellSizeInput", "Cell Size", "80", InputField.ContentType.DecimalNumber), "CellSize");
+        RegisterInputField(UIPanelBuilder.CreateInputRow(foldContent, "GridWidthInput", "Grid Width", "5", InputField.ContentType.IntegerNumber), "GridWidth");
+        RegisterInputField(UIPanelBuilder.CreateInputRow(foldContent, "GridHeightInput", "Grid Height", "5", InputField.ContentType.IntegerNumber), "GridHeight");
+        RegisterInputField(UIPanelBuilder.CreateInputRow(foldContent, "RandOffsetInput", "Rand Offset", "5", InputField.ContentType.DecimalNumber), "RandOffset");
+        RegisterInputField(UIPanelBuilder.CreateInputRow(foldContent, "SeedInput", "Seed", "42", InputField.ContentType.IntegerNumber), "Seed");
+
+        GameObject foldRoad = BuildFoldoutSection(module, "Road Mesh", font);
+
+        RegisterInputField(UIPanelBuilder.CreateInputRow(foldRoad, "RoadWidthInput", "Road Width", "6", InputField.ContentType.DecimalNumber), "RoadWidth");
+        RegisterInputField(UIPanelBuilder.CreateInputRow(foldRoad, "MeshResInput", "Mesh Res", "2", InputField.ContentType.DecimalNumber), "MeshRes");
+        RegisterInputField(UIPanelBuilder.CreateInputRow(foldRoad, "HeightOffInput", "Height Off", "0.15", InputField.ContentType.DecimalNumber), "HeightOff");
+        RegisterInputField(UIPanelBuilder.CreateInputRow(foldRoad, "UVScaleInput", "UV Scale", "0.1", InputField.ContentType.DecimalNumber), "UVScale");
+        RegisterInputField(UIPanelBuilder.CreateInputRow(foldRoad, "TangentLenInput", "Tangent Len", "0.3", InputField.ContentType.DecimalNumber), "TangentLen");
+
+        module.SetActive(false);
+        return module;
+    }
+
+    GameObject BuildModule2Terrain(GameObject parent, Font font)
+    {
+        GameObject module = new GameObject("Module_Terrain");
+        module.transform.SetParent(parent.transform, false);
+        module.AddComponent<LayoutElement>().minHeight = 100;
+        VerticalLayoutGroup mVLG = module.AddComponent<VerticalLayoutGroup>();
+        mVLG.padding = new RectOffset(0, 0, 0, 0);
+        mVLG.spacing = 2;
+        mVLG.childAlignment = TextAnchor.UpperCenter;
+        mVLG.childControlWidth = true;
+        mVLG.childControlHeight = false;
+        mVLG.childForceExpandWidth = true;
+        mVLG.childForceExpandHeight = false;
+        ContentSizeFitter mCSF = module.AddComponent<ContentSizeFitter>();
+        mCSF.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+        UIPanelBuilder.CreateTitle(module, "Terrain & Scene");
+
+        GameObject modeRow = new GameObject("ModeDropdownRow");
+        modeRow.transform.SetParent(module.transform, false);
+        modeRow.AddComponent<LayoutElement>().minHeight = 36;
+        HorizontalLayoutGroup mhlg = modeRow.AddComponent<HorizontalLayoutGroup>();
+        mhlg.padding = new RectOffset(4, 4, 0, 0);
+        mhlg.spacing = 8;
+        mhlg.childAlignment = TextAnchor.MiddleLeft;
+        mhlg.childControlWidth = true;
+        mhlg.childControlHeight = true;
+        mhlg.childForceExpandWidth = false;
+        mhlg.childForceExpandHeight = true;
+
+        GameObject modeLabel = new GameObject("Label");
+        modeLabel.transform.SetParent(modeRow.transform, false);
+        Text modeLabelTxt = modeLabel.AddComponent<Text>();
+        modeLabelTxt.text = "Mode:";
+        modeLabelTxt.font = font;
+        modeLabelTxt.fontSize = 13;
+        modeLabelTxt.color = Color.white;
+        modeLabelTxt.alignment = TextAnchor.MiddleLeft;
+        modeLabel.AddComponent<LayoutElement>().minWidth = 55;
+
+        GameObject modeDropdownGO = new GameObject("Dropdown");
+        modeDropdownGO.transform.SetParent(modeRow.transform, false);
+        modeDropdownGO.AddComponent<LayoutElement>().flexibleWidth = 1;
+        Dropdown modeDropdown = modeDropdownGO.AddComponent<Dropdown>();
+        modeDropdown.options = new List<Dropdown.OptionData>
+        {
+            new Dropdown.OptionData("City"),
+            new Dropdown.OptionData("Countryside")
+        };
+        modeDropdown.value = 0;
+
+        Image ddImg = modeDropdownGO.AddComponent<Image>();
+        ddImg.color = new Color(0.2f, 0.22f, 0.3f);
+
+        GameObject ddLabelGO = new GameObject("Label");
+        ddLabelGO.transform.SetParent(modeDropdownGO.transform, false);
+        Text ddLabel = ddLabelGO.AddComponent<Text>();
+        ddLabel.text = "City";
+        ddLabel.font = font;
+        ddLabel.fontSize = 13;
+        ddLabel.color = Color.white;
+        ddLabel.alignment = TextAnchor.MiddleLeft;
+        RectTransform ddLRT = ddLabelGO.GetComponent<RectTransform>();
+        ddLRT.anchorMin = Vector2.zero;
+        ddLRT.anchorMax = Vector2.one;
+        ddLRT.offsetMin = new Vector2(8, 0);
+        ddLRT.offsetMax = new Vector2(-20, 0);
+        modeDropdown.captionText = ddLabel;
+
+        GameObject ddItemLabelGO = new GameObject("ItemLabel");
+        ddItemLabelGO.transform.SetParent(modeDropdownGO.transform, false);
+        Text ddItemLabel = ddItemLabelGO.AddComponent<Text>();
+        ddItemLabel.text = "";
+        ddItemLabel.font = font;
+        ddItemLabel.fontSize = 13;
+        ddItemLabel.color = Color.black;
+        ddItemLabel.alignment = TextAnchor.MiddleLeft;
+        modeDropdown.itemText = ddItemLabel;
+
+        dropdowns["CityMode"] = modeDropdown;
+
+        citySubPanel = BuildFoldoutSection(module, "City Settings", font);
+        countrysideSubPanel = BuildFoldoutSection(module, "Countryside Settings", font);
+
+        RegisterToggle(CreateToggleRow(citySubPanel, "GenCityToggle", "Generate Buildings", true, font), "GenCity");
+        RegisterInputField(UIPanelBuilder.CreateInputRow(citySubPanel, "BldHeightInput", "Bld Height", "10", InputField.ContentType.DecimalNumber), "BldHeight");
+        RegisterInputField(UIPanelBuilder.CreateInputRow(citySubPanel, "SidewalkInput", "Sidewalk Width", "2", InputField.ContentType.DecimalNumber), "Sidewalk");
+        RegisterToggle(CreateToggleRow(citySubPanel, "TrafficLightToggle", "Traffic Lights", true, font), "TrafficLights");
+        RegisterInputField(UIPanelBuilder.CreateInputRow(citySubPanel, "TLChanceInput", "TL Frequency", "0.6", InputField.ContentType.DecimalNumber), "TLChance");
+        RegisterToggle(CreateToggleRow(citySubPanel, "PedestrianToggle", "Pedestrians", false, font), "Pedestrians");
+        RegisterInputField(UIPanelBuilder.CreateInputRow(citySubPanel, "PedSpawnInput", "Ped Spawn Rate", "1.0", InputField.ContentType.DecimalNumber), "PedSpawn");
+
+        RegisterToggle(CreateToggleRow(countrysideSubPanel, "CountryUniformToggle", "Uniform Materials", true, font), "CountryUniform");
+
+        modeDropdown.onValueChanged.AddListener((idx) =>
+        {
+            bool isCity = (idx == 0);
+            if (citySubPanel != null) citySubPanel.SetActive(isCity);
+            if (countrysideSubPanel != null) countrysideSubPanel.SetActive(!isCity);
+        });
+
+        citySubPanel.SetActive(true);
+        countrysideSubPanel.SetActive(false);
+
+        module.SetActive(false);
+        return module;
+    }
+
+    GameObject BuildModule3Traffic(GameObject parent, Font font)
+    {
+        GameObject module = new GameObject("Module_Traffic");
+        module.transform.SetParent(parent.transform, false);
+        module.AddComponent<LayoutElement>().minHeight = 100;
+        VerticalLayoutGroup mVLG = module.AddComponent<VerticalLayoutGroup>();
+        mVLG.padding = new RectOffset(0, 0, 0, 0);
+        mVLG.spacing = 2;
+        mVLG.childAlignment = TextAnchor.UpperCenter;
+        mVLG.childControlWidth = true;
+        mVLG.childControlHeight = false;
+        mVLG.childForceExpandWidth = true;
+        mVLG.childForceExpandHeight = false;
+        ContentSizeFitter mCSF = module.AddComponent<ContentSizeFitter>();
+        mCSF.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+        UIPanelBuilder.CreateTitle(module, "Traffic & NPC");
+
+        GameObject foldContent = BuildFoldoutSection(module, "NPC Configuration", font);
+
+        RegisterInputField(UIPanelBuilder.CreateInputRow(foldContent, "NPCCountInput", "NPC Count", "3", InputField.ContentType.IntegerNumber), "NPCCount");
+
+        GameObject npcModeRow = new GameObject("NPCModeDropdownRow");
+        npcModeRow.transform.SetParent(foldContent.transform, false);
+        npcModeRow.AddComponent<LayoutElement>().minHeight = 36;
+        HorizontalLayoutGroup nhlg = npcModeRow.AddComponent<HorizontalLayoutGroup>();
+        nhlg.padding = new RectOffset(4, 4, 0, 0);
+        nhlg.spacing = 6;
+        nhlg.childAlignment = TextAnchor.MiddleLeft;
+        nhlg.childControlWidth = true;
+        nhlg.childControlHeight = true;
+        nhlg.childForceExpandWidth = false;
+        nhlg.childForceExpandHeight = true;
+
+        GameObject nmLabel = new GameObject("Label");
+        nmLabel.transform.SetParent(npcModeRow.transform, false);
+        Text nmLabelTxt = nmLabel.AddComponent<Text>();
+        nmLabelTxt.text = "Drive Mode:";
+        nmLabelTxt.font = font;
+        nmLabelTxt.fontSize = 13;
+        nmLabelTxt.color = Color.white;
+        nmLabelTxt.alignment = TextAnchor.MiddleLeft;
+        nmLabel.AddComponent<LayoutElement>().minWidth = 90;
+
+        GameObject npcModeDropdownGO = new GameObject("Dropdown");
+        npcModeDropdownGO.transform.SetParent(npcModeRow.transform, false);
+        npcModeDropdownGO.AddComponent<LayoutElement>().flexibleWidth = 1;
+        Dropdown npcModeDropdown = npcModeDropdownGO.AddComponent<Dropdown>();
+        npcModeDropdown.options = new List<Dropdown.OptionData>
+        {
+            new Dropdown.OptionData("MathSpline"),
+            new Dropdown.OptionData("Rigidbody")
+        };
+        npcModeDropdown.value = 0;
+
+        Image nmImg = npcModeDropdownGO.AddComponent<Image>();
+        nmImg.color = new Color(0.2f, 0.22f, 0.3f);
+
+        GameObject nmDDLabelGO = new GameObject("Label");
+        nmDDLabelGO.transform.SetParent(npcModeDropdownGO.transform, false);
+        Text nmDDLabel = nmDDLabelGO.AddComponent<Text>();
+        nmDDLabel.text = "MathSpline";
+        nmDDLabel.font = font;
+        nmDDLabel.fontSize = 13;
+        nmDDLabel.color = Color.white;
+        nmDDLabel.alignment = TextAnchor.MiddleLeft;
+        RectTransform nmDDRT = nmDDLabelGO.GetComponent<RectTransform>();
+        nmDDRT.anchorMin = Vector2.zero;
+        nmDDRT.anchorMax = Vector2.one;
+        nmDDRT.offsetMin = new Vector2(8, 0);
+        nmDDRT.offsetMax = new Vector2(-20, 0);
+        npcModeDropdown.captionText = nmDDLabel;
+
+        GameObject nmItemLabelGO = new GameObject("ItemLabel");
+        nmItemLabelGO.transform.SetParent(npcModeDropdownGO.transform, false);
+        Text nmItemLabel = nmItemLabelGO.AddComponent<Text>();
+        nmItemLabel.text = "";
+        nmItemLabel.font = font;
+        nmItemLabel.fontSize = 13;
+        nmItemLabel.color = Color.black;
+        nmItemLabel.alignment = TextAnchor.MiddleLeft;
+        npcModeDropdown.itemText = nmItemLabel;
+
+        dropdowns["NPCMode"] = npcModeDropdown;
+
+        RegisterInputField(UIPanelBuilder.CreateInputRow(foldContent, "NPCMaxSpeedInput", "NPC Max Speed", "30", InputField.ContentType.DecimalNumber), "NPCMaxSpeed");
+        RegisterInputField(UIPanelBuilder.CreateInputRow(foldContent, "NPCSafeDistInput", "Safe Distance", "8", InputField.ContentType.DecimalNumber), "NPCSafeDist");
+        RegisterInputField(UIPanelBuilder.CreateInputRow(foldContent, "NPCLookAheadInput", "Look Ahead T", "0.02", InputField.ContentType.DecimalNumber), "NPCLookAhead");
+
+        GameObject spawnBtn = UIPanelBuilder.CreateButton(foldContent, "SpawnNPCsBtn", "Spawn NPCs");
+        Button spawnButton = spawnBtn.GetComponent<Button>();
+        if (spawnButton != null)
+        {
+            spawnButton.onClick.AddListener(() =>
+            {
+                if (trafficManager != null)
+                {
+                    trafficManager.ResetSpawnState();
+                    trafficManager.SpawnNPCs();
+                }
+            });
+        }
+
+        module.SetActive(false);
+        return module;
+    }
+
+    GameObject BuildModule4System(GameObject parent, Font font)
+    {
+        GameObject module = new GameObject("Module_System");
+        module.transform.SetParent(parent.transform, false);
+        module.AddComponent<LayoutElement>().minHeight = 100;
+        VerticalLayoutGroup mVLG = module.AddComponent<VerticalLayoutGroup>();
+        mVLG.padding = new RectOffset(0, 0, 0, 0);
+        mVLG.spacing = 2;
+        mVLG.childAlignment = TextAnchor.UpperCenter;
+        mVLG.childControlWidth = true;
+        mVLG.childControlHeight = false;
+        mVLG.childForceExpandWidth = true;
+        mVLG.childForceExpandHeight = false;
+        ContentSizeFitter mCSF = module.AddComponent<ContentSizeFitter>();
+        mCSF.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+        UIPanelBuilder.CreateTitle(module, "System & Debug");
+
+        GameObject foldContent = BuildFoldoutSection(module, "System Settings", font);
+
+        RegisterToggle(CreateToggleRow(foldContent, "ROS2Toggle", "ROS2 Bridge", false, font), "ROS2Bridge");
+        RegisterToggle(CreateToggleRow(foldContent, "SplineGizmoToggle", "Raycast/Spline Gizmos", false, font), "SplineGizmos");
+        RegisterToggle(CreateToggleRow(foldContent, "MinimalModeToggle", "Minimal UI Mode", false, font), "MinimalMode");
+
+        UIPanelBuilder.CreateSectionHeader(foldContent, "--- Traffic Light Status ---");
+        GameObject tlStatusRow = UIPanelBuilder.CreateDebugRow(foldContent, "TLStatus", "TL State", "N/A");
+        Text tlStatusTxt = tlStatusRow != null ? tlStatusRow.GetComponentInChildren<Text>() : null;
+        hudTexts["TLStatus"] = tlStatusTxt;
+
+        module.SetActive(false);
+        return module;
+    }
+
+    GameObject BuildModule5Camera(GameObject parent, Font font)
+    {
+        GameObject module = new GameObject("Module_Camera");
+        module.transform.SetParent(parent.transform, false);
+        module.AddComponent<LayoutElement>().minHeight = 100;
+        VerticalLayoutGroup mVLG = module.AddComponent<VerticalLayoutGroup>();
+        mVLG.padding = new RectOffset(0, 0, 0, 0);
+        mVLG.spacing = 2;
+        mVLG.childAlignment = TextAnchor.UpperCenter;
+        mVLG.childControlWidth = true;
+        mVLG.childControlHeight = false;
+        mVLG.childForceExpandWidth = true;
+        mVLG.childForceExpandHeight = false;
+        ContentSizeFitter mCSF = module.AddComponent<ContentSizeFitter>();
+        mCSF.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+        UIPanelBuilder.CreateTitle(module, "Camera & Time");
+
+        GameObject foldContent = BuildFoldoutSection(module, "Settings", font);
+
+        GameObject camModeRow = new GameObject("CamModeDropdownRow");
+        camModeRow.transform.SetParent(foldContent.transform, false);
+        camModeRow.AddComponent<LayoutElement>().minHeight = 36;
+        HorizontalLayoutGroup chlg = camModeRow.AddComponent<HorizontalLayoutGroup>();
+        chlg.padding = new RectOffset(4, 4, 0, 0);
+        chlg.spacing = 6;
+        chlg.childAlignment = TextAnchor.MiddleLeft;
+        chlg.childControlWidth = true;
+        chlg.childControlHeight = true;
+        chlg.childForceExpandWidth = false;
+        chlg.childForceExpandHeight = true;
+
+        GameObject cmLabel = new GameObject("Label");
+        cmLabel.transform.SetParent(camModeRow.transform, false);
+        Text cmLabelTxt = cmLabel.AddComponent<Text>();
+        cmLabelTxt.text = "Cam Mode:";
+        cmLabelTxt.font = font;
+        cmLabelTxt.fontSize = 13;
+        cmLabelTxt.color = Color.white;
+        cmLabelTxt.alignment = TextAnchor.MiddleLeft;
+        cmLabel.AddComponent<LayoutElement>().minWidth = 80;
+
+        GameObject camModeDropdownGO = new GameObject("Dropdown");
+        camModeDropdownGO.transform.SetParent(camModeRow.transform, false);
+        camModeDropdownGO.AddComponent<LayoutElement>().flexibleWidth = 1;
+        Dropdown camModeDropdown = camModeDropdownGO.AddComponent<Dropdown>();
+        camModeDropdown.options = new List<Dropdown.OptionData>
+        {
+            new Dropdown.OptionData("Follow"),
+            new Dropdown.OptionData("FreeFly")
+        };
+        camModeDropdown.value = 0;
+
+        Image cmImg = camModeDropdownGO.AddComponent<Image>();
+        cmImg.color = new Color(0.2f, 0.22f, 0.3f);
+
+        GameObject cmDDLabelGO = new GameObject("Label");
+        cmDDLabelGO.transform.SetParent(camModeDropdownGO.transform, false);
+        Text cmDDLabel = cmDDLabelGO.AddComponent<Text>();
+        cmDDLabel.text = "Follow";
+        cmDDLabel.font = font;
+        cmDDLabel.fontSize = 13;
+        cmDDLabel.color = Color.white;
+        cmDDLabel.alignment = TextAnchor.MiddleLeft;
+        RectTransform cmDDRT = cmDDLabelGO.GetComponent<RectTransform>();
+        cmDDRT.anchorMin = Vector2.zero;
+        cmDDRT.anchorMax = Vector2.one;
+        cmDDRT.offsetMin = new Vector2(8, 0);
+        cmDDRT.offsetMax = new Vector2(-20, 0);
+        camModeDropdown.captionText = cmDDLabel;
+
+        GameObject cmItemLabelGO = new GameObject("ItemLabel");
+        cmItemLabelGO.transform.SetParent(camModeDropdownGO.transform, false);
+        Text cmItemLabel = cmItemLabelGO.AddComponent<Text>();
+        cmItemLabel.text = "";
+        cmItemLabel.font = font;
+        cmItemLabel.fontSize = 13;
+        cmItemLabel.color = Color.black;
+        cmItemLabel.alignment = TextAnchor.MiddleLeft;
+        camModeDropdown.itemText = cmItemLabel;
+
+        dropdowns["CamMode"] = camModeDropdown;
+
+        GameObject timeModeRow = new GameObject("TimeModeDropdownRow");
+        timeModeRow.transform.SetParent(foldContent.transform, false);
+        timeModeRow.AddComponent<LayoutElement>().minHeight = 36;
+        HorizontalLayoutGroup thlg = timeModeRow.AddComponent<HorizontalLayoutGroup>();
+        thlg.padding = new RectOffset(4, 4, 0, 0);
+        thlg.spacing = 6;
+        thlg.childAlignment = TextAnchor.MiddleLeft;
+        thlg.childControlWidth = true;
+        thlg.childControlHeight = true;
+        thlg.childForceExpandWidth = false;
+        thlg.childForceExpandHeight = true;
+
+        GameObject tmLabel = new GameObject("Label");
+        tmLabel.transform.SetParent(timeModeRow.transform, false);
+        Text tmLabelTxt = tmLabel.AddComponent<Text>();
+        tmLabelTxt.text = "Time Scale:";
+        tmLabelTxt.font = font;
+        tmLabelTxt.fontSize = 13;
+        tmLabelTxt.color = Color.white;
+        tmLabelTxt.alignment = TextAnchor.MiddleLeft;
+        tmLabel.AddComponent<LayoutElement>().minWidth = 80;
+
+        GameObject timeModeDropdownGO = new GameObject("Dropdown");
+        timeModeDropdownGO.transform.SetParent(timeModeRow.transform, false);
+        timeModeDropdownGO.AddComponent<LayoutElement>().flexibleWidth = 1;
+        Dropdown timeModeDropdown = timeModeDropdownGO.AddComponent<Dropdown>();
+        timeModeDropdown.options = new List<Dropdown.OptionData>
+        {
+            new Dropdown.OptionData("Pause (0x)"),
+            new Dropdown.OptionData("Normal (1x)"),
+            new Dropdown.OptionData("Fast (2x)")
+        };
+        timeModeDropdown.value = 1;
+
+        Image tmImg = timeModeDropdownGO.AddComponent<Image>();
+        tmImg.color = new Color(0.2f, 0.22f, 0.3f);
+
+        GameObject tmDDLabelGO = new GameObject("Label");
+        tmDDLabelGO.transform.SetParent(timeModeDropdownGO.transform, false);
+        Text tmDDLabel = tmDDLabelGO.AddComponent<Text>();
+        tmDDLabel.text = "Normal (1x)";
+        tmDDLabel.font = font;
+        tmDDLabel.fontSize = 13;
+        tmDDLabel.color = Color.white;
+        tmDDLabel.alignment = TextAnchor.MiddleLeft;
+        RectTransform tmDDRT = tmDDLabelGO.GetComponent<RectTransform>();
+        tmDDRT.anchorMin = Vector2.zero;
+        tmDDRT.anchorMax = Vector2.one;
+        tmDDRT.offsetMin = new Vector2(8, 0);
+        tmDDRT.offsetMax = new Vector2(-20, 0);
+        timeModeDropdown.captionText = tmDDLabel;
+
+        GameObject tmItemLabelGO = new GameObject("ItemLabel");
+        tmItemLabelGO.transform.SetParent(timeModeDropdownGO.transform, false);
+        Text tmItemLabel = tmItemLabelGO.AddComponent<Text>();
+        tmItemLabel.text = "";
+        tmItemLabel.font = font;
+        tmItemLabel.fontSize = 13;
+        tmItemLabel.color = Color.black;
+        tmItemLabel.alignment = TextAnchor.MiddleLeft;
+        timeModeDropdown.itemText = tmItemLabel;
+
+        dropdowns["TimeMode"] = timeModeDropdown;
+
+        timeModeDropdown.onValueChanged.AddListener((idx) =>
+        {
+            Time.timeScale = idx switch { 0 => 0f, 1 => 1f, 2 => 2f, _ => 1f };
+        });
+
+        camModeDropdown.onValueChanged.AddListener((idx) =>
+        {
+            if (cameraController != null)
+            {
+                cameraController.currentMode = idx == 0 ? CameraController.CameraMode.Follow : CameraController.CameraMode.FreeFly;
+            }
+        });
+
+        module.SetActive(false);
+        return module;
+    }
+
+    void BuildModule6GlobalButtons(GameObject parent, Font font)
+    {
+        GameObject btnSection = new GameObject("Module_GlobalBtns");
+        btnSection.transform.SetParent(parent.transform, false);
+        btnSection.AddComponent<LayoutElement>().minHeight = 60;
+
+        VerticalLayoutGroup bvl = btnSection.AddComponent<VerticalLayoutGroup>();
+        bvl.padding = new RectOffset(8, 8, 8, 8);
+        bvl.spacing = 6;
+        bvl.childAlignment = TextAnchor.UpperCenter;
+        bvl.childControlWidth = true;
+        bvl.childControlHeight = false;
+        bvl.childForceExpandWidth = true;
+        bvl.childForceExpandHeight = false;
+
+        GameObject applyBtn = UIPanelBuilder.CreateButton(btnSection, "ApplyRegenBtn", "Apply Config & Regenerate World");
+        Button applyButton = applyBtn.GetComponent<Button>();
+        if (applyButton != null)
+        {
+            Image appImg = applyButton.GetComponent<Image>();
+            if (appImg != null) appImg.color = new Color(0.7f, 0.2f, 0.2f);
+            applyButton.onClick.AddListener(() =>
+            {
+                ApplyAllConfigToComponents();
+                if (WorldModel.Instance != null)
+                {
+                    WorldModel.Instance.TriggerWorldGeneration();
+                }
+            });
+        }
+
+        GameObject resetBtn = UIPanelBuilder.CreateButton(btnSection, "ResetDefaultsBtn", "Reset All Defaults");
+        Button resetButton = resetBtn.GetComponent<Button>();
+        if (resetButton != null)
+        {
+            resetButton.onClick.AddListener(() =>
+            {
+                ResetAllDefaults();
+            });
+        }
+    }
+
+    #endregion
+
+    #region UI Helper Methods
+
+    GameObject CreateToggleRow(GameObject parent, string name, string label, bool defaultValue, Font font)
+    {
+        GameObject row = new GameObject(name);
+        row.transform.SetParent(parent.transform, false);
+        row.AddComponent<LayoutElement>().minHeight = 32;
+
+        HorizontalLayoutGroup hlg = row.AddComponent<HorizontalLayoutGroup>();
+        hlg.childAlignment = TextAnchor.MiddleLeft;
+        hlg.childControlWidth = true;
+        hlg.childControlHeight = true;
+        hlg.childForceExpandWidth = false;
+        hlg.childForceExpandHeight = true;
+        hlg.spacing = 8;
+        hlg.padding = new RectOffset(4, 4, 0, 0);
+
+        GameObject labelGO = new GameObject("Label");
+        labelGO.transform.SetParent(row.transform, false);
+        Text labelTxt = labelGO.AddComponent<Text>();
+        labelTxt.text = label;
+        labelTxt.font = font;
+        labelTxt.fontSize = 13;
+        labelTxt.color = Color.white;
+        labelTxt.alignment = TextAnchor.MiddleLeft;
+        labelGO.AddComponent<LayoutElement>().minWidth = 140;
+
+        GameObject toggleGO = new GameObject("Toggle");
+        toggleGO.transform.SetParent(row.transform, false);
+        toggleGO.AddComponent<LayoutElement>().minWidth = 36;
+        toggleGO.AddComponent<LayoutElement>().minHeight = 24;
+        Toggle toggle = toggleGO.AddComponent<Toggle>();
+        toggle.isOn = defaultValue;
+
+        GameObject bgGO = new GameObject("Background");
+        bgGO.transform.SetParent(toggleGO.transform, false);
+        Image bgImg = bgGO.AddComponent<Image>();
+        bgImg.color = new Color(0.25f, 0.25f, 0.35f);
+        RectTransform bgRT = bgGO.GetComponent<RectTransform>();
+        bgRT.anchorMin = Vector2.zero;
+        bgRT.anchorMax = Vector2.one;
+        bgRT.sizeDelta = Vector2.zero;
+        toggle.targetGraphic = bgImg;
+
+        GameObject checkGO = new GameObject("Checkmark");
+        checkGO.transform.SetParent(bgGO.transform, false);
+        Image checkImg = checkGO.AddComponent<Image>();
+        checkImg.color = new Color(0.3f, 0.8f, 1f);
+        RectTransform checkRT = checkGO.GetComponent<RectTransform>();
+        checkRT.anchorMin = new Vector2(0.1f, 0.1f);
+        checkRT.anchorMax = new Vector2(0.9f, 0.9f);
+        checkRT.sizeDelta = Vector2.zero;
+        toggle.graphic = checkImg;
+
+        return row;
+    }
+
+    void RegisterInputField(GameObject row, string key)
+    {
+        if (row == null) return;
+        InputField input = row.GetComponentInChildren<InputField>();
+        if (input != null)
+        {
+            inputFields[key] = input;
+        }
+    }
+
+    void RegisterToggle(GameObject row, string key)
+    {
+        if (row == null) return;
+        Toggle toggle = row.GetComponentInChildren<Toggle>();
+        if (toggle != null)
+        {
+            toggles[key] = toggle;
+        }
+    }
+
+    #endregion
+
+    #region Sync & Bind
+
+    void SyncAllUIFromComponents()
+    {
+        SyncInputFieldValue("CellSize", roadGen != null ? roadGen.cellSize.ToString("F0") : "80");
+        SyncInputFieldValue("GridWidth", roadGen != null ? roadGen.gridWidth.ToString() : "5");
+        SyncInputFieldValue("GridHeight", roadGen != null ? roadGen.gridHeight.ToString() : "5");
+        SyncInputFieldValue("RandOffset", roadGen != null ? roadGen.randomOffset.ToString("F0") : "5");
+        SyncInputFieldValue("Seed", roadGen != null ? roadGen.seed.ToString() : "42");
+
+        SyncInputFieldValue("RoadWidth", roadBuilder != null ? roadBuilder.roadWidth.ToString("F0") : "6");
+        SyncInputFieldValue("MeshRes", roadBuilder != null ? roadBuilder.meshResolution.ToString("F0") : "2");
+        SyncInputFieldValue("HeightOff", roadBuilder != null ? roadBuilder.roadHeightOffset.ToString("F2") : "0.15");
+        SyncInputFieldValue("UVScale", roadBuilder != null ? roadBuilder.uvScale.ToString("F2") : "0.1");
+        SyncInputFieldValue("TangentLen", roadBuilder != null ? roadBuilder.tangentLength.ToString("F2") : "0.3");
+
+        SyncToggleValue("GenCity", roadBuilder != null ? roadBuilder.generateCity : true);
+        SyncInputFieldValue("BldHeight", roadBuilder != null ? roadBuilder.buildingHeight.ToString("F0") : "10");
+        SyncInputFieldValue("Sidewalk", roadBuilder != null ? roadBuilder.sidewalkWidth.ToString("F0") : "2");
+        SyncToggleValue("TrafficLights", trafficLightManager != null ? trafficLightManager.isActiveAndEnabled : true);
+        SyncInputFieldValue("TLChance", trafficLightManager != null ? trafficLightManager.placementChance.ToString("F2") : "0.6");
+        SyncToggleValue("CountryUniform", roadBuilder != null ? roadBuilder.useCountrysideUniformMaterials : true);
+
+        SyncInputFieldValue("NPCCount", trafficManager != null ? trafficManager.npcCount.ToString() : "3");
+        SyncInputFieldValue("NPCMaxSpeed", carController != null ? carController.maxSpeed.ToString("F0") : "30");
+        SyncInputFieldValue("NPCSafeDist", autoDrive != null ? autoDrive.safeDistance.ToString("F0") : "8");
+        SyncInputFieldValue("NPCLookAhead", autoDrive != null ? autoDrive.lookAheadT.ToString("F3") : "0.020");
+
+        SyncToggleValue("SplineGizmos", roadBuilder != null ? roadBuilder.showSplineGizmos : false);
+
+        bool ros2Active = ros2Bridge != null && ros2Bridge.isActiveAndEnabled;
+        SyncToggleValue("ROS2Bridge", ros2Active);
+
+        SyncDropdownValue("CityMode", (roadGen != null && roadGen.isCountryside) ? 1 : 0);
+        SyncDropdownValue("CamMode", cameraController != null ? (cameraController.currentMode == CameraController.CameraMode.Follow ? 0 : 1) : 0);
+        SyncDropdownValue("TimeMode", Mathf.Approximately(Time.timeScale, 0f) ? 0 : (Mathf.Approximately(Time.timeScale, 2f) ? 2 : 1));
+
+        if (citySubPanel != null) citySubPanel.SetActive((roadGen == null) || !roadGen.isCountryside);
+        if (countrysideSubPanel != null) countrysideSubPanel.SetActive(roadGen != null && roadGen.isCountryside);
+    }
+
+    void SyncInputFieldValue(string key, string value)
+    {
+        if (inputFields.TryGetValue(key, out InputField input) && input != null)
+        {
+            input.text = value;
+        }
+    }
+
+    void SyncToggleValue(string key, bool value)
+    {
+        if (toggles.TryGetValue(key, out Toggle toggle) && toggle != null)
+        {
+            toggle.isOn = value;
+        }
+    }
+
+    void SyncDropdownValue(string key, int value)
+    {
+        if (dropdowns.TryGetValue(key, out Dropdown dropdown) && dropdown != null)
+        {
+            if (value >= 0 && value < dropdown.options.Count)
+            {
+                dropdown.value = value;
+            }
+        }
+    }
+
+    void BindAllUIEvents()
+    {
+        BindInputFieldEvent("CellSize", (v) => { if (roadGen != null && float.TryParse(v, out float f)) roadGen.cellSize = f; });
+        BindInputFieldEvent("GridWidth", (v) => { if (roadGen != null && int.TryParse(v, out int i)) roadGen.gridWidth = i; });
+        BindInputFieldEvent("GridHeight", (v) => { if (roadGen != null && int.TryParse(v, out int i)) roadGen.gridHeight = i; });
+        BindInputFieldEvent("RandOffset", (v) => { if (roadGen != null && float.TryParse(v, out float f)) roadGen.randomOffset = f; });
+        BindInputFieldEvent("Seed", (v) => { if (roadGen != null && int.TryParse(v, out int i)) roadGen.seed = i; });
+
+        BindInputFieldEvent("RoadWidth", (v) => { if (roadBuilder != null && float.TryParse(v, out float f)) roadBuilder.roadWidth = f; });
+        BindInputFieldEvent("MeshRes", (v) => { if (roadBuilder != null && float.TryParse(v, out float f)) roadBuilder.meshResolution = f; });
+        BindInputFieldEvent("HeightOff", (v) => { if (roadBuilder != null && float.TryParse(v, out float f)) roadBuilder.roadHeightOffset = f; });
+        BindInputFieldEvent("UVScale", (v) => { if (roadBuilder != null && float.TryParse(v, out float f)) roadBuilder.uvScale = f; });
+        BindInputFieldEvent("TangentLen", (v) => { if (roadBuilder != null && float.TryParse(v, out float f)) roadBuilder.tangentLength = f; });
+
+        BindInputFieldEvent("BldHeight", (v) => { if (roadBuilder != null && float.TryParse(v, out float f)) roadBuilder.buildingHeight = f; });
+        BindInputFieldEvent("Sidewalk", (v) => { if (roadBuilder != null && float.TryParse(v, out float f)) roadBuilder.sidewalkWidth = f; });
+        BindInputFieldEvent("TLChance", (v) => { if (trafficLightManager != null && float.TryParse(v, out float f)) trafficLightManager.placementChance = f; });
+
+        BindInputFieldEvent("NPCCount", (v) => { if (trafficManager != null && int.TryParse(v, out int i)) trafficManager.npcCount = i; });
+        BindInputFieldEvent("NPCMaxSpeed", (v) =>
+        {
+            if (float.TryParse(v, out float f) && trafficManager != null)
+            {
+                foreach (var npc in trafficManager.ActiveNPCs)
+                {
+                    if (npc == null) continue;
+                    var ctrl = npc.GetComponent<SimpleCarController>();
+                    if (ctrl != null) ctrl.maxSpeed = f;
+                }
+            }
+        });
+        BindInputFieldEvent("NPCSafeDist", (v) =>
+        {
+            if (float.TryParse(v, out float f) && trafficManager != null)
+            {
+                foreach (var npc in trafficManager.ActiveNPCs)
+                {
+                    if (npc != null) npc.safeDistance = f;
+                }
+            }
+        });
+        BindInputFieldEvent("NPCLookAhead", (v) =>
+        {
+            if (float.TryParse(v, out float f) && trafficManager != null)
+            {
+                foreach (var npc in trafficManager.ActiveNPCs)
+                {
+                    if (npc != null) npc.lookAheadT = f;
+                }
+            }
+        });
+
+        BindToggleEvent("GenCity", (on) => { if (roadBuilder != null) roadBuilder.generateCity = on; });
+        BindToggleEvent("TrafficLights", (on) =>
+        {
+            if (trafficLightManager != null) trafficLightManager.enabled = on;
+        });
+        BindToggleEvent("CountryUniform", (on) => { if (roadBuilder != null) roadBuilder.useCountrysideUniformMaterials = on; });
+        BindToggleEvent("SplineGizmos", (on) => { if (roadBuilder != null) roadBuilder.showSplineGizmos = on; });
+        BindToggleEvent("ROS2Bridge", (on) =>
+        {
+            if (ros2Bridge != null) ros2Bridge.enabled = on;
+        });
+        BindToggleEvent("MinimalMode", (on) =>
+        {
+            isMinimalMode = on;
+            if (rightPanel != null) rightPanel.SetActive(!on);
+        });
+
+        if (dropdowns.TryGetValue("CityMode", out Dropdown cityDD))
+        {
+            cityDD.onValueChanged.AddListener((idx) =>
+            {
+                if (roadGen != null) roadGen.isCountryside = (idx == 1);
+                if (citySubPanel != null) citySubPanel.SetActive(idx == 0);
+                if (countrysideSubPanel != null) countrysideSubPanel.SetActive(idx == 1);
+            });
+        }
+
+        if (dropdowns.TryGetValue("NPCMode", out Dropdown npcDD))
+        {
+            npcDD.onValueChanged.AddListener((idx) =>
+            {
+                if (trafficManager == null) return;
+                foreach (var npc in trafficManager.ActiveNPCs)
+                {
+                    if (npc == null) continue;
+                    var ctrl = npc.GetComponent<SimpleCarController>();
+                    if (ctrl == null) continue;
+                    var rb = npc.GetComponent<Rigidbody>();
+                    if (idx == 0)
+                    {
+                        ctrl.isNPC = true;
+                        if (rb != null) rb.isKinematic = true;
+                    }
+                    else
+                    {
+                        ctrl.isNPC = false;
+                        if (rb != null) rb.isKinematic = false;
+                    }
+                }
+            });
+        }
+    }
+
+    void BindInputFieldEvent(string key, UnityEngine.Events.UnityAction<string> callback)
+    {
+        if (inputFields.TryGetValue(key, out InputField input) && input != null)
+        {
+            input.onEndEdit.AddListener(callback);
+        }
+    }
+
+    void BindToggleEvent(string key, UnityEngine.Events.UnityAction<bool> callback)
+    {
+        if (toggles.TryGetValue(key, out Toggle toggle) && toggle != null)
+        {
+            toggle.onValueChanged.AddListener(callback);
+        }
+    }
+
+    #endregion
+
+    #region Apply & Reset
+
+    void ApplyAllConfigToComponents()
+    {
+        foreach (var kvp in inputFields)
+        {
+            if (kvp.Value == null) continue;
+            string v = kvp.Value.text;
+            if (string.IsNullOrEmpty(v)) continue;
+
+            switch (kvp.Key)
+            {
+                case "CellSize": if (roadGen != null && float.TryParse(v, out float cl)) roadGen.cellSize = cl; break;
+                case "GridWidth": if (roadGen != null && int.TryParse(v, out int gw)) roadGen.gridWidth = gw; break;
+                case "GridHeight": if (roadGen != null && int.TryParse(v, out int gh)) roadGen.gridHeight = gh; break;
+                case "RandOffset": if (roadGen != null && float.TryParse(v, out float ro)) roadGen.randomOffset = ro; break;
+                case "Seed": if (roadGen != null && int.TryParse(v, out int sd)) roadGen.seed = sd; break;
+                case "RoadWidth": if (roadBuilder != null && float.TryParse(v, out float rw)) roadBuilder.roadWidth = rw; break;
+                case "MeshRes": if (roadBuilder != null && float.TryParse(v, out float mr)) roadBuilder.meshResolution = mr; break;
+                case "HeightOff": if (roadBuilder != null && float.TryParse(v, out float ho)) roadBuilder.roadHeightOffset = ho; break;
+                case "UVScale": if (roadBuilder != null && float.TryParse(v, out float us)) roadBuilder.uvScale = us; break;
+                case "TangentLen": if (roadBuilder != null && float.TryParse(v, out float tl)) roadBuilder.tangentLength = tl; break;
+                case "BldHeight": if (roadBuilder != null && float.TryParse(v, out float bh)) roadBuilder.buildingHeight = bh; break;
+                case "Sidewalk": if (roadBuilder != null && float.TryParse(v, out float sw)) roadBuilder.sidewalkWidth = sw; break;
+                case "TLChance": if (trafficLightManager != null && float.TryParse(v, out float tc)) trafficLightManager.placementChance = tc; break;
+                case "NPCCount": if (trafficManager != null && int.TryParse(v, out int nc)) trafficManager.npcCount = nc; break;
+            }
+        }
+
+        Debug.Log("[MasterUIManager] All configs applied to components.");
+    }
+
+    void ResetAllDefaults()
+    {
+        SyncInputFieldValue("CellSize", "80");
+        SyncInputFieldValue("GridWidth", "5");
+        SyncInputFieldValue("GridHeight", "5");
+        SyncInputFieldValue("RandOffset", "5");
+        SyncInputFieldValue("Seed", "42");
+        SyncInputFieldValue("RoadWidth", "6");
+        SyncInputFieldValue("MeshRes", "2");
+        SyncInputFieldValue("HeightOff", "0.15");
+        SyncInputFieldValue("UVScale", "0.1");
+        SyncInputFieldValue("TangentLen", "0.3");
+        SyncInputFieldValue("BldHeight", "10");
+        SyncInputFieldValue("Sidewalk", "2");
+        SyncInputFieldValue("TLChance", "0.6");
+        SyncInputFieldValue("NPCCount", "3");
+        SyncInputFieldValue("NPCMaxSpeed", "30");
+        SyncInputFieldValue("NPCSafeDist", "8");
+        SyncInputFieldValue("NPCLookAhead", "0.020");
+
+        SyncToggleValue("GenCity", true);
+        SyncToggleValue("TrafficLights", true);
+        SyncToggleValue("CountryUniform", true);
+        SyncToggleValue("SplineGizmos", false);
+        SyncToggleValue("ROS2Bridge", false);
+        SyncToggleValue("MinimalMode", false);
+
+        SyncDropdownValue("CityMode", 0);
+        SyncDropdownValue("CamMode", 0);
+        SyncDropdownValue("TimeMode", 1);
+
+        if (citySubPanel != null) citySubPanel.SetActive(true);
+        if (countrysideSubPanel != null) countrysideSubPanel.SetActive(false);
+
+        Time.timeScale = 1f;
+
+        Debug.Log("[MasterUIManager] All defaults reset.");
+    }
+
+    #endregion
+
+    #region HUD Refresh
+
+    void RefreshHUD()
+    {
+        SimpleCarController cc = carController;
+        if (cc == null) { cc = FindObjectOfType<SimpleCarController>(); if (cc != null) carController = cc; }
+
+        SimpleAutoDrive ad = autoDrive;
+        if (ad == null) { ad = FindObjectOfType<SimpleAutoDrive>(); if (ad != null) autoDrive = ad; }
+
+        CameraController cam = cameraController;
+        if (cam == null) { cam = FindObjectOfType<CameraController>(); if (cam != null) cameraController = cam; }
+
+        ROS2BridgeV2 r2 = ros2Bridge;
+        if (r2 == null) { r2 = FindObjectOfType<ROS2BridgeV2>(); if (r2 != null) ros2Bridge = r2; }
+
+        TrafficLightManager tlm = trafficLightManager;
+        if (tlm == null) { tlm = FindObjectOfType<TrafficLightManager>(); if (tlm != null) trafficLightManager = tlm; }
+
+        SetHUDValue("HUDSpeed", cc != null ? cc.currentSpeed.ToString("F1") + " m/s" : "N/A");
+        SetHUDValue("HUDSteering", cc != null ? cc.currentSteeringAngle.ToString("F1") + " deg" : "N/A");
+        SetHUDValue("HUDAutoMode", cc != null ? (cc.autoMode ? "Yes" : "No") : "N/A");
+        SetHUDValue("HUDState", ad != null ? ad.currentState.ToString() : "N/A");
+        SetHUDValue("HUDLaneId", ad != null ? ad.currentLaneId.ToString() : "N/A");
+
+        if (cc != null)
+        {
+            Vector3 pos = cc.GetPosition();
+            SetHUDValue("HUDCoords", pos.x.ToString("F1") + ", " + pos.y.ToString("F1") + ", " + pos.z.ToString("F1"));
+        }
+        else
+        {
+            SetHUDValue("HUDCoords", "N/A");
+        }
+
+        string ts = "x" + Time.timeScale.ToString("F0");
+        SetHUDValue("HUDTimeScale", ts);
+
+        Transform timeLabel = topBar != null ? topBar.transform.Find("TimeLabel") : null;
+        if (timeLabel != null)
+        {
+            Text tl = timeLabel.GetComponent<Text>();
+            if (tl != null) tl.text = "Time " + ts;
+        }
+
+        Transform rosDot = topBar != null ? topBar.transform.Find("RosStatusDot") : null;
+        if (rosDot != null)
+        {
+            Text rd = rosDot.GetComponent<Text>();
+            if (rd != null)
+            {
+                bool connected = r2 != null && r2.isConnected;
+                rd.text = connected ? "ROS2 ON" : "ROS2 OFF";
+                rd.color = connected ? new Color(0.2f, 0.9f, 0.3f) : new Color(0.5f, 0.5f, 0.5f);
+            }
+        }
+
+        SetHUDValue("TLStatus", tlm != null ? "Active" : "Inactive");
+
+        if (roadGen == null) roadGen = FindObjectOfType<RoadNetworkGenerator>();
+        if (roadBuilder == null) roadBuilder = FindObjectOfType<ProceduralRoadBuilder>();
+        if (trafficManager == null) trafficManager = FindObjectOfType<TrafficManager>();
+        if (trafficLightManager == null) trafficLightManager = FindObjectOfType<TrafficLightManager>();
+    }
+
+    void SetHUDValue(string key, string value)
+    {
+        if (hudTexts.TryGetValue(key, out Text txt) && txt != null)
+        {
+            txt.text = value;
+        }
+    }
+
+    #endregion
+
+    #region Key Display
+
+    void RefreshAllKeyTexts()
+    {
+        if (RuntimeInputManager.Instance == null) return;
     }
 
     #endregion
