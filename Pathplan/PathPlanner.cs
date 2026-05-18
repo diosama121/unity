@@ -22,9 +22,6 @@ public class PathPlanner : MonoBehaviour
 
     private WorldModel _worldModel => WorldModel.Instance;
 
-    /// <summary>
-    /// 离散路径（拓扑节点ID序列）
-    /// </summary>
     public List<int> FindDiscretePath(Vector3 startPos, Vector3 targetPos)
     {
         RoadNode startNode = _worldModel.GetNearestNode(startPos);
@@ -39,9 +36,6 @@ public class PathPlanner : MonoBehaviour
         return RunAStar(startNode.Id, targetNode.Id);
     }
 
-    /// <summary>
-    /// 平滑路径（含样条插值，可直接驱动车辆）
-    /// </summary>
     public List<Vector3> FindSmoothPath(Vector3 startPos, Vector3 targetPos)
     {
         List<int> discretePath = FindDiscretePath(startPos, targetPos);
@@ -51,7 +45,6 @@ public class PathPlanner : MonoBehaviour
             return null;
         }
 
-        // 构建控制点序列
         List<Vector3> controlPoints = new List<Vector3> { startPos };
         foreach (int nodeId in discretePath)
         {
@@ -77,28 +70,56 @@ public class PathPlanner : MonoBehaviour
         return smoothPath;
     }
 
-    /// <summary>
-    /// 【新增接口】直接返回样条曲线对象，供自动驾驶系统(A3)追踪使用
-    /// </summary>
     public CatmullRomSpline PlanPathSpline(Vector3 startPos, Vector3 targetPos)
     {
         List<int> discretePath = FindDiscretePath(startPos, targetPos);
         if (discretePath == null || discretePath.Count < 2) return null;
 
-        List<Vector3> controlPoints = new List<Vector3> { startPos };
-        foreach (int nodeId in discretePath)
+        List<Vector3> controlPoints = new List<Vector3>();
+
+        for (int i = 0; i < discretePath.Count - 1; i++)
         {
-            RoadNode node = _worldModel.GetNode(nodeId);
-            if (node != null) controlPoints.Add(node.WorldPos);
+            int currId = discretePath[i];
+            int nextId = discretePath[i + 1];
+
+            string edgeKey = Mathf.Min(currId, nextId) + "_" + Mathf.Max(currId, nextId);
+
+            if (_worldModel.GlobalSplineCache.TryGetValue(edgeKey, out var cachedSpline))
+            {
+                bool reverse = (currId > nextId);
+
+                for (int j = 0; j < cachedSpline.Count; j++)
+                {
+                    int idx = reverse ? (cachedSpline.Count - 1 - j) : j;
+                    Vector3 pt = cachedSpline[idx].Pos;
+
+                    if (controlPoints.Count > 0 && Vector3.Distance(controlPoints[controlPoints.Count - 1], pt) < 0.1f)
+                        continue;
+
+                    controlPoints.Add(pt);
+                }
+            }
+            else
+            {
+                RoadNode node = _worldModel.GetNode(currId);
+                if (node != null && (controlPoints.Count == 0 || Vector3.Distance(controlPoints[controlPoints.Count - 1], node.WorldPos) > 0.1f))
+                {
+                    controlPoints.Add(node.WorldPos);
+                }
+            }
         }
-        controlPoints.Add(targetPos);
+
+        RoadNode lastNode = _worldModel.GetNode(discretePath[discretePath.Count - 1]);
+        if (lastNode != null && (controlPoints.Count == 0 || Vector3.Distance(controlPoints[controlPoints.Count - 1], lastNode.WorldPos) > 0.1f))
+        {
+            controlPoints.Add(lastNode.WorldPos);
+        }
+
+        if (controlPoints.Count < 2) return null;
 
         return new CatmullRomSpline(controlPoints, useCentripetal: false);
     }
 
-    /// <summary>
-    /// A* 核心实现
-    /// </summary>
     private List<int> RunAStar(int startId, int targetId)
     {
         Dictionary<int, PathNode> openSet = new Dictionary<int, PathNode>();

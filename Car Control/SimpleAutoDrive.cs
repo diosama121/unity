@@ -1,5 +1,4 @@
 using UnityEngine;
-using System.Collections.Generic;
 
 [RequireComponent(typeof(SimpleCarController))]
 public partial class SimpleAutoDrive : MonoBehaviour
@@ -11,8 +10,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
     public float targetSpeed = 15f;
     public float safeDistance = 8f;
     public float lookAheadT = 0.02f;
-    
-    [Header("=== 交通规则注入 ===")]
+
     public float rightLaneOffset = 3.5f;
 
     public enum DriveState { Idle, Following, Avoiding, Stopping, Waiting, RemoteControlled }
@@ -27,6 +25,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
     
     public IntersectionState currentIntersectionState = IntersectionState.Uncontrolled; 
     public int currentDestinationNodeId = -1;
+    private int nearestIntersectionNodeId = -1;
     private Vector3 stopTargetPosition = Vector3.zero;
     private bool hasStopTarget = false;
 
@@ -61,7 +60,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
 
     void Update()
     {
-        if (!carController.autoMode && currentState != DriveState.RemoteControlled) return;
+        if (!carController.autoMode && !carController.wasdOverride && currentState != DriveState.RemoteControlled) return;
         if (avoidCooldown > 0f) avoidCooldown -= Time.deltaTime;
 
         UpdateSensorData();
@@ -94,9 +93,11 @@ public partial class SimpleAutoDrive : MonoBehaviour
 
         if (WorldModel.Instance != null)
         {
+            nearestIntersectionNodeId = -1;
             RoadNode nearestNode = WorldModel.Instance.GetNearestNode(transform.position);
             if (nearestNode != null && (nearestNode.Type == NodeType.Intersection || nearestNode.Type == NodeType.Merge))
             {
+                nearestIntersectionNodeId = nearestNode.Id;
                 StopLine relevantStopLine = WorldModel.Instance.GetNearestStopLine(nearestNode.Id, transform.position);
                 if (relevantStopLine != null && Vector3.Distance(transform.position, relevantStopLine.Position) < 20f)
                 {
@@ -146,7 +147,10 @@ public partial class SimpleAutoDrive : MonoBehaviour
                 
                 if (currentSpline != null)
                 {
-                    Vector3 tangent = currentSpline.GetPoint(Mathf.Min(currentT + 0.01f, 1f)) - currentSpline.GetPoint(currentT);
+                    float sampleT = (currentT < 0.99f) ? Mathf.Min(currentT + 0.01f, 1f) : currentT;
+                    Vector3 pA = (currentT > 0.01f) ? currentSpline.GetPoint(currentT - 0.01f) : currentSpline.GetPoint(0f);
+                    Vector3 pB = currentSpline.GetPoint(sampleT);
+                    Vector3 tangent = (pB - pA).normalized;
                     Vector3 localTangent = transform.InverseTransformDirection(tangent);
                     escapeSteering = localTangent.x > 0 ? 1f : -1f;
                 }

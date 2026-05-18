@@ -1,18 +1,21 @@
 using UnityEngine;
 
-/// <summary>
-/// SimpleAutoDrive 状态机方法（partial class）
-/// 包含所有 Handle*State 方法和 FollowPath 路径跟随逻辑
-/// </summary>
 public partial class SimpleAutoDrive : MonoBehaviour
 {
     void HandleFollowingState()
     {
-        if (currentIntersectionState == IntersectionState.RedLight)
+        if (obstacleDetected && avoidCooldown <= 0f)
         {
-            if (currentDestinationNodeId >= 0 && WorldModel.Instance != null)
+            currentState = DriveState.Avoiding;
+            return;
+        }
+
+        if (currentIntersectionState == IntersectionState.RedLight || currentIntersectionState == IntersectionState.YellowLight)
+        {
+            int stopNodeId = (nearestIntersectionNodeId >= 0) ? nearestIntersectionNodeId : currentDestinationNodeId;
+            if (stopNodeId >= 0 && WorldModel.Instance != null)
             {
-                StopLine relevantStopLine = WorldModel.Instance.GetNearestStopLine(currentDestinationNodeId, transform.position);
+                StopLine relevantStopLine = WorldModel.Instance.GetNearestStopLine(stopNodeId, transform.position);
                 if (relevantStopLine != null)
                 {
                     stopTargetPosition = relevantStopLine.Position;
@@ -68,7 +71,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
         {
             hasStopTarget = false;
             stuckTimer = 0f; stuckCheckTimer = 0f; lastPosition = transform.position; startupDelay = 2f;
-            carController.SetAutoControl(0f, 0f); // 重置制动
+            carController.SetAutoControl(0f, 0f);
             carController.SetAutoBrake(0f);
             currentState = DriveState.Following;
             return;
@@ -83,32 +86,29 @@ public partial class SimpleAutoDrive : MonoBehaviour
         float distToStop = Vector3.Distance(transform.position, stopTargetPosition);
         float speed = Mathf.Abs(carController.GetSpeed());
 
-        // 运动学制动公式 v²/2d
         float brakingDecel = distToStop > 0.01f ? (speed * speed) / (2f * distToStop) : brakeMaxDecel;
         brakingDecel = Mathf.Clamp(brakingDecel, 0.5f, brakeMaxDecel);
 
         if (distToStop < 0.5f)
         {
             carController.SetAutoControl(0f, 0f);
-            // 确保完全刹停
             carController.SetAutoBrake(brakeMaxDecel);
             return;
         }
 
-        Vector3 dirToStop = (stopTargetPosition - transform.position).normalized;
+        Vector3 diffToStop = stopTargetPosition - transform.position;
+        Vector3 dirToStop = CarControlUtility.SafeNormalize(diffToStop, transform.forward);
         Vector3 localDir = transform.InverseTransformDirection(dirToStop);
         float steering = Mathf.Clamp(localDir.x * 2f, -1f, 1f);
 
-        carController.SetAutoControl(0f, steering); // 不踩油门
-        carController.SetAutoBrake(brakingDecel);   // 直接注入制动减速度
+        carController.SetAutoControl(0f, steering);
+        carController.SetAutoBrake(brakingDecel);
     }
 
     void HandleWaitingState() => carController.SetAutoControl(0f, 0f);
 
     void HandleRemoteControlledState()
     {
-        // 保持语义感知活跃但不输出控制
-        // 继续更新 LaneId 和 StopLine 距离供 ROS2 遥测
         if (WorldModel.Instance != null)
         {
             laneSearchTimer += Time.deltaTime;
@@ -122,7 +122,6 @@ public partial class SimpleAutoDrive : MonoBehaviour
         {
             currentIntersectionState = WorldModel.Instance.GetIntersectionState(currentDestinationNodeId);
         }
-        // 不调用 carController.SetAutoControl() — 控制权归 ROS2
     }
 
     void FollowPath()
@@ -172,8 +171,9 @@ public partial class SimpleAutoDrive : MonoBehaviour
 
                 if (minDistSqr < 36f)
                 {
-                    float checkT = Mathf.Min(bestLaneT + 0.05f, 1f);
-                    Vector3 laneDirection = (lane.CenterSpline.GetPoint(checkT) - lane.CenterSpline.GetPoint(bestLaneT)).normalized;
+                    float checkT = (bestLaneT < 0.95f) ? Mathf.Min(bestLaneT + 0.05f, 1f) : Mathf.Max(bestLaneT - 0.05f, 0f);
+                    Vector3 laneDir = lane.CenterSpline.GetPoint(checkT) - lane.CenterSpline.GetPoint(bestLaneT);
+                    Vector3 laneDirection = CarControlUtility.SafeNormalize(laneDir, transform.forward);
                     if (Vector3.Dot(transform.forward, laneDirection) > 0f)
                     {
                         Vector3 lanePoint = lane.CenterSpline.GetPoint(bestLaneT);
@@ -191,8 +191,9 @@ public partial class SimpleAutoDrive : MonoBehaviour
 
         if (!hasLaneAnchor)
         {
-            float nextT = Mathf.Min(currentT + 0.001f, 1f);
-            Vector3 tangent = (currentSpline.GetPoint(nextT) - posOnSpline).normalized;
+            float nextT = (currentT < 0.999f) ? Mathf.Min(currentT + 0.001f, 1f) : Mathf.Max(currentT - 0.001f, 0f);
+            Vector3 tangentRaw = currentSpline.GetPoint(nextT) - posOnSpline;
+            Vector3 tangent = CarControlUtility.SafeNormalize(tangentRaw, transform.forward);
             Vector3 rightVector = Vector3.Cross(Vector3.up, tangent).normalized;
 
             lateralTarget = posOnSpline + rightVector * rightLaneOffset;
@@ -210,7 +211,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
 
         if (currentIntersectionState == IntersectionState.RedLight) speedFactor = 0f;
 
-        float throttle = (targetSpeed * speedFactor) / carController.maxSpeed;
+        float throttle = CarControlUtility.SafeDivide(targetSpeed * speedFactor, carController.maxSpeed);
         carController.SetAutoControl(throttle, steering);
         carController.SetAutoBrake(0f);
     }

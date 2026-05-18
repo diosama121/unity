@@ -1,25 +1,14 @@
 using UnityEngine;
 
-/// <summary>
-/// SimpleCarController 玩家输入处理（partial class）
-/// 包含 WASD 手动接管、N 键重置导航、R 键回归初始位置
-/// </summary>
 public partial class SimpleCarController : MonoBehaviour
 {
-    /// <summary>
-    /// 处理玩家键盘输入：WASD临时接管、N键重置导航、R键回归初始位置
-    /// 在 Update() 开头调用
-    /// </summary>
     void HandlePlayerInput()
     {
-        // WASD 手动操控：临时接管，不永久修改autoMode
-        // 松开WASD后自动恢复之前的autoMode状态
         bool wasdActive = Input.GetKey(KeyCode.W) || Input.GetKey(KeyCode.A) || Input.GetKey(KeyCode.S) || Input.GetKey(KeyCode.D);
         if (wasdActive)
         {
             if (!wasdOverride)
             {
-                // 第一帧按下WASD：保存当前autoMode，临时切手动
                 wasdOverride = true;
                 autoModeBeforeOverride = autoMode;
                 autoMode = false;
@@ -30,19 +19,16 @@ public partial class SimpleCarController : MonoBehaviour
         }
         else if (wasdOverride)
         {
-            // WASD松开：恢复之前的autoMode状态
             wasdOverride = false;
             autoMode = autoModeBeforeOverride;
         }
 
-        // R键：回归初始位置
-        if (Input.GetKeyDown(KeyCode.R))
+        if (Input.GetKeyDown(KeyCode.R) && !isNPC)
         {
             ResetPosition();
         }
 
-        // N键：重置导航路径
-        if (Input.GetKeyDown(KeyCode.N))
+        if (Input.GetKeyDown(KeyCode.N) && !isNPC)
         {
             wasdOverride = false;
             autoMode = true;
