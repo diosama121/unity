@@ -217,7 +217,9 @@ public class MasterUIManager : MonoBehaviour
         Image tsBg = thoughtStreamPanel.AddComponent<Image>();
         tsBg.color = new Color(0, 0, 0, 0.45f);
 
-        thoughtStreamText = thoughtStreamPanel.AddComponent<Text>();
+        GameObject textChild = new GameObject("Text");
+        textChild.transform.SetParent(thoughtStreamPanel.transform, false);
+        thoughtStreamText = textChild.AddComponent<Text>();
         thoughtStreamText.font = font;
         thoughtStreamText.fontSize = 11;
         thoughtStreamText.resizeTextForBestFit = true;
@@ -227,7 +229,7 @@ public class MasterUIManager : MonoBehaviour
         thoughtStreamText.alignment = TextAnchor.LowerLeft;
         thoughtStreamText.horizontalOverflow = HorizontalWrapMode.Overflow;
         thoughtStreamText.verticalOverflow = VerticalWrapMode.Overflow;
-        RectTransform ttsRT = thoughtStreamText.GetComponent<RectTransform>();
+        RectTransform ttsRT = textChild.GetComponent<RectTransform>();
         ttsRT.anchorMin = Vector2.zero;
         ttsRT.anchorMax = Vector2.one;
         ttsRT.offsetMin = new Vector2(6, 4);
@@ -296,6 +298,18 @@ public class MasterUIManager : MonoBehaviour
             scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
             scaler.matchWidthOrHeight = 0.5f;
             canvasGO.AddComponent<GraphicRaycaster>();
+        }
+        else
+        {
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            CanvasScaler scaler = canvas.GetComponent<CanvasScaler>();
+            if (scaler == null) scaler = canvas.gameObject.AddComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = refResolution;
+            scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
+            scaler.matchWidthOrHeight = 0.5f;
+            if (canvas.GetComponent<GraphicRaycaster>() == null)
+                canvas.gameObject.AddComponent<GraphicRaycaster>();
         }
         mainCanvas = canvas;
 
@@ -458,30 +472,64 @@ public class MasterUIManager : MonoBehaviour
         lpRT.offsetMin = new Vector2(8, 4);
         lpRT.offsetMax = new Vector2(0, 0);
 
-        VerticalLayoutGroup lpVLG = leftPanel.AddComponent<VerticalLayoutGroup>();
-        lpVLG.padding = new RectOffset(0, 0, 0, 0);
-        lpVLG.spacing = 4;
-        lpVLG.childAlignment = TextAnchor.UpperCenter;
-        lpVLG.childControlWidth = true;
-        lpVLG.childControlHeight = false;
-        lpVLG.childForceExpandWidth = true;
-        lpVLG.childForceExpandHeight = false;
+        Image lpBg = leftPanel.AddComponent<Image>();
+        lpBg.color = new Color(0.06f, 0.08f, 0.16f, 0.05f);
 
-        BuildHUDPanel(leftPanel, font);
-        BuildKeyPanel(leftPanel, font);
+        ScrollRect scrollRect = leftPanel.AddComponent<ScrollRect>();
+        scrollRect.horizontal = false;
+        scrollRect.vertical = true;
+
+        GameObject viewportGO = new GameObject("Viewport");
+        viewportGO.transform.SetParent(leftPanel.transform, false);
+        RectTransform vpRT = viewportGO.AddComponent<RectTransform>();
+        vpRT.anchorMin = Vector2.zero;
+        vpRT.anchorMax = Vector2.one;
+        vpRT.offsetMin = Vector2.zero;
+        vpRT.offsetMax = Vector2.zero;
+        Image vpImg = viewportGO.AddComponent<Image>();
+        vpImg.color = new Color(1, 1, 1, 1);
+        Mask vpMask = viewportGO.AddComponent<Mask>();
+        vpMask.showMaskGraphic = false;
+
+        GameObject scrollContent = new GameObject("ScrollContent");
+        scrollContent.transform.SetParent(viewportGO.transform, false);
+        RectTransform scRT = scrollContent.AddComponent<RectTransform>();
+        scRT.anchorMin = new Vector2(0, 1);
+        scRT.anchorMax = new Vector2(1, 1);
+        scRT.pivot = new Vector2(0.5f, 1);
+        scRT.anchoredPosition = Vector2.zero;
+        scRT.sizeDelta = new Vector2(0, 0);
+
+        VerticalLayoutGroup scVLG = scrollContent.AddComponent<VerticalLayoutGroup>();
+        scVLG.padding = new RectOffset(6, 6, 4, 4);
+        scVLG.spacing = 4;
+        scVLG.childAlignment = TextAnchor.UpperCenter;
+        scVLG.childControlWidth = true;
+        scVLG.childControlHeight = false;
+        scVLG.childForceExpandWidth = true;
+        scVLG.childForceExpandHeight = false;
+
+        ContentSizeFitter scCSF = scrollContent.AddComponent<ContentSizeFitter>();
+        scCSF.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+        scrollRect.viewport = vpRT;
+        scrollRect.content = scRT;
+
+        BuildHUDPanel(scrollContent, font);
+        BuildKeyPanel(scrollContent, font);
     }
 
     void BuildHUDPanel(GameObject parent, Font font)
     {
         hudPanel = new GameObject("HUDPanel");
         hudPanel.transform.SetParent(parent.transform, false);
-        hudPanel.AddComponent<LayoutElement>().minHeight = 340;
+        hudPanel.AddComponent<LayoutElement>().minHeight = 300;
         Image hudBg = hudPanel.AddComponent<Image>();
         hudBg.color = new Color(0.06f, 0.08f, 0.16f, 0.6f);
 
         VerticalLayoutGroup hudVLG = hudPanel.AddComponent<VerticalLayoutGroup>();
-        hudVLG.padding = new RectOffset(12, 12, 10, 10);
-        hudVLG.spacing = 3;
+        hudVLG.padding = new RectOffset(8, 8, 8, 8);
+        hudVLG.spacing = 2;
         hudVLG.childAlignment = TextAnchor.UpperCenter;
         hudVLG.childControlWidth = true;
         hudVLG.childControlHeight = false;
@@ -492,7 +540,7 @@ public class MasterUIManager : MonoBehaviour
 
         GameObject minimapGO = new GameObject("Minimap");
         minimapGO.transform.SetParent(hudPanel.transform, false);
-        minimapGO.AddComponent<LayoutElement>().minHeight = 150;
+        minimapGO.AddComponent<LayoutElement>().minHeight = 100;
         minimapGO.AddComponent<LayoutElement>().minWidth = 200;
         RawImage rawImg = minimapGO.AddComponent<RawImage>();
         rawImg.color = new Color(0.85f, 0.85f, 0.85f, 0.3f);
@@ -515,7 +563,7 @@ public class MasterUIManager : MonoBehaviour
     {
         GameObject row = new GameObject("HUD_" + label);
         row.transform.SetParent(parent.transform, false);
-        row.AddComponent<LayoutElement>().minHeight = 26;
+        row.AddComponent<LayoutElement>().minHeight = 20;
 
         HorizontalLayoutGroup hlg = row.AddComponent<HorizontalLayoutGroup>();
         hlg.childAlignment = TextAnchor.MiddleLeft;
@@ -530,23 +578,23 @@ public class MasterUIManager : MonoBehaviour
         Text lTxt = lGO.AddComponent<Text>();
         lTxt.text = label + ":";
         lTxt.font = font;
-        lTxt.fontSize = 13;
+        lTxt.fontSize = 11;
         lTxt.resizeTextForBestFit = true;
-        lTxt.resizeTextMinSize = 8;
-        lTxt.resizeTextMaxSize = 13;
+        lTxt.resizeTextMinSize = 7;
+        lTxt.resizeTextMaxSize = 11;
         lTxt.color = new Color(0.7f, 0.7f, 0.75f);
         lTxt.alignment = TextAnchor.MiddleLeft;
-        lGO.AddComponent<LayoutElement>().minWidth = 75;
+        lGO.AddComponent<LayoutElement>().minWidth = 65;
 
         GameObject vGO = new GameObject("Value");
         vGO.transform.SetParent(row.transform, false);
         Text vTxt = vGO.AddComponent<Text>();
         vTxt.text = defaultValue;
         vTxt.font = font;
-        vTxt.fontSize = 14;
+        vTxt.fontSize = 12;
         vTxt.resizeTextForBestFit = true;
-        vTxt.resizeTextMinSize = 8;
-        vTxt.resizeTextMaxSize = 14;
+        vTxt.resizeTextMinSize = 7;
+        vTxt.resizeTextMaxSize = 12;
         vTxt.fontStyle = FontStyle.Bold;
         vTxt.color = new Color(0.2f, 0.9f, 0.5f);
         vTxt.alignment = TextAnchor.MiddleLeft;
@@ -559,13 +607,13 @@ public class MasterUIManager : MonoBehaviour
     {
         keyPanel = new GameObject("KeyPanel");
         keyPanel.transform.SetParent(parent.transform, false);
-        keyPanel.AddComponent<LayoutElement>().minHeight = 180;
+        keyPanel.AddComponent<LayoutElement>().minHeight = 160;
         Image kpBg = keyPanel.AddComponent<Image>();
         kpBg.color = new Color(0.06f, 0.08f, 0.16f, 0.6f);
 
         VerticalLayoutGroup kpVLG = keyPanel.AddComponent<VerticalLayoutGroup>();
-        kpVLG.padding = new RectOffset(12, 12, 10, 10);
-        kpVLG.spacing = 3;
+        kpVLG.padding = new RectOffset(8, 8, 8, 8);
+        kpVLG.spacing = 2;
         kpVLG.childAlignment = TextAnchor.UpperCenter;
         kpVLG.childControlWidth = true;
         kpVLG.childControlHeight = false;
@@ -587,7 +635,7 @@ public class MasterUIManager : MonoBehaviour
     {
         GameObject row = new GameObject("Key_" + key);
         row.transform.SetParent(parent.transform, false);
-        row.AddComponent<LayoutElement>().minHeight = 22;
+        row.AddComponent<LayoutElement>().minHeight = 19;
 
         HorizontalLayoutGroup hlg = row.AddComponent<HorizontalLayoutGroup>();
         hlg.childAlignment = TextAnchor.MiddleLeft;
