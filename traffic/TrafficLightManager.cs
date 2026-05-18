@@ -20,7 +20,7 @@ public class TrafficLightManager : MonoBehaviour
     [Header("=== 放置配置 ===")]
     [Tooltip("在十字路口放置交通灯的概率 0-1")]
     [Range(0f, 1f)]
-    public float placementChance = 0.6f;
+    public float placementChance = 0.1f;
 
     [Tooltip("交通灯放置的随机种子（和路网种子一致保证复现）")]
     public int placementSeed = 42;

@@ -234,6 +234,52 @@ public class MasterUIManager : MonoBehaviour
         ttsRT.anchorMax = Vector2.one;
         ttsRT.offsetMin = new Vector2(6, 4);
         ttsRT.offsetMax = new Vector2(-6, -4);
+
+        // 导出日志按钮
+        GameObject exportBtnGO = new GameObject("ExportLogBtn");
+        exportBtnGO.transform.SetParent(thoughtStreamPanel.transform, false);
+        RectTransform ebRT = exportBtnGO.AddComponent<RectTransform>();
+        ebRT.anchorMin = new Vector2(0.92f, 0.55f);
+        ebRT.anchorMax = new Vector2(0.99f, 0.9f);
+        ebRT.offsetMin = Vector2.zero;
+        ebRT.offsetMax = Vector2.zero;
+        Button exportBtn = exportBtnGO.AddComponent<Button>();
+        Image ebImg = exportBtnGO.AddComponent<Image>();
+        ebImg.color = new Color(0.2f, 0.5f, 0.3f, 0.8f);
+        exportBtn.targetGraphic = ebImg;
+        GameObject ebTxtGO = new GameObject("Text");
+        ebTxtGO.transform.SetParent(exportBtnGO.transform, false);
+        Text ebTxt = ebTxtGO.AddComponent<Text>();
+        ebTxt.text = "导出日志";
+        ebTxt.font = font;
+        ebTxt.fontSize = 8;
+        ebTxt.resizeTextForBestFit = true;
+        ebTxt.resizeTextMinSize = 5;
+        ebTxt.resizeTextMaxSize = 9;
+        ebTxt.color = Color.white;
+        ebTxt.alignment = TextAnchor.MiddleCenter;
+        RectTransform ebTxtRT = ebTxtGO.GetComponent<RectTransform>();
+        ebTxtRT.anchorMin = Vector2.zero;
+        ebTxtRT.anchorMax = Vector2.one;
+        ebTxtRT.offsetMin = Vector2.zero;
+        ebTxtRT.offsetMax = Vector2.zero;
+        exportBtn.onClick.AddListener(() =>
+        {
+            try
+            {
+                string timestamp = System.DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                string filePath = System.IO.Path.Combine(Application.persistentDataPath, "log_" + timestamp + ".txt");
+                string content = "";
+                for (int i = 0; i < thoughtLines.Count; i++)
+                    content += thoughtLines[i] + "\n";
+                System.IO.File.WriteAllText(filePath, content);
+                Debug.Log("[MasterUIManager] 日志已导出到: " + filePath);
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogError("[MasterUIManager] 日志导出失败: " + e.Message);
+            }
+        });
     }
 
     public void ShowTORWarning(float duration = 3f)
@@ -344,8 +390,8 @@ public class MasterUIManager : MonoBehaviour
         topBar = new GameObject("TopBar");
         topBar.transform.SetParent(root.transform, false);
         RectTransform tbRT = topBar.AddComponent<RectTransform>();
-        tbRT.anchorMin = new Vector2(0, 0.93f);
-        tbRT.anchorMax = new Vector2(1, 1);
+        tbRT.anchorMin = new Vector2(0, 0);
+tbRT.anchorMax = new Vector2(1, 1);
         tbRT.offsetMin = Vector2.zero;
         tbRT.offsetMax = Vector2.zero;
 
@@ -361,11 +407,11 @@ public class MasterUIManager : MonoBehaviour
         tbh.childForceExpandWidth = false;
         tbh.childForceExpandHeight = true;
 
-        CreateNavButton(topBar, "NavHUD", "HUD", font, () => SwitchToModule(moduleBaseSettings));
-        CreateNavButton(topBar, "NavTerrain", "Terrain", font, () => SwitchToModule(moduleTerrain));
-        CreateNavButton(topBar, "NavTraffic", "Traffic", font, () => SwitchToModule(moduleTraffic));
-        CreateNavButton(topBar, "NavSystem", "System", font, () => SwitchToModule(moduleSystem));
-        CreateNavButton(topBar, "NavCamera", "Camera", font, () => SwitchToModule(moduleCamera));
+        CreateNavButton(topBar, "NavHUD", "仪表", font, () => SwitchToModule(moduleBaseSettings));
+        CreateNavButton(topBar, "NavTerrain", "地形", font, () => SwitchToModule(moduleTerrain));
+        CreateNavButton(topBar, "NavTraffic", "交通", font, () => SwitchToModule(moduleTraffic));
+        CreateNavButton(topBar, "NavSystem", "系统", font, () => SwitchToModule(moduleSystem));
+        CreateNavButton(topBar, "NavCamera", "相机", font, () => SwitchToModule(moduleCamera));
 
         GameObject spacer = new GameObject("Spacer");
         spacer.transform.SetParent(topBar.transform, false);
@@ -382,7 +428,7 @@ public class MasterUIManager : MonoBehaviour
         GameObject genTxtGO = new GameObject("Text");
         genTxtGO.transform.SetParent(genWorldBtn.transform, false);
         Text genTxt = genTxtGO.AddComponent<Text>();
-        genTxt.text = "Generate World";
+        genTxt.text = "生成世界";
         genTxt.font = font;
         genTxt.fontSize = 14;
         genTxt.resizeTextForBestFit = true;
@@ -408,7 +454,7 @@ public class MasterUIManager : MonoBehaviour
         rosDotGO.AddComponent<LayoutElement>().minWidth = 20;
         rosDotGO.AddComponent<LayoutElement>().minHeight = 20;
         Text rosDot = rosDotGO.AddComponent<Text>();
-        rosDot.text = "ROS2";
+        rosDot.text = "ROS2桥接";
         rosDot.font = font;
         rosDot.fontSize = 11;
         rosDot.resizeTextForBestFit = true;
@@ -505,7 +551,7 @@ public class MasterUIManager : MonoBehaviour
         scVLG.spacing = 4;
         scVLG.childAlignment = TextAnchor.UpperCenter;
         scVLG.childControlWidth = true;
-        scVLG.childControlHeight = false;
+        scVLG.childControlHeight = true;
         scVLG.childForceExpandWidth = true;
         scVLG.childForceExpandHeight = false;
 
@@ -532,11 +578,11 @@ public class MasterUIManager : MonoBehaviour
         hudVLG.spacing = 2;
         hudVLG.childAlignment = TextAnchor.UpperCenter;
         hudVLG.childControlWidth = true;
-        hudVLG.childControlHeight = false;
+        hudVLG.childControlHeight = true;
         hudVLG.childForceExpandWidth = true;
         hudVLG.childForceExpandHeight = false;
 
-        UIPanelBuilder.CreateTitle(hudPanel, "Vehicle HUD");
+        UIPanelBuilder.CreateTitle(hudPanel, "车辆HUD");
 
         GameObject minimapGO = new GameObject("Minimap");
         minimapGO.transform.SetParent(hudPanel.transform, false);
@@ -546,17 +592,17 @@ public class MasterUIManager : MonoBehaviour
         rawImg.color = new Color(0.85f, 0.85f, 0.85f, 0.3f);
         minimapRawImage = minimapGO;
 
-        hudTexts["HUDSpeed"] = CreateHUDLabel(hudPanel, "Speed", "0.0 m/s", font);
-        hudTexts["HUDSteering"] = CreateHUDLabel(hudPanel, "Steering", "0.0 deg", font);
-        hudTexts["HUDAutoMode"] = CreateHUDLabel(hudPanel, "Auto Mode", "No", font);
-        hudTexts["HUDState"] = CreateHUDLabel(hudPanel, "State", "Idle", font);
-        hudTexts["HUDLaneId"] = CreateHUDLabel(hudPanel, "Lane ID", "N/A", font);
-        hudTexts["HUDYielding"] = CreateHUDLabel(hudPanel, "Yielding", "No", font);
-        hudTexts["HUDCoords"] = CreateHUDLabel(hudPanel, "Position", "0,0,0", font);
-        hudTexts["HUDTimeScale"] = CreateHUDLabel(hudPanel, "Time Scale", "x1", font);
-        hudTexts["HUDFPS"] = CreateHUDLabel(hudPanel, "FPS", "0", font);
-        hudTexts["HUDVehicleCount"] = CreateHUDLabel(hudPanel, "Vehicles", "0", font);
-        hudTexts["HUDRosStatus"] = CreateHUDLabel(hudPanel, "ROS2", "OFF", font);
+        hudTexts["HUDSpeed"] = CreateHUDLabel(hudPanel, "车速", "0.0 m/s", font);
+        hudTexts["HUDSteering"] = CreateHUDLabel(hudPanel, "转向角", "0.0 deg", font);
+        hudTexts["HUDAutoMode"] = CreateHUDLabel(hudPanel, "自动驾驶", "否", font);
+        hudTexts["HUDState"] = CreateHUDLabel(hudPanel, "状态", "Idle", font);
+        hudTexts["HUDLaneId"] = CreateHUDLabel(hudPanel, "车道ID", "N/A", font);
+        hudTexts["HUDYielding"] = CreateHUDLabel(hudPanel, "避让中", "否", font);
+        hudTexts["HUDCoords"] = CreateHUDLabel(hudPanel, "坐标", "0,0,0", font);
+        hudTexts["HUDTimeScale"] = CreateHUDLabel(hudPanel, "时间倍率", "x1", font);
+        hudTexts["HUDFPS"] = CreateHUDLabel(hudPanel, "帧率", "0", font);
+        hudTexts["HUDVehicleCount"] = CreateHUDLabel(hudPanel, "车辆数", "0", font);
+        hudTexts["HUDRosStatus"] = CreateHUDLabel(hudPanel, "ROS2连接", "OFF", font);
     }
 
     Text CreateHUDLabel(GameObject parent, string label, string defaultValue, Font font)
@@ -569,7 +615,7 @@ public class MasterUIManager : MonoBehaviour
         hlg.childAlignment = TextAnchor.MiddleLeft;
         hlg.childControlWidth = true;
         hlg.childControlHeight = true;
-        hlg.childForceExpandWidth = false;
+        hlg.childForceExpandWidth = true;
         hlg.childForceExpandHeight = true;
         hlg.spacing = 8;
 
@@ -616,16 +662,16 @@ public class MasterUIManager : MonoBehaviour
         kpVLG.spacing = 2;
         kpVLG.childAlignment = TextAnchor.UpperCenter;
         kpVLG.childControlWidth = true;
-        kpVLG.childControlHeight = false;
+        kpVLG.childControlHeight = true;
         kpVLG.childForceExpandWidth = true;
         kpVLG.childForceExpandHeight = false;
 
-        UIPanelBuilder.CreateTitle(keyPanel, "Key Bindings");
+        UIPanelBuilder.CreateTitle(keyPanel, "快捷键");
 
-        keyTexts["W"] = CreateKeyDisplay(keyPanel, "W / Up", "Forward", font);
-        keyTexts["S"] = CreateKeyDisplay(keyPanel, "S / Down", "Reverse", font);
-        keyTexts["A"] = CreateKeyDisplay(keyPanel, "A", "Turn Left", font);
-        keyTexts["D"] = CreateKeyDisplay(keyPanel, "D", "Turn Right", font);
+        keyTexts["W"] = CreateKeyDisplay(keyPanel, "W / Up", "前进", font);
+        keyTexts["S"] = CreateKeyDisplay(keyPanel, "S / Down", "后退", font);
+        keyTexts["A"] = CreateKeyDisplay(keyPanel, "A", "左转", font);
+        keyTexts["D"] = CreateKeyDisplay(keyPanel, "D", "右转", font);
         keyTexts["N"] = CreateKeyDisplay(keyPanel, "N", "Reset Nav", font);
         keyTexts["R"] = CreateKeyDisplay(keyPanel, "R", "Reset Pos", font);
         keyTexts["Space"] = CreateKeyDisplay(keyPanel, "Space", "Brake", font);
@@ -641,7 +687,7 @@ public class MasterUIManager : MonoBehaviour
         hlg.childAlignment = TextAnchor.MiddleLeft;
         hlg.childControlWidth = true;
         hlg.childControlHeight = true;
-        hlg.childForceExpandWidth = false;
+        hlg.childForceExpandWidth = true;
         hlg.childForceExpandHeight = true;
         hlg.spacing = 8;
 
@@ -718,7 +764,7 @@ public class MasterUIManager : MonoBehaviour
         scVLG.spacing = 4;
         scVLG.childAlignment = TextAnchor.UpperCenter;
         scVLG.childControlWidth = true;
-        scVLG.childControlHeight = false;
+        scVLG.childControlHeight = true;
         scVLG.childForceExpandWidth = true;
         scVLG.childForceExpandHeight = false;
 
@@ -762,7 +808,7 @@ public class MasterUIManager : MonoBehaviour
         secVLG.spacing = 0;
         secVLG.childAlignment = TextAnchor.UpperCenter;
         secVLG.childControlWidth = true;
-        secVLG.childControlHeight = false;
+        secVLG.childControlHeight = true;
         secVLG.childForceExpandWidth = true;
         secVLG.childForceExpandHeight = false;
 
@@ -818,7 +864,7 @@ public class MasterUIManager : MonoBehaviour
         cntVLG.spacing = 3;
         cntVLG.childAlignment = TextAnchor.UpperCenter;
         cntVLG.childControlWidth = true;
-        cntVLG.childControlHeight = false;
+        cntVLG.childControlHeight = true;
         cntVLG.childForceExpandWidth = true;
         cntVLG.childForceExpandHeight = false;
 
@@ -847,29 +893,29 @@ public class MasterUIManager : MonoBehaviour
         mVLG.spacing = 2;
         mVLG.childAlignment = TextAnchor.UpperCenter;
         mVLG.childControlWidth = true;
-        mVLG.childControlHeight = false;
+        mVLG.childControlHeight = true;
         mVLG.childForceExpandWidth = true;
         mVLG.childForceExpandHeight = false;
         ContentSizeFitter mCSF = module.AddComponent<ContentSizeFitter>();
         mCSF.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-        UIPanelBuilder.CreateTitle(module, "Base Settings");
+        UIPanelBuilder.CreateTitle(module, "基础设置");
 
-        GameObject foldContent = BuildFoldoutSection(module, "Road Network", font);
+        GameObject foldContent = BuildFoldoutSection(module, "路网配置", font);
 
-        RegisterInputField(UIPanelBuilder.CreateInputRow(foldContent, "CellSizeInput", "Cell Size", "80", InputField.ContentType.DecimalNumber), "CellSize");
-        RegisterInputField(UIPanelBuilder.CreateInputRow(foldContent, "GridWidthInput", "Grid Width", "5", InputField.ContentType.IntegerNumber), "GridWidth");
-        RegisterInputField(UIPanelBuilder.CreateInputRow(foldContent, "GridHeightInput", "Grid Height", "5", InputField.ContentType.IntegerNumber), "GridHeight");
-        RegisterInputField(UIPanelBuilder.CreateInputRow(foldContent, "RandOffsetInput", "Rand Offset", "5", InputField.ContentType.DecimalNumber), "RandOffset");
+        RegisterInputField(UIPanelBuilder.CreateInputRow(foldContent, "CellSizeInput", "单元格大小", "80", InputField.ContentType.DecimalNumber), "CellSize");
+        RegisterInputField(UIPanelBuilder.CreateInputRow(foldContent, "GridWidthInput", "网格宽度", "5", InputField.ContentType.IntegerNumber), "GridWidth");
+        RegisterInputField(UIPanelBuilder.CreateInputRow(foldContent, "GridHeightInput", "网格高度", "5", InputField.ContentType.IntegerNumber), "GridHeight");
+        RegisterInputField(UIPanelBuilder.CreateInputRow(foldContent, "RandOffsetInput", "随机偏移", "5", InputField.ContentType.DecimalNumber), "RandOffset");
         RegisterInputField(UIPanelBuilder.CreateInputRow(foldContent, "SeedInput", "Seed", "42", InputField.ContentType.IntegerNumber), "Seed");
 
-        GameObject foldRoad = BuildFoldoutSection(module, "Road Mesh", font);
+        GameObject foldRoad = BuildFoldoutSection(module, "道路网格", font);
 
-        RegisterInputField(UIPanelBuilder.CreateInputRow(foldRoad, "RoadWidthInput", "Road Width", "6", InputField.ContentType.DecimalNumber), "RoadWidth");
-        RegisterInputField(UIPanelBuilder.CreateInputRow(foldRoad, "MeshResInput", "Mesh Res", "2", InputField.ContentType.DecimalNumber), "MeshRes");
-        RegisterInputField(UIPanelBuilder.CreateInputRow(foldRoad, "HeightOffInput", "Height Off", "0.15", InputField.ContentType.DecimalNumber), "HeightOff");
-        RegisterInputField(UIPanelBuilder.CreateInputRow(foldRoad, "UVScaleInput", "UV Scale", "0.1", InputField.ContentType.DecimalNumber), "UVScale");
-        RegisterInputField(UIPanelBuilder.CreateInputRow(foldRoad, "TangentLenInput", "Tangent Len", "0.3", InputField.ContentType.DecimalNumber), "TangentLen");
+        RegisterInputField(UIPanelBuilder.CreateInputRow(foldRoad, "RoadWidthInput", "道路宽度", "6", InputField.ContentType.DecimalNumber), "RoadWidth");
+        RegisterInputField(UIPanelBuilder.CreateInputRow(foldRoad, "MeshResInput", "网格精度", "2", InputField.ContentType.DecimalNumber), "MeshRes");
+        RegisterInputField(UIPanelBuilder.CreateInputRow(foldRoad, "HeightOffInput", "高度偏移", "0.15", InputField.ContentType.DecimalNumber), "HeightOff");
+        RegisterInputField(UIPanelBuilder.CreateInputRow(foldRoad, "UVScaleInput", "UV缩放", "0.1", InputField.ContentType.DecimalNumber), "UVScale");
+        RegisterInputField(UIPanelBuilder.CreateInputRow(foldRoad, "TangentLenInput", "切线长度", "0.3", InputField.ContentType.DecimalNumber), "TangentLen");
 
         module.SetActive(false);
         return module;
@@ -885,13 +931,13 @@ public class MasterUIManager : MonoBehaviour
         mVLG.spacing = 2;
         mVLG.childAlignment = TextAnchor.UpperCenter;
         mVLG.childControlWidth = true;
-        mVLG.childControlHeight = false;
+        mVLG.childControlHeight = true;
         mVLG.childForceExpandWidth = true;
         mVLG.childForceExpandHeight = false;
         ContentSizeFitter mCSF = module.AddComponent<ContentSizeFitter>();
         mCSF.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-        UIPanelBuilder.CreateTitle(module, "Terrain & Scene");
+        UIPanelBuilder.CreateTitle(module, "地形与场景");
 
         GameObject modeRow = new GameObject("ModeDropdownRow");
         modeRow.transform.SetParent(module.transform, false);
@@ -908,7 +954,7 @@ public class MasterUIManager : MonoBehaviour
         GameObject modeLabel = new GameObject("Label");
         modeLabel.transform.SetParent(modeRow.transform, false);
         Text modeLabelTxt = modeLabel.AddComponent<Text>();
-        modeLabelTxt.text = "Mode:";
+        modeLabelTxt.text = "模式:";
         modeLabelTxt.font = font;
         modeLabelTxt.fontSize = 13;
         modeLabelTxt.resizeTextForBestFit = true;
@@ -924,8 +970,8 @@ public class MasterUIManager : MonoBehaviour
         Dropdown modeDropdown = modeDropdownGO.AddComponent<Dropdown>();
         modeDropdown.options = new List<Dropdown.OptionData>
         {
-            new Dropdown.OptionData("City"),
-            new Dropdown.OptionData("Countryside")
+            new Dropdown.OptionData("城市"),
+            new Dropdown.OptionData("乡村")
         };
         modeDropdown.value = 0;
 
@@ -935,7 +981,7 @@ public class MasterUIManager : MonoBehaviour
         GameObject ddLabelGO = new GameObject("Label");
         ddLabelGO.transform.SetParent(modeDropdownGO.transform, false);
         Text ddLabel = ddLabelGO.AddComponent<Text>();
-        ddLabel.text = "City";
+        ddLabel.text = "城市";
         ddLabel.font = font;
         ddLabel.fontSize = 13;
         ddLabel.resizeTextForBestFit = true;
@@ -965,8 +1011,8 @@ public class MasterUIManager : MonoBehaviour
 
         dropdowns["CityMode"] = modeDropdown;
 
-        citySubPanel = BuildFoldoutSection(module, "City Settings", font);
-        countrysideSubPanel = BuildFoldoutSection(module, "Countryside Settings", font);
+        citySubPanel = BuildFoldoutSection(module, "城市设置", font);
+        countrysideSubPanel = BuildFoldoutSection(module, "乡村设置", font);
 
         GameObject weatherRow = new GameObject("WeatherDropdownRow");
         weatherRow.transform.SetParent(module.transform, false);
@@ -983,7 +1029,7 @@ public class MasterUIManager : MonoBehaviour
         GameObject weatherLabel = new GameObject("Label");
         weatherLabel.transform.SetParent(weatherRow.transform, false);
         Text weatherLabelTxt = weatherLabel.AddComponent<Text>();
-        weatherLabelTxt.text = "Weather:";
+        weatherLabelTxt.text = "天气:";
         weatherLabelTxt.font = font;
         weatherLabelTxt.fontSize = 13;
         weatherLabelTxt.resizeTextForBestFit = true;
@@ -1044,7 +1090,7 @@ public class MasterUIManager : MonoBehaviour
         RegisterInputField(UIPanelBuilder.CreateInputRow(citySubPanel, "BldHeightInput", "Bld Height", "10", InputField.ContentType.DecimalNumber), "BldHeight");
         RegisterInputField(UIPanelBuilder.CreateInputRow(citySubPanel, "SidewalkInput", "Sidewalk Width", "2", InputField.ContentType.DecimalNumber), "Sidewalk");
         RegisterToggle(CreateToggleRow(citySubPanel, "TrafficLightToggle", "Traffic Lights", true, font), "TrafficLights");
-        RegisterInputField(UIPanelBuilder.CreateInputRow(citySubPanel, "TLChanceInput", "TL Frequency", "0.6", InputField.ContentType.DecimalNumber), "TLChance");
+        RegisterInputField(UIPanelBuilder.CreateInputRow(citySubPanel, "TLChanceInput", "TL Frequency", "0.1", InputField.ContentType.DecimalNumber), "TLChance");
         RegisterToggle(CreateToggleRow(citySubPanel, "PedestrianToggle", "Pedestrians", false, font), "Pedestrians");
         RegisterInputField(UIPanelBuilder.CreateInputRow(citySubPanel, "PedSpawnInput", "Ped Spawn Rate", "1.0", InputField.ContentType.DecimalNumber), "PedSpawn");
 
@@ -1074,17 +1120,17 @@ public class MasterUIManager : MonoBehaviour
         mVLG.spacing = 2;
         mVLG.childAlignment = TextAnchor.UpperCenter;
         mVLG.childControlWidth = true;
-        mVLG.childControlHeight = false;
+        mVLG.childControlHeight = true;
         mVLG.childForceExpandWidth = true;
         mVLG.childForceExpandHeight = false;
         ContentSizeFitter mCSF = module.AddComponent<ContentSizeFitter>();
         mCSF.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-        UIPanelBuilder.CreateTitle(module, "Traffic & NPC");
+        UIPanelBuilder.CreateTitle(module, "交通与NPC");
 
-        GameObject foldContent = BuildFoldoutSection(module, "NPC Configuration", font);
+        GameObject foldContent = BuildFoldoutSection(module, "NPC配置", font);
 
-        RegisterInputField(UIPanelBuilder.CreateInputRow(foldContent, "NPCCountInput", "NPC Count", "3", InputField.ContentType.IntegerNumber), "NPCCount");
+        RegisterInputField(UIPanelBuilder.CreateInputRow(foldContent, "NPCCountInput", "NPC数量", "3", InputField.ContentType.IntegerNumber), "NPCCount");
 
         GameObject npcModeRow = new GameObject("NPCModeDropdownRow");
         npcModeRow.transform.SetParent(foldContent.transform, false);
@@ -1101,7 +1147,7 @@ public class MasterUIManager : MonoBehaviour
         GameObject nmLabel = new GameObject("Label");
         nmLabel.transform.SetParent(npcModeRow.transform, false);
         Text nmLabelTxt = nmLabel.AddComponent<Text>();
-        nmLabelTxt.text = "Drive Mode:";
+        nmLabelTxt.text = "驾驶模式:";
         nmLabelTxt.font = font;
         nmLabelTxt.fontSize = 13;
         nmLabelTxt.resizeTextForBestFit = true;
@@ -1162,7 +1208,7 @@ public class MasterUIManager : MonoBehaviour
         RegisterInputField(UIPanelBuilder.CreateInputRow(foldContent, "NPCSafeDistInput", "Safe Distance", "8", InputField.ContentType.DecimalNumber), "NPCSafeDist");
         RegisterInputField(UIPanelBuilder.CreateInputRow(foldContent, "NPCLookAheadInput", "Look Ahead T", "0.02", InputField.ContentType.DecimalNumber), "NPCLookAhead");
 
-        GameObject spawnBtn = UIPanelBuilder.CreateButton(foldContent, "SpawnNPCsBtn", "Spawn NPCs");
+        GameObject spawnBtn = UIPanelBuilder.CreateButton(foldContent, "SpawnNPCsBtn", "生成NPC");
         Button spawnButton = spawnBtn.GetComponent<Button>();
         if (spawnButton != null)
         {
@@ -1176,7 +1222,7 @@ public class MasterUIManager : MonoBehaviour
             });
         }
 
-        GameObject emergencyBtn = UIPanelBuilder.CreateButton(foldContent, "EmergencyBtn", "Summon Emergency Vehicle");
+        GameObject emergencyBtn = UIPanelBuilder.CreateButton(foldContent, "EmergencyBtn", "召唤紧急车辆");
         Button embButton = emergencyBtn.GetComponent<Button>();
         if (embButton != null)
         {
@@ -1207,22 +1253,22 @@ public class MasterUIManager : MonoBehaviour
         mVLG.spacing = 2;
         mVLG.childAlignment = TextAnchor.UpperCenter;
         mVLG.childControlWidth = true;
-        mVLG.childControlHeight = false;
+        mVLG.childControlHeight = true;
         mVLG.childForceExpandWidth = true;
         mVLG.childForceExpandHeight = false;
         ContentSizeFitter mCSF = module.AddComponent<ContentSizeFitter>();
         mCSF.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-        UIPanelBuilder.CreateTitle(module, "System & Debug");
+        UIPanelBuilder.CreateTitle(module, "系统与调试");
 
-        GameObject foldContent = BuildFoldoutSection(module, "System Settings", font);
+        GameObject foldContent = BuildFoldoutSection(module, "系统设置", font);
 
-        RegisterToggle(CreateToggleRow(foldContent, "ROS2Toggle", "ROS2 Bridge", false, font), "ROS2Bridge");
-        RegisterToggle(CreateToggleRow(foldContent, "SplineGizmoToggle", "Raycast/Spline Gizmos", false, font), "SplineGizmos");
-        RegisterToggle(CreateToggleRow(foldContent, "MinimalModeToggle", "Minimal UI Mode", false, font), "MinimalMode");
+        RegisterToggle(CreateToggleRow(foldContent, "ROS2Toggle", "ROS2桥接", false, font), "ROS2Bridge");
+        RegisterToggle(CreateToggleRow(foldContent, "SplineGizmoToggle", "射线/样条可视化", false, font), "SplineGizmos");
+        RegisterToggle(CreateToggleRow(foldContent, "MinimalModeToggle", "极简UI模式", false, font), "MinimalMode");
 
-        UIPanelBuilder.CreateSectionHeader(foldContent, "--- Traffic Light Status ---");
-        GameObject tlStatusRow = UIPanelBuilder.CreateDebugRow(foldContent, "TLStatus", "TL State", "N/A");
+        UIPanelBuilder.CreateSectionHeader(foldContent, "--- 红绿灯状态 ---");
+        GameObject tlStatusRow = UIPanelBuilder.CreateDebugRow(foldContent, "TLStatus", "红绿灯状态", "N/A");
         Text tlStatusTxt = tlStatusRow != null ? tlStatusRow.GetComponentInChildren<Text>() : null;
         hudTexts["TLStatus"] = tlStatusTxt;
 
@@ -1240,15 +1286,15 @@ public class MasterUIManager : MonoBehaviour
         mVLG.spacing = 2;
         mVLG.childAlignment = TextAnchor.UpperCenter;
         mVLG.childControlWidth = true;
-        mVLG.childControlHeight = false;
+        mVLG.childControlHeight = true;
         mVLG.childForceExpandWidth = true;
         mVLG.childForceExpandHeight = false;
         ContentSizeFitter mCSF = module.AddComponent<ContentSizeFitter>();
         mCSF.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-        UIPanelBuilder.CreateTitle(module, "Camera & Time");
+        UIPanelBuilder.CreateTitle(module, "相机与时间");
 
-        GameObject foldContent = BuildFoldoutSection(module, "Settings", font);
+        GameObject foldContent = BuildFoldoutSection(module, "设置", font);
 
         GameObject camModeRow = new GameObject("CamModeDropdownRow");
         camModeRow.transform.SetParent(foldContent.transform, false);
@@ -1265,7 +1311,7 @@ public class MasterUIManager : MonoBehaviour
         GameObject cmLabel = new GameObject("Label");
         cmLabel.transform.SetParent(camModeRow.transform, false);
         Text cmLabelTxt = cmLabel.AddComponent<Text>();
-        cmLabelTxt.text = "Cam Mode:";
+        cmLabelTxt.text = "相机模式:";
         cmLabelTxt.font = font;
         cmLabelTxt.fontSize = 13;
         cmLabelTxt.resizeTextForBestFit = true;
@@ -1424,11 +1470,11 @@ public class MasterUIManager : MonoBehaviour
         bvl.spacing = 6;
         bvl.childAlignment = TextAnchor.UpperCenter;
         bvl.childControlWidth = true;
-        bvl.childControlHeight = false;
+        bvl.childControlHeight = true;
         bvl.childForceExpandWidth = true;
         bvl.childForceExpandHeight = false;
 
-        GameObject applyBtn = UIPanelBuilder.CreateButton(btnSection, "ApplyRegenBtn", "Apply Config & Regenerate World");
+        GameObject applyBtn = UIPanelBuilder.CreateButton(btnSection, "ApplyRegenBtn", "应用配置并重新生成");
         Button applyButton = applyBtn.GetComponent<Button>();
         if (applyButton != null)
         {
@@ -1444,7 +1490,7 @@ public class MasterUIManager : MonoBehaviour
             });
         }
 
-        GameObject resetBtn = UIPanelBuilder.CreateButton(btnSection, "ResetDefaultsBtn", "Reset All Defaults");
+        GameObject resetBtn = UIPanelBuilder.CreateButton(btnSection, "ResetDefaultsBtn", "恢复默认设置");
         Button resetButton = resetBtn.GetComponent<Button>();
         if (resetButton != null)
         {
@@ -1559,7 +1605,7 @@ public class MasterUIManager : MonoBehaviour
         SyncInputFieldValue("BldHeight", roadBuilder != null ? roadBuilder.buildingHeight.ToString("F0") : "10");
         SyncInputFieldValue("Sidewalk", roadBuilder != null ? roadBuilder.sidewalkWidth.ToString("F0") : "2");
         SyncToggleValue("TrafficLights", trafficLightManager != null ? trafficLightManager.isActiveAndEnabled : true);
-        SyncInputFieldValue("TLChance", trafficLightManager != null ? trafficLightManager.placementChance.ToString("F2") : "0.6");
+        SyncInputFieldValue("TLChance", trafficLightManager != null ? trafficLightManager.placementChance.ToString("F2") : "0.1");
         SyncToggleValue("CountryUniform", roadBuilder != null ? roadBuilder.useCountrysideUniformMaterials : true);
 
         SyncInputFieldValue("NPCCount", trafficManager != null ? trafficManager.npcCount.ToString() : "3");
@@ -1786,7 +1832,7 @@ public class MasterUIManager : MonoBehaviour
         SyncInputFieldValue("TangentLen", "0.3");
         SyncInputFieldValue("BldHeight", "10");
         SyncInputFieldValue("Sidewalk", "2");
-        SyncInputFieldValue("TLChance", "0.6");
+        SyncInputFieldValue("TLChance", "0.1");
         SyncInputFieldValue("NPCCount", "3");
         SyncInputFieldValue("NPCMaxSpeed", "30");
         SyncInputFieldValue("NPCSafeDist", "8");
@@ -1836,10 +1882,10 @@ public class MasterUIManager : MonoBehaviour
 
         SetHUDValue("HUDSpeed", carController != null ? carController.currentSpeed.ToString("F1") + " m/s" : "N/A");
         SetHUDValue("HUDSteering", carController != null ? carController.currentSteeringAngle.ToString("F1") + " deg" : "N/A");
-        SetHUDValue("HUDAutoMode", carController != null ? (carController.autoMode ? "Yes" : "No") : "N/A");
+        SetHUDValue("HUDAutoMode", carController != null ? (carController.autoMode ? "是" : "否") : "N/A");
         SetHUDValue("HUDState", autoDrive != null ? autoDrive.currentState.ToString() : "N/A");
         SetHUDValue("HUDLaneId", autoDrive != null ? autoDrive.currentLaneId.ToString() : "N/A");
-        SetHUDValue("HUDYielding", autoDrive != null ? (autoDrive.isYielding ? "YES <<<" : "No") : "N/A");
+        SetHUDValue("HUDYielding", autoDrive != null ? (autoDrive.isYielding ? "是 <<<" : "否") : "N/A");
 
         if (carController != null)
         {

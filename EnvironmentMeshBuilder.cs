@@ -148,8 +148,6 @@ public class EnvironmentMeshBuilder : MonoBehaviour
 
     private void ExtrudeBuildingsFromIslands(Paths64 roadUnion)
     {
-        if (paramsSource.buildingMaterial == null) return;
-
         GameObject buildingRoot = new GameObject("City_Buildings");
         buildingRoot.transform.SetParent(transform, false);
 
@@ -166,6 +164,9 @@ public class EnvironmentMeshBuilder : MonoBehaviour
         Paths64 shrunkIslands = new Paths64();
         co.Execute(-1.5 * 1000.0, shrunkIslands);
 
+        // Cube降级方案：当buildingMaterial为null时，使用Cube代替挤出网格
+        bool useCubeFallback = (paramsSource.buildingMaterial == null);
+
         foreach (var safeIsland in shrunkIslands)
         {
             if (safeIsland.Count < 3) continue;
@@ -181,13 +182,62 @@ public class EnvironmentMeshBuilder : MonoBehaviour
                 baseVerts[i] = v;
             }
 
-            Mesh buildingMesh = ExtrudePolygon(baseVerts, paramsSource.buildingHeight);
-            if (buildingMesh == null) continue;
+            if (useCubeFallback)
+            {
+                // Cube降级：在岛屿中心放置一个随机灰白色Cube
+                Vector3 center = Vector3.zero;
+                foreach (var v in baseVerts) center += v;
+                center /= baseVerts.Count;
 
-            GameObject buildingObj = new GameObject("Building");
-            buildingObj.transform.SetParent(buildingRoot.transform, false);
-            buildingObj.AddComponent<MeshFilter>().sharedMesh = buildingMesh;
-            buildingObj.AddComponent<MeshRenderer>().sharedMaterial = paramsSource.buildingMaterial;
+                // 估算岛屿尺寸
+                float minX = float.MaxValue, maxX = float.MinValue;
+                float minZ = float.MaxValue, maxZ = float.MinValue;
+                foreach (var v in baseVerts)
+                {
+                    if (v.x < minX) minX = v.x;
+                    if (v.x > maxX) maxX = v.x;
+                    if (v.z < minZ) minZ = v.z;
+                    if (v.z > maxZ) maxZ = v.z;
+                }
+                float sizeX = Mathf.Max(maxX - minX, 0.5f);
+                float sizeZ = Mathf.Max(maxZ - minZ, 0.5f);
+
+                float baseHeight = paramsSource.buildingHeight;
+                float randomHeight = baseHeight * UnityEngine.Random.Range(0.5f, 2.5f);
+
+                GameObject cubeObj = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                cubeObj.name = "Building_Cube";
+                cubeObj.transform.SetParent(buildingRoot.transform, false);
+                cubeObj.transform.position = new Vector3(center.x, center.y + randomHeight * 0.5f, center.z);
+                cubeObj.transform.localScale = new Vector3(sizeX * 0.7f, randomHeight, sizeZ * 0.7f);
+
+                // 灰白系随机颜色
+                float grayVal = UnityEngine.Random.Range(0.55f, 0.95f);
+                Color buildingColor = new Color(grayVal, grayVal, grayVal * UnityEngine.Random.Range(0.85f, 1.0f));
+                MeshRenderer cubeMR = cubeObj.GetComponent<MeshRenderer>();
+                if (cubeMR != null)
+                {
+                    cubeMR.material = new Material(Shader.Find("Standard"));
+                    cubeMR.material.color = buildingColor;
+                }
+
+                // 移除Cube自带碰撞体（非游戏性需要）
+                Collider cubeCol = cubeObj.GetComponent<Collider>();
+                if (cubeCol != null && Application.isPlaying)
+                    Destroy(cubeCol);
+                else if (cubeCol != null)
+                    DestroyImmediate(cubeCol);
+            }
+            else
+            {
+                Mesh buildingMesh = ExtrudePolygon(baseVerts, paramsSource.buildingHeight);
+                if (buildingMesh == null) continue;
+
+                GameObject buildingObj = new GameObject("Building");
+                buildingObj.transform.SetParent(buildingRoot.transform, false);
+                buildingObj.AddComponent<MeshFilter>().sharedMesh = buildingMesh;
+                buildingObj.AddComponent<MeshRenderer>().sharedMaterial = paramsSource.buildingMaterial;
+            }
         }
     }
 

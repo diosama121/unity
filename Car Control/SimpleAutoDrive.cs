@@ -68,13 +68,19 @@ public partial class SimpleAutoDrive : MonoBehaviour
         lastPosition = transform.position;
         laneSearchTimer = Random.Range(0f, 0.2f);
 
-        trajectoryLine = gameObject.AddComponent<LineRenderer>();
+        LineRenderer lr = GetComponent<LineRenderer>();
+        if (lr == null)
+            lr = gameObject.AddComponent<LineRenderer>();
+        trajectoryLine = lr;
         trajectoryLine.positionCount = trajectoryPoints.Length;
-        trajectoryLine.startWidth = 0.15f;
-        trajectoryLine.endWidth = 0.05f;
-        trajectoryLine.material = new Material(Shader.Find("Sprites/Default"));
-        trajectoryLine.startColor = new Color(0, 1f, 0.5f, 0.7f);
-        trajectoryLine.endColor = new Color(0, 1f, 0.5f, 0.1f);
+        if (lr.sharedMaterial == null)
+        {
+            lr.material = new Material(Shader.Find("Unlit/Color"));
+            lr.startColor = Color.green;
+            lr.endColor = new Color(0, 1, 0, 0);
+        }
+        lr.startWidth = 0.1f;
+        lr.endWidth = 0.05f;
         trajectoryLine.numCapVertices = 4;
         for (int i = 0; i < trajectoryPoints.Length; i++)
             trajectoryPoints[i] = transform.position;
@@ -223,8 +229,9 @@ public partial class SimpleAutoDrive : MonoBehaviour
             {
                 int randTargetId = Random.Range(0, WorldModel.Instance.NodeCount);
                 RoadNode targetNode = WorldModel.Instance.GetNode(randTargetId);
-                if (targetNode != null)
+                if (targetNode != null && targetNode.NeighborIds != null && targetNode.NeighborIds.Count > 1)
                 {
+                    if (Vector3.Distance(transform.position, targetNode.WorldPos) < 20f) continue;
                     CatmullRomSpline newSpline = pathPlanner.PlanPathSpline(transform.position, targetNode.WorldPos);
                     if (newSpline != null && newSpline.TotalLength > 0)
                     {
@@ -237,6 +244,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
         currentState = DriveState.Idle;
         currentSpline = null;
         carController.SetAutoControl(0f, 0f);
+        Debug.LogWarning($"[AutoDrive] Vehicle {gameObject.name} cannot find valid path, entering idle.");
     }
 
     public void ResetNavigation()

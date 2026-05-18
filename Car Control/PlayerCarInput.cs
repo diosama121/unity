@@ -37,5 +37,24 @@ public partial class SimpleCarController : MonoBehaviour
             if (autoDrive == null) autoDrive = FindObjectOfType<SimpleAutoDrive>();
             if (autoDrive != null) autoDrive.ResetNavigation();
         }
+
+        if (Input.GetMouseButtonDown(1) && !isNPC)
+        {
+            Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
+            if (Physics.Raycast(ray, out RaycastHit hit, 1000f))
+            {
+                RoadNode targetNode = WorldModel.Instance.GetNearestNode(hit.point);
+                if (targetNode != null)
+                {
+                    SimpleAutoDrive playerAI = GetComponent<SimpleAutoDrive>();
+                    if (playerAI == null) playerAI = FindObjectOfType<SimpleAutoDrive>();
+                    if (playerAI != null)
+                    {
+                        playerAI.SetDestination(targetNode.WorldPos);
+                        Debug.Log($"Navigation: heading to Node {targetNode.Id}");
+                    }
+                }
+            }
+        }
     }
 }
