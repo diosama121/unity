@@ -43,18 +43,18 @@ public class SystemDataManager : MonoBehaviour
 
                 if (targetCar == null)
                 {
-                    Debug.LogError("❌ 找不到主车！数据录制失败。");
+                    Debug.LogError("找不到主车！数据录制失败。");
                     isRecording = false;
                 }
                 else
                 {
-                    Debug.Log("🔴 开始录制车辆数据... (含语义标签)");
+                    Debug.Log("开始录制车辆数据... (含语义标签)");
                 }
             }
             else 
             {
                 File.WriteAllText(csvPath, csvData.ToString());
-                Debug.Log($"✅ 车辆遥测数据已导出至: {csvPath}");
+                Debug.Log($"车辆遥测数据已导出至: {csvPath}");
             }
         }
 
@@ -125,7 +125,7 @@ public class SystemDataManager : MonoBehaviour
             data.nodes.Add(new NodeData { id = node.id, x = node.position.x, y = node.position.y, z = node.position.z });
         }
         File.WriteAllText(jsonPath, JsonUtility.ToJson(data, true));
-        Debug.Log($"✅ 路网数据已导出至: {jsonPath}");
+        Debug.Log($"路网数据已导出至: {jsonPath}");
     }
 
     [System.Serializable]

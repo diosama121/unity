@@ -67,7 +67,7 @@ public class EnvironmentMeshBuilder : MonoBehaviour
         {
             ExtrudeBuildingsFromIslands(finalRoadUnion);
             GenerateSidewalks(finalRoadUnion);
-            Debug.Log("[Environment] 🏙️ 城市建筑与人行道生成完成。");
+            Debug.Log("[Environment] 城市建筑与人行道生成完成。");
         }
     }
 

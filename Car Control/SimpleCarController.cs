@@ -41,6 +41,7 @@ public partial class SimpleCarController : MonoBehaviour
 
     public bool wasdOverride = false;
     private bool autoModeBeforeOverride = false;
+    public bool ros2Controlled = false;
 
     void Awake()
     {

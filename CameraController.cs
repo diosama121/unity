@@ -80,7 +80,7 @@ public class CameraController : MonoBehaviour
         if (Input.GetKeyDown(modeSwitchKey))
         {
             currentMode = currentMode == CameraMode.Follow ? CameraMode.FreeFly : CameraMode.Follow;
-            Debug.Log($"📷 相机模式切换为: {currentMode}");
+            Debug.Log($"相机模式切换为: {currentMode}");
             
             // 切换到自由视角时，同步当前角度防止跳闪
             if (currentMode == CameraMode.FreeFly)
@@ -99,7 +99,7 @@ public class CameraController : MonoBehaviour
                 currentTargetIndex = (currentTargetIndex + 1) % allVehicles.Count;
                 target = allVehicles[currentTargetIndex];
                 currentMode = CameraMode.Follow; // 切换目标时强制转为跟随模式
-                Debug.Log($"🎯 相机目标切换为: {target.name}");
+                Debug.Log($"相机目标切换为: {target.name}");
             }
         }
     }

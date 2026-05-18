@@ -60,13 +60,16 @@ public class DebugPanel : MonoBehaviour
 
     private void CreateDebugUI()
     {
-        TMP_FontAsset font = Resources.Load<TMP_FontAsset>("simhei SDF");
+        TMP_FontAsset font = Resources.Load<TMP_FontAsset>("NotoSansSC-Regular SDF");
         if (font != null) font.atlasPopulationMode = AtlasPopulationMode.Dynamic;
 
         Canvas canvas = gameObject.AddComponent<Canvas>();
         canvas.renderMode = RenderMode.ScreenSpaceOverlay;
         canvas.sortingOrder = 100;
-        gameObject.AddComponent<UnityEngine.UI.CanvasScaler>();
+        CanvasScaler scaler = gameObject.AddComponent<UnityEngine.UI.CanvasScaler>();
+        scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+        scaler.referenceResolution = new Vector2(1920, 1080);
+        scaler.matchWidthOrHeight = 0.5f;
         gameObject.AddComponent<UnityEngine.UI.GraphicRaycaster>();
 
         GameObject panelGo = new GameObject("PanelBg");
@@ -76,19 +79,19 @@ public class DebugPanel : MonoBehaviour
         panelRt.anchorMax = new Vector2(0, 1);
         panelRt.pivot = new Vector2(0, 1);
         panelRt.anchoredPosition = new Vector2(10, -10);
-        panelRt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, 520f);
-        panelRt.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, 380f);
+        panelRt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, 440f);
+        panelRt.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, 260f);
         Image panelBg = panelGo.AddComponent<Image>();
         panelBg.color = new Color(0, 0, 0, 0.75f);
 
-        worldStatsText = CreateTMPText("StatsText", panelRt, font, 18f,
-            new Vector2(10, -10), new Vector2(0, 1), new Vector2(0, 1), new Vector2(0, 1), 500f, 200f);
+        worldStatsText = CreateTMPText("StatsText", panelRt, font, 16f,
+            new Vector2(8, -8), new Vector2(0, 1), new Vector2(0, 1), new Vector2(0, 1), 424f, 120f);
 
-        mouseHoverInfoText = CreateTMPText("HoverText", panelRt, font, 16f,
-            new Vector2(10, -215), new Vector2(0, 1), new Vector2(0, 1), new Vector2(0, 1), 500f, 100f);
+        mouseHoverInfoText = CreateTMPText("HoverText", panelRt, font, 14f,
+            new Vector2(8, -132), new Vector2(0, 1), new Vector2(0, 1), new Vector2(0, 1), 424f, 55f);
 
-        cameraGroundInfoText = CreateTMPText("CameraText", panelRt, font, 16f,
-            new Vector2(10, -280), new Vector2(0, 1), new Vector2(0, 1), new Vector2(0, 1), 500f, 80f);
+        cameraGroundInfoText = CreateTMPText("CameraText", panelRt, font, 14f,
+            new Vector2(8, -192), new Vector2(0, 1), new Vector2(0, 1), new Vector2(0, 1), 424f, 55f);
 
         GameObject btnBar = new GameObject("ButtonBar");
         btnBar.transform.SetParent(panelRt, false);
@@ -96,19 +99,14 @@ public class DebugPanel : MonoBehaviour
         barRt.anchorMin = new Vector2(0, 1);
         barRt.anchorMax = new Vector2(0, 1);
         barRt.pivot = new Vector2(0, 1);
-        barRt.anchoredPosition = new Vector2(10, -350);
-        barRt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, 500f);
-        barRt.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, 30f);
+        barRt.anchoredPosition = new Vector2(8, -252);
+        barRt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, 424f);
+        barRt.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, 26f);
 
-        toggleRecordButton = CreateButton("RecordBtn", barRt, font, "🎬 开始录制",
-            new Vector2(0, 0), new Vector2(0, 1), new Vector2(0, 1), new Vector2(0.5f, 1), 240f, 28f);
+        toggleRecordButton = CreateButton("RecordBtn", barRt, font, "录制",
+            new Vector2(0, 0), new Vector2(0, 1), new Vector2(0, 1), new Vector2(0.5f, 1), 208f, 24f);
         recordButtonText = toggleRecordButton.GetComponentInChildren<TextMeshProUGUI>();
         toggleRecordButton.onClick.AddListener(OnToggleRecordClicked);
-
-        toggleCountrysideButton = CreateButton("CountryBtn", barRt, font, "切换至乡村起伏",
-            new Vector2(0, 0), new Vector2(0.5f, 1), new Vector2(1, 1), new Vector2(1, 1), 240f, 28f);
-        modeButtonText = toggleCountrysideButton.GetComponentInChildren<TextMeshProUGUI>();
-        toggleCountrysideButton.onClick.AddListener(ToggleMode);
     }
 
     private TextMeshProUGUI CreateTMPText(string name, RectTransform parent, TMP_FontAsset font, float fontSize,
@@ -171,7 +169,7 @@ public class DebugPanel : MonoBehaviour
         if (Input.GetKeyDown(togglePanelKey))
         {
             isPanelVisible = !isPanelVisible;
-            gameObject.SetActive(isPanelVisible);
+            GetComponent<Canvas>().enabled = isPanelVisible;
         }
 
         if (!isPanelVisible) return;
@@ -231,16 +229,16 @@ public class DebugPanel : MonoBehaviour
         if (mouseHoverInfoText == null || WorldModel.Instance == null) return;
 
         StringBuilder sb = new StringBuilder();
-        sb.AppendLine("=== 🖱️ 鼠标悬停语义 ===");
+        sb.AppendLine("=== 鼠标悬停语义 ===");
 
         if (roadGen != null)
         {
-            sb.AppendLine($"当前模式: {(roadGen.isCountryside ? "🏞️ 乡村起伏" : "🏙️ 城市纯平")}");
+            sb.AppendLine($"当前模式: {(roadGen.isCountryside ? " 乡村起伏" : " 城市纯平")}");
             sb.AppendLine($"当前种子 (Seed): {roadGen.seed}");
         }
         else
         {
-            sb.AppendLine("⚠️ 未找到 RoadNetworkGenerator 组件");
+            sb.AppendLine("未找到 RoadNetworkGenerator 组件");
         }
 
         // 零物理射线坐标转换
@@ -289,7 +287,7 @@ public class DebugPanel : MonoBehaviour
         if (cameraGroundInfoText == null || WorldModel.Instance == null) return;
 
         StringBuilder sb = new StringBuilder();
-        sb.AppendLine("=== 📷 相机下方语义 ===");
+        sb.AppendLine("=== 相机下方语义 ===");
 
         Vector3 cameraPos = Camera.main.transform.position;
         Vector2 cameraXZ = new Vector2(cameraPos.x, cameraPos.z);
@@ -332,7 +330,7 @@ public class DebugPanel : MonoBehaviour
 
         // 翻转模式状态
         roadGen.isCountryside = !roadGen.isCountryside;
-        Debug.Log(roadGen.isCountryside ? "🏞️ [DebugPanel] 已切换至乡村起伏模式" : "🏙️ [DebugPanel] 已切换至城市纯平模式");
+        Debug.Log(roadGen.isCountryside ? "[DebugPanel] 已切换至乡村起伏模式" : "[DebugPanel] 已切换至城市纯平模式");
         
         // 更新按钮UI
         UpdateModeButtonUI();
@@ -360,11 +358,11 @@ public class DebugPanel : MonoBehaviour
             
             if (newState)
             {
-                Debug.Log("🔴 [DebugPanel] 一键启动数据录制...");
+                Debug.Log(" [DebugPanel] 一键启动数据录制...");
             }
             else
             {
-                Debug.Log("✅ [DebugPanel] 一键停止数据录制，正在导出...");
+                Debug.Log("[DebugPanel] 一键停止数据录制，正在导出...");
                 var exportMethod = dataManager.GetType().GetMethod("ExportToCSV", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
                 exportMethod?.Invoke(dataManager, null);
             }
@@ -390,7 +388,7 @@ public class DebugPanel : MonoBehaviour
     {
         if (recordButtonText != null)
         {
-            recordButtonText.text = isRecording ? "🔴 停止录制" : "🎬 开始录制";
+            recordButtonText.text = isRecording ? "停止录制" : "录制";
             recordButtonText.color = isRecording ? Color.red : Color.green;
         }
     }

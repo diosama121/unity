@@ -20,6 +20,7 @@ public class TrafficManager : MonoBehaviour
     private PathPlanner pathPlanner;
 
     private bool _hasSpawned = false;
+    private static int _globalNPCCounter = 0;
 
     public void ResetSpawnState() { _hasSpawned = false; }
 
@@ -60,10 +61,7 @@ public class TrafficManager : MonoBehaviour
 
     public void SpawnNPCs()
     {
-        if (_hasSpawned) { Debug.Log("TrafficManager: NPC已生成，跳过重复调用"); return; }
-
-        npcVehicles.RemoveAll(npc => npc == null);
-        npcVehicles.Clear();
+        ClearAllNPCs();
 
         roadGen = FindObjectOfType<RoadNetworkGenerator>();
         pathPlanner = FindObjectOfType<PathPlanner>();
@@ -93,7 +91,7 @@ public class TrafficManager : MonoBehaviour
             }
 
             GameObject npcObj = Instantiate(selectedPrefab, spawnPos, Quaternion.identity);
-            npcObj.name = $"NPC_Vehicle_{spawnedCount}";
+            npcObj.name = $"NPC_Vehicle_{_globalNPCCounter++}";
 
             SimpleCarController controller = npcObj.GetComponent<SimpleCarController>();
             if (controller == null) controller = npcObj.GetComponentInChildren<SimpleCarController>();
@@ -291,6 +289,27 @@ public class TrafficManager : MonoBehaviour
             int randomIndex = Random.Range(i, list.Count);
             list[i] = list[randomIndex];
             list[randomIndex] = temp;
+        }
+    }
+
+    public void DeleteNearestNPC(Vector3 position)
+    {
+        npcVehicles.RemoveAll(npc => npc == null);
+        if (npcVehicles.Count == 0) return;
+
+        SimpleAutoDrive nearest = null;
+        float minDist = float.MaxValue;
+        foreach (var npc in npcVehicles)
+        {
+            float d = Vector3.Distance(npc.transform.position, position);
+            if (d < minDist) { minDist = d; nearest = npc; }
+        }
+
+        if (nearest != null)
+        {
+            Debug.Log($"TrafficManager: 删除最近NPC [{nearest.name}] 距离={minDist:F1}m");
+            npcVehicles.Remove(nearest);
+            Destroy(nearest.gameObject);
         }
     }
 }

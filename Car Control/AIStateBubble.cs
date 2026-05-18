@@ -21,7 +21,7 @@ public class AIStateBubble : MonoBehaviour
         {
             if (_cachedFont == null)
             {
-                _cachedFont = Resources.Load<TMP_FontAsset>("simhei SDF");
+                _cachedFont = Resources.Load<TMP_FontAsset>("NotoSansSC-Regular SDF");
                 if (_cachedFont != null) _cachedFont.atlasPopulationMode = AtlasPopulationMode.Dynamic;
             }
             return _cachedFont;

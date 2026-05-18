@@ -137,7 +137,7 @@ public class TrafficLightManager : MonoBehaviour
         }
 
         if (showDebugLog)
-            Debug.Log($"✅ 交通灯放置完成：{placed} 个路口");
+            Debug.Log($"交通灯放置完成：{placed} 个路口");
     }
 
     /// <summary>

@@ -159,7 +159,7 @@ public static class UIPanelBuilder
         textGO.transform.SetParent(inputGO.transform, false);
         Text inputText = textGO.AddComponent<Text>();
         inputText.text = defaultValue;
-        inputText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        inputText.font = Resources.Load<Font>("NotoSansSC-Regular");
         inputText.fontSize = 13;
         inputText.resizeTextForBestFit = true;
         inputText.resizeTextMinSize = 8;
@@ -177,7 +177,7 @@ public static class UIPanelBuilder
         placeholderGO.transform.SetParent(inputGO.transform, false);
         Text placeholderTxt = placeholderGO.AddComponent<Text>();
         placeholderTxt.text = placeholder;
-        placeholderTxt.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        placeholderTxt.font = Resources.Load<Font>("NotoSansSC-Regular");
         placeholderTxt.fontSize = 13;
         placeholderTxt.resizeTextForBestFit = true;
         placeholderTxt.resizeTextMinSize = 8;
@@ -391,7 +391,7 @@ public static class UIPanelBuilder
     public static TMP_FontAsset GetDefaultFont()
     {
         if (SharedFont != null) return SharedFont;
-        TMP_FontAsset font = Resources.Load<TMP_FontAsset>("simhei SDF");
+        TMP_FontAsset font = Resources.Load<TMP_FontAsset>("NotoSansSC-Regular SDF");
         if (font != null) font.atlasPopulationMode = AtlasPopulationMode.Dynamic;
         return font;
     }

@@ -15,7 +15,7 @@ public class MasterUIManager : MonoBehaviour
     {
         get
         {
-            if (_legacyFont == null) _legacyFont = Resources.Load<Font>("simhei");
+            if (_legacyFont == null) _legacyFont = Resources.Load<Font>("NotoSansSC-Regular");
             return _legacyFont;
         }    
     }
@@ -339,7 +339,7 @@ public class MasterUIManager : MonoBehaviour
 
     void BuildCompleteUI()
     {
-        TMP_FontAsset font = customFont != null ? customFont : Resources.Load<TMP_FontAsset>("simhei SDF");
+        TMP_FontAsset font = customFont != null ? customFont : Resources.Load<TMP_FontAsset>("NotoSansSC-Regular SDF");
         if (font != null) font.atlasPopulationMode = AtlasPopulationMode.Dynamic;
         UIPanelBuilder.SharedFont = font;
 
@@ -1399,6 +1399,35 @@ public class MasterUIManager : MonoBehaviour
             }
         });
 
+        GameObject deleteNearestBtn = UIPanelBuilder.CreateButton(foldContent, "DeleteNearestNPCBtn", "删除最近NPC");
+        Button dnButton = deleteNearestBtn.GetComponent<Button>();
+        if (dnButton != null)
+        {
+            Image dnImg = deleteNearestBtn.GetComponent<Image>();
+            if (dnImg != null) dnImg.color = new Color(0.8f, 0.5f, 0.1f);
+            dnButton.onClick.AddListener(() =>
+            {
+                if (trafficManager != null)
+                {
+                    Camera cam = Camera.main;
+                    Vector3 pos = cam != null ? cam.transform.position : Vector3.zero;
+                    trafficManager.DeleteNearestNPC(pos);
+                }
+            });
+        }
+
+        GameObject clearNPCsBtn = UIPanelBuilder.CreateButton(foldContent, "ClearNPCsBtn", "清除全部NPC");
+        Button cnButton = clearNPCsBtn.GetComponent<Button>();
+        if (cnButton != null)
+        {
+            Image cnImg = clearNPCsBtn.GetComponent<Image>();
+            if (cnImg != null) cnImg.color = new Color(0.8f, 0.2f, 0.2f);
+            cnButton.onClick.AddListener(() =>
+            {
+                if (trafficManager != null) trafficManager.ClearAllNPCs();
+            });
+        }
+
         module.SetActive(false);
         return module;
     }
@@ -1756,7 +1785,13 @@ public class MasterUIManager : MonoBehaviour
         BindToggleEvent("SplineGizmos", (on) => { if (roadBuilder != null) roadBuilder.showSplineGizmos = on; });
         BindToggleEvent("ROS2Bridge", (on) =>
         {
-            if (ros2Bridge != null) ros2Bridge.enabled = on;
+            if (ros2Bridge != null)
+            {
+                if (on)
+                    ros2Bridge.Reconnect();
+                else
+                    ros2Bridge.Disconnect();
+            }
         });
         BindToggleEvent("MinimalMode", (on) =>
         {
@@ -1768,7 +1803,14 @@ public class MasterUIManager : MonoBehaviour
         {
             cityDD.onValueChanged.AddListener((idx) =>
             {
-                if (roadGen != null) roadGen.isCountryside = (idx == 1);
+                if (roadGen != null)
+                {
+                    roadGen.isCountryside = (idx == 1);
+                    if (trafficManager != null) trafficManager.ClearAllNPCs();
+                    roadGen.Generate();
+                    if (roadBuilder != null) roadBuilder.BuildRoads();
+                    Debug.Log($"[MasterUIManager] 切换为{(idx == 1 ? "乡村" : "城市")}模式，已重建路网");
+                }
                 if (citySubPanel != null) citySubPanel.SetActive(idx == 0);
                 if (countrysideSubPanel != null) countrysideSubPanel.SetActive(idx == 1);
             });

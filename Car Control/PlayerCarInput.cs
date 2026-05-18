@@ -4,6 +4,9 @@ public partial class SimpleCarController : MonoBehaviour
 {
     void HandlePlayerInput()
     {
+        if (isNPC) return;
+        if (ros2Controlled && autoMode) return;
+
         bool wasdActive = Input.GetKey(KeyCode.W) || Input.GetKey(KeyCode.A) || Input.GetKey(KeyCode.S) || Input.GetKey(KeyCode.D);
         if (wasdActive)
         {

@@ -93,6 +93,6 @@ public static class RoadMeshCombiner
                 GameObject.DestroyImmediate(obj); // 兼容编辑器模式下点击生成
         }
 
-        Debug.Log($"[RoadMeshCombiner] ✅ 合批完成！散碎网格数量: {originalObjects.Count} -> 合并为超级网格: {materialToCombineInstances.Count} 个，碰撞体已铺设。");
+        Debug.Log($"[RoadMeshCombiner] 合批完成！散碎网格数量: {originalObjects.Count} -> 合并为超级网格: {materialToCombineInstances.Count} 个，碰撞体已铺设。");
     }
 }

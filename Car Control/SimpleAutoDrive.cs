@@ -121,8 +121,8 @@ public partial class SimpleAutoDrive : MonoBehaviour
                 obstacleDetected = true;
                 if (hit.distance < safeDistance * 0.4f && carController.GetSpeed() > 3f)
                 {
-                    if (_uiManager != null) _uiManager.ShowTORWarning(1.5f);
-                    AppendThought("CRITICAL: Obstacle " + hit.distance.ToString("F1") + "m ahead! TOR triggered");
+                    if (_uiManager != null && !carController.isNPC) _uiManager.ShowTORWarning(1.5f);
+                    if (!carController.isNPC) AppendThought("CRITICAL: Obstacle " + hit.distance.ToString("F1") + "m ahead! TOR triggered");
                 }
             }
         }
@@ -390,6 +390,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
     void TriggerTORIfNeeded(float distToStop, float speed)
     {
         if (speed < 2f || distToStop > 10f) return;
+        if (carController.isNPC) return;
         if (_uiManager != null) _uiManager.ShowTORWarning(2.5f);
     }
 }
