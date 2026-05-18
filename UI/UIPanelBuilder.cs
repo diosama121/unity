@@ -1,29 +1,26 @@
 using UnityEngine;
 using UnityEngine.UI;
+using TMPro;
 
-/// <summary>
-/// UI面板构建工具类 —— 纯静态方法，从 MasterUIManager 中提取
-/// 用于在 Canvas 下动态生成设置面板的各种 UI 控件
-/// </summary>
 public static class UIPanelBuilder
 {
-    public static Font SharedFont { get; set; }
+    public static TMP_FontAsset SharedFont { get; set; }
 
     public static GameObject CreateTitle(GameObject parent, string text)
     {
         GameObject go = new GameObject("Title");
         go.transform.SetParent(parent.transform, false);
         go.AddComponent<LayoutElement>().minHeight = 30;
-        Text txt = go.AddComponent<Text>();
+        TextMeshProUGUI txt = go.AddComponent<TextMeshProUGUI>();
         txt.text = text;
         txt.font = GetDefaultFont();
         txt.fontSize = 18;
-        txt.resizeTextForBestFit = true;
-        txt.resizeTextMinSize = 10;
-        txt.resizeTextMaxSize = 18;
-        txt.fontStyle = FontStyle.Bold;
+        txt.enableAutoSizing = true;
+        txt.fontSizeMin = 10;
+        txt.fontSizeMax = 18;
+        txt.fontStyle = FontStyles.Bold;
         txt.color = new Color(0.3f, 0.8f, 1f);
-        txt.alignment = TextAnchor.MiddleCenter;
+        txt.alignment = TextAlignmentOptions.Center;
         return go;
     }
 
@@ -32,16 +29,16 @@ public static class UIPanelBuilder
         GameObject go = new GameObject("Header_" + text.GetHashCode());
         go.transform.SetParent(parent.transform, false);
         go.AddComponent<LayoutElement>().minHeight = 24;
-        Text txt = go.AddComponent<Text>();
+        TextMeshProUGUI txt = go.AddComponent<TextMeshProUGUI>();
         txt.text = text;
         txt.font = GetDefaultFont();
         txt.fontSize = 13;
-        txt.resizeTextForBestFit = true;
-        txt.resizeTextMinSize = 8;
-        txt.resizeTextMaxSize = 13;
-        txt.fontStyle = FontStyle.Bold;
+        txt.enableAutoSizing = true;
+        txt.fontSizeMin = 8;
+        txt.fontSizeMax = 13;
+        txt.fontStyle = FontStyles.Bold;
         txt.color = new Color(0.6f, 0.6f, 0.7f);
-        txt.alignment = TextAnchor.MiddleLeft;
+        txt.alignment = TextAlignmentOptions.Left;
         return go;
     }
 
@@ -61,15 +58,15 @@ public static class UIPanelBuilder
 
         GameObject labelGO = new GameObject("Label");
         labelGO.transform.SetParent(row.transform, false);
-        Text labelTxt = labelGO.AddComponent<Text>();
+        TextMeshProUGUI labelTxt = labelGO.AddComponent<TextMeshProUGUI>();
         labelTxt.text = label;
         labelTxt.font = GetDefaultFont();
         labelTxt.fontSize = 13;
-        labelTxt.resizeTextForBestFit = true;
-        labelTxt.resizeTextMinSize = 8;
-        labelTxt.resizeTextMaxSize = 13;
+        labelTxt.enableAutoSizing = true;
+        labelTxt.fontSizeMin = 8;
+        labelTxt.fontSizeMax = 13;
         labelTxt.color = Color.white;
-        labelTxt.alignment = TextAnchor.MiddleLeft;
+        labelTxt.alignment = TextAlignmentOptions.Left;
         labelGO.AddComponent<LayoutElement>().minWidth = 90;
 
         GameObject sliderGO = new GameObject("Slider");
@@ -110,15 +107,15 @@ public static class UIPanelBuilder
 
         GameObject valGO = new GameObject("ValueText");
         valGO.transform.SetParent(row.transform, false);
-        Text valTxt = valGO.AddComponent<Text>();
+        TextMeshProUGUI valTxt = valGO.AddComponent<TextMeshProUGUI>();
         valTxt.text = defaultValue.ToString(format);
         valTxt.font = GetDefaultFont();
         valTxt.fontSize = 13;
-        valTxt.resizeTextForBestFit = true;
-        valTxt.resizeTextMinSize = 7;
-        valTxt.resizeTextMaxSize = 13;
+        valTxt.enableAutoSizing = true;
+        valTxt.fontSizeMin = 7;
+        valTxt.fontSizeMax = 13;
         valTxt.color = new Color(0.3f, 0.8f, 1f);
-        valTxt.alignment = TextAnchor.MiddleRight;
+        valTxt.alignment = TextAlignmentOptions.Right;
         valGO.AddComponent<LayoutElement>().minWidth = 36;
 
         return row;
@@ -140,15 +137,15 @@ public static class UIPanelBuilder
 
         GameObject labelGO = new GameObject("Label");
         labelGO.transform.SetParent(row.transform, false);
-        Text labelTxt = labelGO.AddComponent<Text>();
+        TextMeshProUGUI labelTxt = labelGO.AddComponent<TextMeshProUGUI>();
         labelTxt.text = placeholder;
         labelTxt.font = GetDefaultFont();
         labelTxt.fontSize = 13;
-        labelTxt.resizeTextForBestFit = true;
-        labelTxt.resizeTextMinSize = 8;
-        labelTxt.resizeTextMaxSize = 13;
+        labelTxt.enableAutoSizing = true;
+        labelTxt.fontSizeMin = 8;
+        labelTxt.fontSizeMax = 13;
         labelTxt.color = Color.white;
-        labelTxt.alignment = TextAnchor.MiddleLeft;
+        labelTxt.alignment = TextAlignmentOptions.Left;
         labelGO.AddComponent<LayoutElement>().minWidth = 50;
 
         GameObject inputGO = new GameObject("Input");
@@ -162,7 +159,7 @@ public static class UIPanelBuilder
         textGO.transform.SetParent(inputGO.transform, false);
         Text inputText = textGO.AddComponent<Text>();
         inputText.text = defaultValue;
-        inputText.font = GetDefaultFont();
+        inputText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
         inputText.fontSize = 13;
         inputText.resizeTextForBestFit = true;
         inputText.resizeTextMinSize = 8;
@@ -180,7 +177,7 @@ public static class UIPanelBuilder
         placeholderGO.transform.SetParent(inputGO.transform, false);
         Text placeholderTxt = placeholderGO.AddComponent<Text>();
         placeholderTxt.text = placeholder;
-        placeholderTxt.font = GetDefaultFont();
+        placeholderTxt.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
         placeholderTxt.fontSize = 13;
         placeholderTxt.resizeTextForBestFit = true;
         placeholderTxt.resizeTextMinSize = 8;
@@ -216,29 +213,29 @@ public static class UIPanelBuilder
 
         GameObject labelGO = new GameObject("Label");
         labelGO.transform.SetParent(row.transform, false);
-        Text labelTxt = labelGO.AddComponent<Text>();
+        TextMeshProUGUI labelTxt = labelGO.AddComponent<TextMeshProUGUI>();
         labelTxt.text = label;
         labelTxt.font = GetDefaultFont();
         labelTxt.fontSize = 13;
-        labelTxt.resizeTextForBestFit = true;
-        labelTxt.resizeTextMinSize = 8;
-        labelTxt.resizeTextMaxSize = 13;
+        labelTxt.enableAutoSizing = true;
+        labelTxt.fontSizeMin = 8;
+        labelTxt.fontSizeMax = 13;
         labelTxt.color = Color.white;
-        labelTxt.alignment = TextAnchor.MiddleLeft;
+        labelTxt.alignment = TextAlignmentOptions.Left;
         labelGO.AddComponent<LayoutElement>().minWidth = 75;
 
         GameObject keyGO = new GameObject("KeyText");
         keyGO.transform.SetParent(row.transform, false);
-        Text keyTxt = keyGO.AddComponent<Text>();
+        TextMeshProUGUI keyTxt = keyGO.AddComponent<TextMeshProUGUI>();
         keyTxt.text = defaultKey;
         keyTxt.font = GetDefaultFont();
         keyTxt.fontSize = 13;
-        keyTxt.resizeTextForBestFit = true;
-        keyTxt.resizeTextMinSize = 7;
-        keyTxt.resizeTextMaxSize = 13;
-        keyTxt.fontStyle = FontStyle.Bold;
+        keyTxt.enableAutoSizing = true;
+        keyTxt.fontSizeMin = 7;
+        keyTxt.fontSizeMax = 13;
+        keyTxt.fontStyle = FontStyles.Bold;
         keyTxt.color = new Color(1f, 0.85f, 0.2f);
-        keyTxt.alignment = TextAnchor.MiddleCenter;
+        keyTxt.alignment = TextAlignmentOptions.Center;
         keyGO.AddComponent<LayoutElement>().minWidth = 70;
 
         GameObject btnGO = new GameObject("RebindBtn");
@@ -253,15 +250,15 @@ public static class UIPanelBuilder
 
         GameObject btnTextGO = new GameObject("Text");
         btnTextGO.transform.SetParent(btnGO.transform, false);
-        Text btnTxt = btnTextGO.AddComponent<Text>();
+        TextMeshProUGUI btnTxt = btnTextGO.AddComponent<TextMeshProUGUI>();
         btnTxt.text = "Rebind";
         btnTxt.font = GetDefaultFont();
         btnTxt.fontSize = 12;
-        btnTxt.resizeTextForBestFit = true;
-        btnTxt.resizeTextMinSize = 7;
-        btnTxt.resizeTextMaxSize = 12;
+        btnTxt.enableAutoSizing = true;
+        btnTxt.fontSizeMin = 7;
+        btnTxt.fontSizeMax = 12;
         btnTxt.color = Color.white;
-        btnTxt.alignment = TextAnchor.MiddleCenter;
+        btnTxt.alignment = TextAlignmentOptions.Center;
         RectTransform btnTxtRT = btnTextGO.GetComponent<RectTransform>();
         btnTxtRT.anchorMin = Vector2.zero;
         btnTxtRT.anchorMax = Vector2.one;
@@ -283,16 +280,16 @@ public static class UIPanelBuilder
 
         GameObject btnTextGO = new GameObject("Text");
         btnTextGO.transform.SetParent(btnGO.transform, false);
-        Text btnTxt = btnTextGO.AddComponent<Text>();
+        TextMeshProUGUI btnTxt = btnTextGO.AddComponent<TextMeshProUGUI>();
         btnTxt.text = label;
         btnTxt.font = GetDefaultFont();
         btnTxt.fontSize = 14;
-        btnTxt.resizeTextForBestFit = true;
-        btnTxt.resizeTextMinSize = 8;
-        btnTxt.resizeTextMaxSize = 14;
-        btnTxt.fontStyle = FontStyle.Bold;
+        btnTxt.enableAutoSizing = true;
+        btnTxt.fontSizeMin = 8;
+        btnTxt.fontSizeMax = 14;
+        btnTxt.fontStyle = FontStyles.Bold;
         btnTxt.color = Color.white;
-        btnTxt.alignment = TextAnchor.MiddleCenter;
+        btnTxt.alignment = TextAlignmentOptions.Center;
         RectTransform btnTxtRT = btnTextGO.GetComponent<RectTransform>();
         btnTxtRT.anchorMin = Vector2.zero;
         btnTxtRT.anchorMax = Vector2.one;
@@ -321,30 +318,29 @@ public static class UIPanelBuilder
         // 标签（左侧，偏灰白）
         GameObject labelGO = new GameObject("Label");
         labelGO.transform.SetParent(row.transform, false);
-        Text labelTxt = labelGO.AddComponent<Text>();
+        TextMeshProUGUI labelTxt = labelGO.AddComponent<TextMeshProUGUI>();
         labelTxt.text = label;
         labelTxt.font = GetDefaultFont();
         labelTxt.fontSize = 11;
-        labelTxt.resizeTextForBestFit = true;
-        labelTxt.resizeTextMinSize = 7;
-        labelTxt.resizeTextMaxSize = 11;
+        labelTxt.enableAutoSizing = true;
+        labelTxt.fontSizeMin = 7;
+        labelTxt.fontSizeMax = 11;
         labelTxt.color = new Color(0.65f, 0.65f, 0.7f);
-        labelTxt.alignment = TextAnchor.MiddleLeft;
+        labelTxt.alignment = TextAlignmentOptions.Left;
         labelGO.AddComponent<LayoutElement>().minWidth = 80;
 
-        // 值（右侧，亮色高亮）
         GameObject valGO = new GameObject("ValueText");
         valGO.transform.SetParent(row.transform, false);
-        Text valTxt = valGO.AddComponent<Text>();
+        TextMeshProUGUI valTxt = valGO.AddComponent<TextMeshProUGUI>();
         valTxt.text = defaultVal;
         valTxt.font = GetDefaultFont();
         valTxt.fontSize = 11;
-        valTxt.resizeTextForBestFit = true;
-        valTxt.resizeTextMinSize = 7;
-        valTxt.resizeTextMaxSize = 11;
-        valTxt.fontStyle = FontStyle.Bold;
+        valTxt.enableAutoSizing = true;
+        valTxt.fontSizeMin = 7;
+        valTxt.fontSizeMax = 11;
+        valTxt.fontStyle = FontStyles.Bold;
         valTxt.color = new Color(0.4f, 0.9f, 0.6f);
-        valTxt.alignment = TextAnchor.MiddleRight;
+        valTxt.alignment = TextAlignmentOptions.Right;
         valGO.AddComponent<LayoutElement>().flexibleWidth = 1;
 
         return row;
@@ -358,16 +354,16 @@ public static class UIPanelBuilder
         GameObject go = new GameObject("SubHeader_" + text.GetHashCode());
         go.transform.SetParent(parent.transform, false);
         go.AddComponent<LayoutElement>().minHeight = 18;
-        Text txt = go.AddComponent<Text>();
+        TextMeshProUGUI txt = go.AddComponent<TextMeshProUGUI>();
         txt.text = text;
         txt.font = GetDefaultFont();
         txt.fontSize = 10;
-        txt.resizeTextForBestFit = true;
-        txt.resizeTextMinSize = 7;
-        txt.resizeTextMaxSize = 10;
-        txt.fontStyle = FontStyle.Italic;
+        txt.enableAutoSizing = true;
+        txt.fontSizeMin = 7;
+        txt.fontSizeMax = 10;
+        txt.fontStyle = FontStyles.Italic;
         txt.color = new Color(0.45f, 0.45f, 0.5f);
-        txt.alignment = TextAnchor.MiddleLeft;
+        txt.alignment = TextAlignmentOptions.Left;
         return go;
     }
 
@@ -379,21 +375,24 @@ public static class UIPanelBuilder
         GameObject go = new GameObject("HintText");
         go.transform.SetParent(parent.transform, false);
         go.AddComponent<LayoutElement>().minHeight = 20;
-        Text txt = go.AddComponent<Text>();
+        TextMeshProUGUI txt = go.AddComponent<TextMeshProUGUI>();
         txt.text = text;
         txt.font = GetDefaultFont();
         txt.fontSize = 11;
-        txt.resizeTextForBestFit = true;
-        txt.resizeTextMinSize = 7;
-        txt.resizeTextMaxSize = 11;
-        txt.fontStyle = FontStyle.Normal;
+        txt.enableAutoSizing = true;
+        txt.fontSizeMin = 7;
+        txt.fontSizeMax = 11;
+        txt.fontStyle = FontStyles.Normal;
         txt.color = new Color(0.5f, 0.5f, 0.55f);
-        txt.alignment = TextAnchor.MiddleCenter;
+        txt.alignment = TextAlignmentOptions.Center;
         return go;
     }
 
-    public static Font GetDefaultFont()
+    public static TMP_FontAsset GetDefaultFont()
     {
-        return SharedFont != null ? SharedFont : Resources.Load<Font>("simhei");
+        if (SharedFont != null) return SharedFont;
+        TMP_FontAsset font = Resources.Load<TMP_FontAsset>("simhei SDF");
+        if (font != null) font.atlasPopulationMode = AtlasPopulationMode.Dynamic;
+        return font;
     }
 }

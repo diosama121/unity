@@ -32,6 +32,7 @@ public class ROS2BridgeV2 : MonoBehaviour
     private Thread connectThread; // 新增：专门用于连接的后台线程
 
     public volatile bool isConnected = false;
+    private volatile bool _threadRunning = false;
     private float lastSendTime = 0f;
 
     // ROS2 控制指令
@@ -116,6 +117,7 @@ public class ROS2BridgeV2 : MonoBehaviour
                 client.Connect(cleanIP, rosPort);
                 stream = client.GetStream();
                 isConnected = true;
+                _threadRunning = true;
 
                 Debug.Log($"✅ ROS2 连接成功！");
 
@@ -251,7 +253,7 @@ public class ROS2BridgeV2 : MonoBehaviour
         byte[] buffer = new byte[4096];
         StringBuilder messageBuffer = new StringBuilder();
 
-        while (isConnected)
+        while (_threadRunning && isConnected)
         {
             try
             {
@@ -294,7 +296,7 @@ public class ROS2BridgeV2 : MonoBehaviour
 
     void SendLoop()
     {
-        while (isConnected)
+        while (_threadRunning && isConnected)
         {
             while (sendQueue.TryDequeue(out byte[] data))
             {
@@ -343,12 +345,19 @@ public class ROS2BridgeV2 : MonoBehaviour
     public void Reconnect()
     {
         Debug.Log("🔄 ROS2 Bridge 正在重连...");
+        _threadRunning = false;
         isConnected = false;
-        if (receiveThread != null && receiveThread.IsAlive) receiveThread.Abort();
-        if (sendThread != null && sendThread.IsAlive) sendThread.Abort();
-        if (connectThread != null && connectThread.IsAlive) connectThread.Abort();
-        if (stream != null) { stream.Close(); stream = null; }
-        if (client != null) { client.Close(); client = null; }
+
+        if (stream != null) { try { stream.Close(); } catch { } stream = null; }
+        if (client != null) { try { client.Close(); } catch { } client = null; }
+
+        JoinThreadSafe(receiveThread);
+        JoinThreadSafe(sendThread);
+        JoinThreadSafe(connectThread);
+        receiveThread = null;
+        sendThread = null;
+        connectThread = null;
+
         lastReceiveTime = 0f;
         useRosControl = false;
         rosLinearVelocity = 0f;
@@ -356,14 +365,19 @@ public class ROS2BridgeV2 : MonoBehaviour
         ConnectToROS2();
     }
 
+    private void JoinThreadSafe(Thread t)
+    {
+        if (t == null || !t.IsAlive) return;
+        try { if (!t.Join(2000)) { Debug.LogWarning("[ROS2Bridge] 线程超时未退出"); } }
+        catch { }
+    }
+
     void OnApplicationQuit()
     {
+        _threadRunning = false;
         isConnected = false;
-        if (receiveThread != null && receiveThread.IsAlive) receiveThread.Abort();
-        if (sendThread != null && sendThread.IsAlive) sendThread.Abort();
-        if (connectThread != null && connectThread.IsAlive) connectThread.Abort();
-        if (stream != null) stream.Close();
-        if (client != null) client.Close();
+        if (stream != null) { try { stream.Close(); } catch { } }
+        if (client != null) { try { client.Close(); } catch { } }
     }
 
     void GenerateLidarScan()

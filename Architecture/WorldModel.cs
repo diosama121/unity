@@ -27,6 +27,7 @@ public class WorldModel : MonoBehaviour
     public ProceduralRoadBuilder roadBuilder;
     public TrafficLightManager trafficLightManager;
     public TrafficManager trafficManager;
+    public PedestrianSpawner pedestrianSpawner;
 
     private Dictionary<int, RoadNode> _graph = new Dictionary<int, RoadNode>();
     private KDTree _spatialIndex;
@@ -71,10 +72,7 @@ public class WorldModel : MonoBehaviour
 
         roadBuilder.BuildRoads();
 
-        if (roadGenerator != null && !roadGenerator.isCountryside)
-        {
-            GenerateStopLines();
-        }
+        GenerateStopLines();
 
         if (trafficLightManager != null && !roadGenerator.isCountryside)
             trafficLightManager.PlaceTrafficLights();
@@ -83,6 +81,19 @@ public class WorldModel : MonoBehaviour
             trafficManager.ClearAllNPCs();
         }
         if (trafficManager != null) trafficManager.SpawnNPCs();
+
+        if (pedestrianSpawner != null)
+        {
+            pedestrianSpawner.ClearAllPedestrians();
+            if (!roadGenerator.isCountryside)
+            {
+                pedestrianSpawner.enabled = true;
+            }
+            else
+            {
+                pedestrianSpawner.enabled = false;
+            }
+        }
 
         Debug.Log("[WorldModel] World generation complete.");
     }

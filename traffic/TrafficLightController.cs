@@ -88,8 +88,6 @@ public class TrafficLightController : MonoBehaviour
             case "Yellow": if (yellowLight != null) yellowLight.enabled = true; break;
             case "Green": if (greenLight != null) greenLight.enabled = true; break;
         }
-
-        Debug.Log($"红绿灯状态切换为：{state}");
     }
 
     /// <summary>

@@ -1,16 +1,32 @@
 using UnityEngine;
 using UnityEngine.UI;
+using TMPro;
 
 public class AIStateBubble : MonoBehaviour
 {
     public Vector3 worldOffset = new Vector3(0, 2.2f, 0);
-    public float fontSize = 18;
+    public float fontSize = 12;
 
     private Canvas bubbleCanvas;
-    private Text stateText;
+    private TextMeshProUGUI stateText;
+    private Image bgImage;
     private Transform canvasTrans;
     private SimpleAutoDrive autoDrive;
     private SimpleCarController carController;
+
+    private static TMP_FontAsset _cachedFont;
+    private static TMP_FontAsset CachedFont
+    {
+        get
+        {
+            if (_cachedFont == null)
+            {
+                _cachedFont = Resources.Load<TMP_FontAsset>("simhei SDF");
+                if (_cachedFont != null) _cachedFont.atlasPopulationMode = AtlasPopulationMode.Dynamic;
+            }
+            return _cachedFont;
+        }
+    }
 
     void Start()
     {
@@ -39,8 +55,8 @@ public class AIStateBubble : MonoBehaviour
 
         GameObject bgGO = new GameObject("Bg");
         bgGO.transform.SetParent(canvasGO.transform, false);
-        Image bgImg = bgGO.AddComponent<Image>();
-        bgImg.color = new Color(0, 0, 0, 0.55f);
+        bgImage = bgGO.AddComponent<Image>();
+        bgImage.color = new Color(0, 0, 0, 0.55f);
         RectTransform bgRT = bgGO.GetComponent<RectTransform>();
         bgRT.anchorMin = Vector2.zero;
         bgRT.anchorMax = Vector2.one;
@@ -48,13 +64,14 @@ public class AIStateBubble : MonoBehaviour
 
         GameObject txtGO = new GameObject("Text");
         txtGO.transform.SetParent(canvasGO.transform, false);
-        stateText = txtGO.AddComponent<Text>();
-        stateText.font = Resources.Load<Font>("simhei");
-        stateText.fontSize = (int)fontSize;
-        stateText.fontStyle = FontStyle.Bold;
+        stateText = txtGO.AddComponent<TextMeshProUGUI>();
+        if (CachedFont != null) stateText.font = CachedFont;
+        stateText.fontSize = fontSize;
+        stateText.fontStyle = FontStyles.Bold;
         stateText.color = Color.green;
-        stateText.alignment = TextAnchor.MiddleCenter;
+        stateText.alignment = TextAlignmentOptions.Center;
         stateText.text = "IDLE";
+        stateText.overflowMode = TextOverflowModes.Overflow;
         RectTransform txtRT = txtGO.GetComponent<RectTransform>();
         txtRT.anchorMin = Vector2.zero;
         txtRT.anchorMax = Vector2.one;
@@ -124,5 +141,21 @@ public class AIStateBubble : MonoBehaviour
         }
 
         stateText.text = sb.ToString().TrimEnd();
+
+        if (bgImage != null)
+        {
+            bool isEmergency = autoDrive != null && autoDrive.vehiclePriority == VehiclePriority.Emergency;
+            if (isEmergency)
+            {
+                float pulse = Mathf.PingPong(Time.time * 4f, 1f);
+                bgImage.color = Color.Lerp(
+                    new Color(0.8f, 0.05f, 0.05f, 0.7f),
+                    new Color(0.05f, 0.05f, 0.8f, 0.7f), pulse);
+            }
+            else
+            {
+                bgImage.color = new Color(0, 0, 0, 0.55f);
+            }
+        }
     }
 }

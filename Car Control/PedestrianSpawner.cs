@@ -69,12 +69,10 @@ public class PedestrianSpawner : MonoBehaviour
             return;
         }
 
-        // 仅在非乡村模式（城市模式）下激活
         isCityMode = !roadGen.isCountryside;
         if (!isCityMode)
         {
-            Debug.Log("[PedestrianSpawner] 当前为乡村模式，行人系统不激活。");
-            enabled = false;
+            Debug.Log("[PedestrianSpawner] 当前为乡村模式，行人系统暂不激活，由WorldModel统一管控。");
             return;
         }
 

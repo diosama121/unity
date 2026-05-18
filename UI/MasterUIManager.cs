@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.UI;
+using TMPro;
 using System.Collections;
 using System.Collections.Generic;
 
@@ -7,7 +8,17 @@ public class MasterUIManager : MonoBehaviour
 {
     [Header("=== Auto Setup ===")]
     public bool autoGenerateUI = true;
-    public Font customFont;
+    public TMP_FontAsset customFont;
+
+    private Font _legacyFont;
+    private Font legacyFont
+    {
+        get
+        {
+            if (_legacyFont == null) _legacyFont = Resources.Load<Font>("simhei");
+            return _legacyFont;
+        }    
+    }
 
     private SimpleCarController carController;
     private SimpleAutoDrive autoDrive;
@@ -37,8 +48,8 @@ public class MasterUIManager : MonoBehaviour
     private GameObject citySubPanel;
     private GameObject countrysideSubPanel;
 
-    private Dictionary<string, Text> hudTexts = new Dictionary<string, Text>();
-    private Dictionary<string, Text> keyTexts = new Dictionary<string, Text>();
+    private Dictionary<string, TextMeshProUGUI> hudTexts = new Dictionary<string, TextMeshProUGUI>();
+    private Dictionary<string, TextMeshProUGUI> keyTexts = new Dictionary<string, TextMeshProUGUI>();
     private Dictionary<string, InputField> inputFields = new Dictionary<string, InputField>();
     private Dictionary<string, Toggle> toggles = new Dictionary<string, Toggle>();
     private Dictionary<string, Dropdown> dropdowns = new Dictionary<string, Dropdown>();
@@ -52,13 +63,13 @@ public class MasterUIManager : MonoBehaviour
 
     private GameObject minimapRawImage;
     private GameObject torOverlay;
-    private Text torOverlayText;
+    private TextMeshProUGUI torOverlayText;
     private bool isTORFlashing = false;
     private float torFlashTimer = 0f;
     private float torFlashDuration = 0f;
 
     private GameObject thoughtStreamPanel;
-    private Text thoughtStreamText;
+    private TextMeshProUGUI thoughtStreamText;
     private List<string> thoughtLines = new List<string>();
     private const int maxThoughtLines = 8;
 
@@ -170,7 +181,7 @@ public class MasterUIManager : MonoBehaviour
 
     #endregion
 
-    void BuildTOROverlay(GameObject root, Font font)
+    void BuildTOROverlay(GameObject root, TMP_FontAsset font)
     {
         torOverlay = new GameObject("TOROverlay");
         torOverlay.transform.SetParent(root.transform, false);
@@ -185,16 +196,16 @@ public class MasterUIManager : MonoBehaviour
 
         GameObject torTextGO = new GameObject("Text");
         torTextGO.transform.SetParent(torOverlay.transform, false);
-        torOverlayText = torTextGO.AddComponent<Text>();
+        torOverlayText = torTextGO.AddComponent<TextMeshProUGUI>();
         torOverlayText.text = "TAKE OVER REQUEST\nEMERGENCY BRAKE";
         torOverlayText.font = font;
         torOverlayText.fontSize = 48;
-        torOverlayText.resizeTextForBestFit = true;
-        torOverlayText.resizeTextMinSize = 18;
-        torOverlayText.resizeTextMaxSize = 48;
-        torOverlayText.fontStyle = FontStyle.Bold;
+        torOverlayText.enableAutoSizing = true;
+        torOverlayText.fontSizeMin = 18;
+        torOverlayText.fontSizeMax = 48;
+        torOverlayText.fontStyle = FontStyles.Bold;
         torOverlayText.color = Color.white;
-        torOverlayText.alignment = TextAnchor.MiddleCenter;
+        torOverlayText.alignment = TextAlignmentOptions.Center;
         RectTransform ttxtRT = torTextGO.GetComponent<RectTransform>();
         ttxtRT.anchorMin = Vector2.zero;
         ttxtRT.anchorMax = Vector2.one;
@@ -204,7 +215,7 @@ public class MasterUIManager : MonoBehaviour
         torOverlay.SetActive(false);
     }
 
-    void BuildThoughtStream(GameObject root, Font font)
+    void BuildThoughtStream(GameObject root, TMP_FontAsset font)
     {
         thoughtStreamPanel = new GameObject("ThoughtStream");
         thoughtStreamPanel.transform.SetParent(root.transform, false);
@@ -219,16 +230,16 @@ public class MasterUIManager : MonoBehaviour
 
         GameObject textChild = new GameObject("Text");
         textChild.transform.SetParent(thoughtStreamPanel.transform, false);
-        thoughtStreamText = textChild.AddComponent<Text>();
+        thoughtStreamText = textChild.AddComponent<TextMeshProUGUI>();
         thoughtStreamText.font = font;
         thoughtStreamText.fontSize = 11;
-        thoughtStreamText.resizeTextForBestFit = true;
-        thoughtStreamText.resizeTextMinSize = 7;
-        thoughtStreamText.resizeTextMaxSize = 11;
+        thoughtStreamText.enableAutoSizing = true;
+        thoughtStreamText.fontSizeMin = 7;
+        thoughtStreamText.fontSizeMax = 11;
         thoughtStreamText.color = new Color(0.3f, 0.9f, 0.5f);
-        thoughtStreamText.alignment = TextAnchor.LowerLeft;
-        thoughtStreamText.horizontalOverflow = HorizontalWrapMode.Overflow;
-        thoughtStreamText.verticalOverflow = VerticalWrapMode.Overflow;
+        thoughtStreamText.alignment = TextAlignmentOptions.BottomLeft;
+        thoughtStreamText.enableWordWrapping = false;
+        thoughtStreamText.overflowMode = TextOverflowModes.Overflow;
         RectTransform ttsRT = textChild.GetComponent<RectTransform>();
         ttsRT.anchorMin = Vector2.zero;
         ttsRT.anchorMax = Vector2.one;
@@ -249,15 +260,15 @@ public class MasterUIManager : MonoBehaviour
         exportBtn.targetGraphic = ebImg;
         GameObject ebTxtGO = new GameObject("Text");
         ebTxtGO.transform.SetParent(exportBtnGO.transform, false);
-        Text ebTxt = ebTxtGO.AddComponent<Text>();
+        TextMeshProUGUI ebTxt = ebTxtGO.AddComponent<TextMeshProUGUI>();
         ebTxt.text = "导出日志";
         ebTxt.font = font;
         ebTxt.fontSize = 8;
-        ebTxt.resizeTextForBestFit = true;
-        ebTxt.resizeTextMinSize = 5;
-        ebTxt.resizeTextMaxSize = 9;
+        ebTxt.enableAutoSizing = true;
+        ebTxt.fontSizeMin = 5;
+        ebTxt.fontSizeMax = 9;
         ebTxt.color = Color.white;
-        ebTxt.alignment = TextAnchor.MiddleCenter;
+        ebTxt.alignment = TextAlignmentOptions.Center;
         RectTransform ebTxtRT = ebTxtGO.GetComponent<RectTransform>();
         ebTxtRT.anchorMin = Vector2.zero;
         ebTxtRT.anchorMax = Vector2.one;
@@ -328,7 +339,8 @@ public class MasterUIManager : MonoBehaviour
 
     void BuildCompleteUI()
     {
-        Font font = customFont != null ? customFont : Resources.Load<Font>("simhei");
+        TMP_FontAsset font = customFont != null ? customFont : Resources.Load<TMP_FontAsset>("simhei SDF");
+        if (font != null) font.atlasPopulationMode = AtlasPopulationMode.Dynamic;
         UIPanelBuilder.SharedFont = font;
 
         Canvas canvas = FindObjectOfType<Canvas>();
@@ -385,7 +397,7 @@ public class MasterUIManager : MonoBehaviour
         SwitchToModule(moduleBaseSettings);
     }
 
-    void BuildTopBar(GameObject root, Font font)
+    void BuildTopBar(GameObject root, TMP_FontAsset font)
     {
         topBar = new GameObject("TopBar");
         topBar.transform.SetParent(root.transform, false);
@@ -427,16 +439,16 @@ public class MasterUIManager : MonoBehaviour
         genBtn.targetGraphic = genImg;
         GameObject genTxtGO = new GameObject("Text");
         genTxtGO.transform.SetParent(genWorldBtn.transform, false);
-        Text genTxt = genTxtGO.AddComponent<Text>();
+        TextMeshProUGUI genTxt = genTxtGO.AddComponent<TextMeshProUGUI>();
         genTxt.text = "生成世界";
         genTxt.font = font;
         genTxt.fontSize = 14;
-        genTxt.resizeTextForBestFit = true;
-        genTxt.resizeTextMinSize = 8;
-        genTxt.resizeTextMaxSize = 14;
-        genTxt.fontStyle = FontStyle.Bold;
+        genTxt.enableAutoSizing = true;
+        genTxt.fontSizeMin = 8;
+        genTxt.fontSizeMax = 14;
+        genTxt.fontStyle = FontStyles.Bold;
         genTxt.color = Color.white;
-        genTxt.alignment = TextAnchor.MiddleCenter;
+        genTxt.alignment = TextAlignmentOptions.Center;
         RectTransform genTxtRT = genTxtGO.GetComponent<RectTransform>();
         genTxtRT.anchorMin = Vector2.zero;
         genTxtRT.anchorMax = Vector2.one;
@@ -453,33 +465,33 @@ public class MasterUIManager : MonoBehaviour
         rosDotGO.transform.SetParent(topBar.transform, false);
         rosDotGO.AddComponent<LayoutElement>().minWidth = 20;
         rosDotGO.AddComponent<LayoutElement>().minHeight = 20;
-        Text rosDot = rosDotGO.AddComponent<Text>();
+        TextMeshProUGUI rosDot = rosDotGO.AddComponent<TextMeshProUGUI>();
         rosDot.text = "ROS2桥接";
         rosDot.font = font;
         rosDot.fontSize = 11;
-        rosDot.resizeTextForBestFit = true;
-        rosDot.resizeTextMinSize = 7;
-        rosDot.resizeTextMaxSize = 11;
-        rosDot.color = new Color(0.5f, 0.5f, 0.5f);
-        rosDot.alignment = TextAnchor.MiddleCenter;
+        rosDot.enableAutoSizing = true;
+        rosDot.fontSizeMin = 7;
+        rosDot.fontSizeMax = 11;
+        rosDot.color = Color.white;
+        rosDot.alignment = TextAlignmentOptions.Center;
         rosDotGO.name = "RosStatusDot";
 
         GameObject timeLabelGO = new GameObject("TimeLabel");
         timeLabelGO.transform.SetParent(topBar.transform, false);
         timeLabelGO.AddComponent<LayoutElement>().minWidth = 80;
-        Text timeLabel = timeLabelGO.AddComponent<Text>();
+        TextMeshProUGUI timeLabel = timeLabelGO.AddComponent<TextMeshProUGUI>();
         timeLabel.text = "Time x1";
         timeLabel.font = font;
         timeLabel.fontSize = 12;
-        timeLabel.resizeTextForBestFit = true;
-        timeLabel.resizeTextMinSize = 7;
-        timeLabel.resizeTextMaxSize = 12;
+        timeLabel.enableAutoSizing = true;
+        timeLabel.fontSizeMin = 7;
+        timeLabel.fontSizeMax = 12;
         timeLabel.color = new Color(0.3f, 0.8f, 1f);
-        timeLabel.alignment = TextAnchor.MiddleCenter;
+        timeLabel.alignment = TextAlignmentOptions.Center;
         timeLabelGO.name = "TimeLabel";
     }
 
-    void CreateNavButton(GameObject parent, string name, string label, Font font, UnityEngine.Events.UnityAction callback)
+    void CreateNavButton(GameObject parent, string name, string label, TMP_FontAsset font, UnityEngine.Events.UnityAction callback)
     {
         GameObject btnGO = new GameObject(name);
         btnGO.transform.SetParent(parent.transform, false);
@@ -491,16 +503,16 @@ public class MasterUIManager : MonoBehaviour
         btn.targetGraphic = btnImg;
         GameObject txtGO = new GameObject("Text");
         txtGO.transform.SetParent(btnGO.transform, false);
-        Text txt = txtGO.AddComponent<Text>();
+        TextMeshProUGUI txt = txtGO.AddComponent<TextMeshProUGUI>();
         txt.text = label;
         txt.font = font;
         txt.fontSize = 13;
-        txt.resizeTextForBestFit = true;
-        txt.resizeTextMinSize = 8;
-        txt.resizeTextMaxSize = 13;
-        txt.fontStyle = FontStyle.Bold;
+        txt.enableAutoSizing = true;
+        txt.fontSizeMin = 8;
+        txt.fontSizeMax = 13;
+        txt.fontStyle = FontStyles.Bold;
         txt.color = Color.white;
-        txt.alignment = TextAnchor.MiddleCenter;
+        txt.alignment = TextAlignmentOptions.Center;
         RectTransform txtRT = txtGO.GetComponent<RectTransform>();
         txtRT.anchorMin = Vector2.zero;
         txtRT.anchorMax = Vector2.one;
@@ -508,7 +520,7 @@ public class MasterUIManager : MonoBehaviour
         btn.onClick.AddListener(callback);
     }
 
-    void BuildLeftPanel(GameObject root, Font font)
+    void BuildLeftPanel(GameObject root, TMP_FontAsset font)
     {
         leftPanel = new GameObject("LeftPanel");
         leftPanel.transform.SetParent(root.transform, false);
@@ -565,7 +577,7 @@ public class MasterUIManager : MonoBehaviour
         BuildKeyPanel(scrollContent, font);
     }
 
-    void BuildHUDPanel(GameObject parent, Font font)
+    void BuildHUDPanel(GameObject parent, TMP_FontAsset font)
     {
         hudPanel = new GameObject("HUDPanel");
         hudPanel.transform.SetParent(parent.transform, false);
@@ -605,7 +617,7 @@ public class MasterUIManager : MonoBehaviour
         hudTexts["HUDRosStatus"] = CreateHUDLabel(hudPanel, "ROS2连接", "OFF", font);
     }
 
-    Text CreateHUDLabel(GameObject parent, string label, string defaultValue, Font font)
+    TextMeshProUGUI CreateHUDLabel(GameObject parent, string label, string defaultValue, TMP_FontAsset font)
     {
         GameObject row = new GameObject("HUD_" + label);
         row.transform.SetParent(parent.transform, false);
@@ -621,35 +633,35 @@ public class MasterUIManager : MonoBehaviour
 
         GameObject lGO = new GameObject("Label");
         lGO.transform.SetParent(row.transform, false);
-        Text lTxt = lGO.AddComponent<Text>();
+        TextMeshProUGUI lTxt = lGO.AddComponent<TextMeshProUGUI>();
         lTxt.text = label + ":";
         lTxt.font = font;
         lTxt.fontSize = 11;
-        lTxt.resizeTextForBestFit = true;
-        lTxt.resizeTextMinSize = 7;
-        lTxt.resizeTextMaxSize = 11;
+        lTxt.enableAutoSizing = true;
+        lTxt.fontSizeMin = 7;
+        lTxt.fontSizeMax = 11;
         lTxt.color = new Color(0.7f, 0.7f, 0.75f);
-        lTxt.alignment = TextAnchor.MiddleLeft;
+        lTxt.alignment = TextAlignmentOptions.Left;
         lGO.AddComponent<LayoutElement>().minWidth = 65;
 
         GameObject vGO = new GameObject("Value");
         vGO.transform.SetParent(row.transform, false);
-        Text vTxt = vGO.AddComponent<Text>();
+        TextMeshProUGUI vTxt = vGO.AddComponent<TextMeshProUGUI>();
         vTxt.text = defaultValue;
         vTxt.font = font;
         vTxt.fontSize = 12;
-        vTxt.resizeTextForBestFit = true;
-        vTxt.resizeTextMinSize = 7;
-        vTxt.resizeTextMaxSize = 12;
-        vTxt.fontStyle = FontStyle.Bold;
+        vTxt.enableAutoSizing = true;
+        vTxt.fontSizeMin = 7;
+        vTxt.fontSizeMax = 12;
+        vTxt.fontStyle = FontStyles.Bold;
         vTxt.color = new Color(0.2f, 0.9f, 0.5f);
-        vTxt.alignment = TextAnchor.MiddleLeft;
+        vTxt.alignment = TextAlignmentOptions.Left;
         vGO.AddComponent<LayoutElement>().flexibleWidth = 1;
 
         return vTxt;
     }
 
-    void BuildKeyPanel(GameObject parent, Font font)
+    void BuildKeyPanel(GameObject parent, TMP_FontAsset font)
     {
         keyPanel = new GameObject("KeyPanel");
         keyPanel.transform.SetParent(parent.transform, false);
@@ -677,7 +689,7 @@ public class MasterUIManager : MonoBehaviour
         keyTexts["Space"] = CreateKeyDisplay(keyPanel, "Space", "Brake", font);
     }
 
-    Text CreateKeyDisplay(GameObject parent, string key, string desc, Font font)
+    TextMeshProUGUI CreateKeyDisplay(GameObject parent, string key, string desc, TMP_FontAsset font)
     {
         GameObject row = new GameObject("Key_" + key);
         row.transform.SetParent(parent.transform, false);
@@ -693,35 +705,35 @@ public class MasterUIManager : MonoBehaviour
 
         GameObject kGO = new GameObject("KeyLabel");
         kGO.transform.SetParent(row.transform, false);
-        Text kTxt = kGO.AddComponent<Text>();
+        TextMeshProUGUI kTxt = kGO.AddComponent<TextMeshProUGUI>();
         kTxt.text = key;
         kTxt.font = font;
         kTxt.fontSize = 12;
-        kTxt.resizeTextForBestFit = true;
-        kTxt.resizeTextMinSize = 7;
-        kTxt.resizeTextMaxSize = 12;
-        kTxt.fontStyle = FontStyle.Bold;
+        kTxt.enableAutoSizing = true;
+        kTxt.fontSizeMin = 7;
+        kTxt.fontSizeMax = 12;
+        kTxt.fontStyle = FontStyles.Bold;
         kTxt.color = new Color(1f, 0.85f, 0.2f);
-        kTxt.alignment = TextAnchor.MiddleLeft;
+        kTxt.alignment = TextAlignmentOptions.Left;
         kGO.AddComponent<LayoutElement>().minWidth = 70;
 
         GameObject dGO = new GameObject("DescLabel");
         dGO.transform.SetParent(row.transform, false);
-        Text dTxt = dGO.AddComponent<Text>();
+        TextMeshProUGUI dTxt = dGO.AddComponent<TextMeshProUGUI>();
         dTxt.text = desc;
         dTxt.font = font;
         dTxt.fontSize = 11;
-        dTxt.resizeTextForBestFit = true;
-        dTxt.resizeTextMinSize = 7;
-        dTxt.resizeTextMaxSize = 11;
+        dTxt.enableAutoSizing = true;
+        dTxt.fontSizeMin = 7;
+        dTxt.fontSizeMax = 11;
         dTxt.color = new Color(0.55f, 0.55f, 0.6f);
-        dTxt.alignment = TextAnchor.MiddleLeft;
+        dTxt.alignment = TextAlignmentOptions.Left;
         dGO.AddComponent<LayoutElement>().flexibleWidth = 1;
 
         return dTxt;
     }
 
-    void BuildRightPanel(GameObject root, Font font)
+    void BuildRightPanel(GameObject root, TMP_FontAsset font)
     {
         rightPanel = new GameObject("RightPanel");
         rightPanel.transform.SetParent(root.transform, false);
@@ -777,7 +789,7 @@ public class MasterUIManager : MonoBehaviour
         BuildAllModules(rightScrollContent, font);
     }
 
-    void BuildAllModules(GameObject content, Font font)
+    void BuildAllModules(GameObject content, TMP_FontAsset font)
     {
         moduleBaseSettings = BuildModule1BaseSettings(content, font);
         moduleTerrain = BuildModule2Terrain(content, font);
@@ -797,7 +809,7 @@ public class MasterUIManager : MonoBehaviour
         if (moduleCamera != null) moduleCamera.SetActive(targetModule == moduleCamera);
     }
 
-    GameObject BuildFoldoutSection(GameObject parent, string title, Font font)
+    GameObject BuildFoldoutSection(GameObject parent, string title, TMP_FontAsset font)
     {
         GameObject section = new GameObject("Foldout_" + title);
         section.transform.SetParent(parent.transform, false);
@@ -830,29 +842,29 @@ public class MasterUIManager : MonoBehaviour
 
         GameObject arrowGO = new GameObject("Arrow");
         arrowGO.transform.SetParent(headerGO.transform, false);
-        Text arrowTxt = arrowGO.AddComponent<Text>();
+        TextMeshProUGUI arrowTxt = arrowGO.AddComponent<TextMeshProUGUI>();
         arrowTxt.text = "v";
         arrowTxt.font = font;
         arrowTxt.fontSize = 14;
-        arrowTxt.resizeTextForBestFit = true;
-        arrowTxt.resizeTextMinSize = 8;
-        arrowTxt.resizeTextMaxSize = 14;
+        arrowTxt.enableAutoSizing = true;
+        arrowTxt.fontSizeMin = 8;
+        arrowTxt.fontSizeMax = 14;
         arrowTxt.color = new Color(0.3f, 0.8f, 1f);
-        arrowTxt.alignment = TextAnchor.MiddleCenter;
+        arrowTxt.alignment = TextAlignmentOptions.Center;
         arrowGO.AddComponent<LayoutElement>().minWidth = 20;
 
         GameObject titleGO = new GameObject("Title");
         titleGO.transform.SetParent(headerGO.transform, false);
-        Text titleTxt = titleGO.AddComponent<Text>();
+        TextMeshProUGUI titleTxt = titleGO.AddComponent<TextMeshProUGUI>();
         titleTxt.text = title;
         titleTxt.font = font;
         titleTxt.fontSize = 14;
-        titleTxt.resizeTextForBestFit = true;
-        titleTxt.resizeTextMinSize = 8;
-        titleTxt.resizeTextMaxSize = 14;
-        titleTxt.fontStyle = FontStyle.Bold;
+        titleTxt.enableAutoSizing = true;
+        titleTxt.fontSizeMin = 8;
+        titleTxt.fontSizeMax = 14;
+        titleTxt.fontStyle = FontStyles.Bold;
         titleTxt.color = new Color(0.85f, 0.85f, 0.9f);
-        titleTxt.alignment = TextAnchor.MiddleLeft;
+        titleTxt.alignment = TextAlignmentOptions.Left;
         titleGO.AddComponent<LayoutElement>().flexibleWidth = 1;
 
         GameObject contentGO = new GameObject("FoldoutContent");
@@ -883,7 +895,7 @@ public class MasterUIManager : MonoBehaviour
         return contentGO;
     }
 
-    GameObject BuildModule1BaseSettings(GameObject parent, Font font)
+    GameObject BuildModule1BaseSettings(GameObject parent, TMP_FontAsset font)
     {
         GameObject module = new GameObject("Module_BaseSettings");
         module.transform.SetParent(parent.transform, false);
@@ -921,7 +933,7 @@ public class MasterUIManager : MonoBehaviour
         return module;
     }
 
-    GameObject BuildModule2Terrain(GameObject parent, Font font)
+    GameObject BuildModule2Terrain(GameObject parent, TMP_FontAsset font)
     {
         GameObject module = new GameObject("Module_Terrain");
         module.transform.SetParent(parent.transform, false);
@@ -953,15 +965,15 @@ public class MasterUIManager : MonoBehaviour
 
         GameObject modeLabel = new GameObject("Label");
         modeLabel.transform.SetParent(modeRow.transform, false);
-        Text modeLabelTxt = modeLabel.AddComponent<Text>();
+        TextMeshProUGUI modeLabelTxt = modeLabel.AddComponent<TextMeshProUGUI>();
         modeLabelTxt.text = "模式:";
         modeLabelTxt.font = font;
         modeLabelTxt.fontSize = 13;
-        modeLabelTxt.resizeTextForBestFit = true;
-        modeLabelTxt.resizeTextMinSize = 8;
-        modeLabelTxt.resizeTextMaxSize = 13;
+        modeLabelTxt.enableAutoSizing = true;
+        modeLabelTxt.fontSizeMin = 8;
+        modeLabelTxt.fontSizeMax = 13;
         modeLabelTxt.color = Color.white;
-        modeLabelTxt.alignment = TextAnchor.MiddleLeft;
+        modeLabelTxt.alignment = TextAlignmentOptions.Left;
         modeLabel.AddComponent<LayoutElement>().minWidth = 55;
 
         GameObject modeDropdownGO = new GameObject("Dropdown");
@@ -982,7 +994,7 @@ public class MasterUIManager : MonoBehaviour
         ddLabelGO.transform.SetParent(modeDropdownGO.transform, false);
         Text ddLabel = ddLabelGO.AddComponent<Text>();
         ddLabel.text = "城市";
-        ddLabel.font = font;
+        ddLabel.font = legacyFont;
         ddLabel.fontSize = 13;
         ddLabel.resizeTextForBestFit = true;
         ddLabel.resizeTextMinSize = 8;
@@ -1000,7 +1012,7 @@ public class MasterUIManager : MonoBehaviour
         ddItemLabelGO.transform.SetParent(modeDropdownGO.transform, false);
         Text ddItemLabel = ddItemLabelGO.AddComponent<Text>();
         ddItemLabel.text = "";
-        ddItemLabel.font = font;
+        ddItemLabel.font = legacyFont;
         ddItemLabel.fontSize = 13;
         ddItemLabel.resizeTextForBestFit = true;
         ddItemLabel.resizeTextMinSize = 8;
@@ -1010,7 +1022,7 @@ public class MasterUIManager : MonoBehaviour
         modeDropdown.itemText = ddItemLabel;
 
         dropdowns["CityMode"] = modeDropdown;
-        SetupDropdownTemplate(modeDropdown, font);
+        SetupDropdownTemplate(modeDropdown, legacyFont);
 
         citySubPanel = BuildFoldoutSection(module, "城市设置", font);
         countrysideSubPanel = BuildFoldoutSection(module, "乡村设置", font);
@@ -1039,7 +1051,7 @@ public class MasterUIManager : MonoBehaviour
         return module;
     }
 
-    GameObject BuildModule3Traffic(GameObject parent, Font font)
+    GameObject BuildModule3Traffic(GameObject parent, TMP_FontAsset font)
     {
         GameObject module = new GameObject("Module_Traffic");
         module.transform.SetParent(parent.transform, false);
@@ -1075,15 +1087,15 @@ public class MasterUIManager : MonoBehaviour
 
         GameObject nmLabel = new GameObject("Label");
         nmLabel.transform.SetParent(npcModeRow.transform, false);
-        Text nmLabelTxt = nmLabel.AddComponent<Text>();
+        TextMeshProUGUI nmLabelTxt = nmLabel.AddComponent<TextMeshProUGUI>();
         nmLabelTxt.text = "驾驶模式:";
         nmLabelTxt.font = font;
         nmLabelTxt.fontSize = 13;
-        nmLabelTxt.resizeTextForBestFit = true;
-        nmLabelTxt.resizeTextMinSize = 8;
-        nmLabelTxt.resizeTextMaxSize = 13;
+        nmLabelTxt.enableAutoSizing = true;
+        nmLabelTxt.fontSizeMin = 8;
+        nmLabelTxt.fontSizeMax = 13;
         nmLabelTxt.color = Color.white;
-        nmLabelTxt.alignment = TextAnchor.MiddleLeft;
+        nmLabelTxt.alignment = TextAlignmentOptions.Left;
         nmLabel.AddComponent<LayoutElement>().minWidth = 90;
 
         GameObject npcModeDropdownGO = new GameObject("Dropdown");
@@ -1104,7 +1116,7 @@ public class MasterUIManager : MonoBehaviour
         nmDDLabelGO.transform.SetParent(npcModeDropdownGO.transform, false);
         Text nmDDLabel = nmDDLabelGO.AddComponent<Text>();
         nmDDLabel.text = "MathSpline";
-        nmDDLabel.font = font;
+        nmDDLabel.font = legacyFont;
         nmDDLabel.fontSize = 13;
         nmDDLabel.resizeTextForBestFit = true;
         nmDDLabel.resizeTextMinSize = 8;
@@ -1122,7 +1134,7 @@ public class MasterUIManager : MonoBehaviour
         nmItemLabelGO.transform.SetParent(npcModeDropdownGO.transform, false);
         Text nmItemLabel = nmItemLabelGO.AddComponent<Text>();
         nmItemLabel.text = "";
-        nmItemLabel.font = font;
+        nmItemLabel.font = legacyFont;
         nmItemLabel.fontSize = 13;
         nmItemLabel.resizeTextForBestFit = true;
         nmItemLabel.resizeTextMinSize = 8;
@@ -1132,7 +1144,7 @@ public class MasterUIManager : MonoBehaviour
         npcModeDropdown.itemText = nmItemLabel;
 
         dropdowns["NPCMode"] = npcModeDropdown;
-        SetupDropdownTemplate(npcModeDropdown, font);
+        SetupDropdownTemplate(npcModeDropdown, legacyFont);
 
         RegisterInputField(UIPanelBuilder.CreateInputRow(foldContent, "NPCMaxSpeedInput", "NPC Max Speed", "30", InputField.ContentType.DecimalNumber), "NPCMaxSpeed");
         RegisterInputField(UIPanelBuilder.CreateInputRow(foldContent, "NPCSafeDistInput", "Safe Distance", "8", InputField.ContentType.DecimalNumber), "NPCSafeDist");
@@ -1173,7 +1185,7 @@ public class MasterUIManager : MonoBehaviour
         return module;
     }
 
-    GameObject BuildModule4System(GameObject parent, Font font)
+    GameObject BuildModule4System(GameObject parent, TMP_FontAsset font)
     {
         GameObject module = new GameObject("Module_System");
         module.transform.SetParent(parent.transform, false);
@@ -1199,14 +1211,14 @@ public class MasterUIManager : MonoBehaviour
 
         UIPanelBuilder.CreateSectionHeader(foldContent, "--- 红绿灯状态 ---");
         GameObject tlStatusRow = UIPanelBuilder.CreateDebugRow(foldContent, "TLStatus", "红绿灯状态", "N/A");
-        Text tlStatusTxt = tlStatusRow != null ? tlStatusRow.GetComponentInChildren<Text>() : null;
+        TextMeshProUGUI tlStatusTxt = tlStatusRow != null ? tlStatusRow.GetComponentInChildren<TextMeshProUGUI>() : null;
         hudTexts["TLStatus"] = tlStatusTxt;
 
         module.SetActive(false);
         return module;
     }
 
-    GameObject BuildModule5Camera(GameObject parent, Font font)
+    GameObject BuildModule5Camera(GameObject parent, TMP_FontAsset font)
     {
         GameObject module = new GameObject("Module_Camera");
         module.transform.SetParent(parent.transform, false);
@@ -1240,15 +1252,15 @@ public class MasterUIManager : MonoBehaviour
 
         GameObject cmLabel = new GameObject("Label");
         cmLabel.transform.SetParent(camModeRow.transform, false);
-        Text cmLabelTxt = cmLabel.AddComponent<Text>();
+        TextMeshProUGUI cmLabelTxt = cmLabel.AddComponent<TextMeshProUGUI>();
         cmLabelTxt.text = "相机模式:";
         cmLabelTxt.font = font;
         cmLabelTxt.fontSize = 13;
-        cmLabelTxt.resizeTextForBestFit = true;
-        cmLabelTxt.resizeTextMinSize = 8;
-        cmLabelTxt.resizeTextMaxSize = 13;
+        cmLabelTxt.enableAutoSizing = true;
+        cmLabelTxt.fontSizeMin = 8;
+        cmLabelTxt.fontSizeMax = 13;
         cmLabelTxt.color = Color.white;
-        cmLabelTxt.alignment = TextAnchor.MiddleLeft;
+        cmLabelTxt.alignment = TextAlignmentOptions.Left;
         cmLabel.AddComponent<LayoutElement>().minWidth = 80;
 
         GameObject camModeDropdownGO = new GameObject("Dropdown");
@@ -1269,7 +1281,7 @@ public class MasterUIManager : MonoBehaviour
         cmDDLabelGO.transform.SetParent(camModeDropdownGO.transform, false);
         Text cmDDLabel = cmDDLabelGO.AddComponent<Text>();
         cmDDLabel.text = "Follow";
-        cmDDLabel.font = font;
+        cmDDLabel.font = legacyFont;
         cmDDLabel.fontSize = 13;
         cmDDLabel.resizeTextForBestFit = true;
         cmDDLabel.resizeTextMinSize = 8;
@@ -1287,7 +1299,7 @@ public class MasterUIManager : MonoBehaviour
         cmItemLabelGO.transform.SetParent(camModeDropdownGO.transform, false);
         Text cmItemLabel = cmItemLabelGO.AddComponent<Text>();
         cmItemLabel.text = "";
-        cmItemLabel.font = font;
+        cmItemLabel.font = legacyFont;
         cmItemLabel.fontSize = 13;
         cmItemLabel.resizeTextForBestFit = true;
         cmItemLabel.resizeTextMinSize = 8;
@@ -1297,7 +1309,7 @@ public class MasterUIManager : MonoBehaviour
         camModeDropdown.itemText = cmItemLabel;
 
         dropdowns["CamMode"] = camModeDropdown;
-        SetupDropdownTemplate(camModeDropdown, font);
+        SetupDropdownTemplate(camModeDropdown, legacyFont);
 
         GameObject timeModeRow = new GameObject("TimeModeDropdownRow");
         timeModeRow.transform.SetParent(foldContent.transform, false);
@@ -1313,15 +1325,15 @@ public class MasterUIManager : MonoBehaviour
 
         GameObject tmLabel = new GameObject("Label");
         tmLabel.transform.SetParent(timeModeRow.transform, false);
-        Text tmLabelTxt = tmLabel.AddComponent<Text>();
+        TextMeshProUGUI tmLabelTxt = tmLabel.AddComponent<TextMeshProUGUI>();
         tmLabelTxt.text = "Time Scale:";
         tmLabelTxt.font = font;
         tmLabelTxt.fontSize = 13;
-        tmLabelTxt.resizeTextForBestFit = true;
-        tmLabelTxt.resizeTextMinSize = 8;
-        tmLabelTxt.resizeTextMaxSize = 13;
+        tmLabelTxt.enableAutoSizing = true;
+        tmLabelTxt.fontSizeMin = 8;
+        tmLabelTxt.fontSizeMax = 13;
         tmLabelTxt.color = Color.white;
-        tmLabelTxt.alignment = TextAnchor.MiddleLeft;
+        tmLabelTxt.alignment = TextAlignmentOptions.Left;
         tmLabel.AddComponent<LayoutElement>().minWidth = 80;
 
         GameObject timeModeDropdownGO = new GameObject("Dropdown");
@@ -1344,7 +1356,7 @@ public class MasterUIManager : MonoBehaviour
         tmDDLabelGO.transform.SetParent(timeModeDropdownGO.transform, false);
         Text tmDDLabel = tmDDLabelGO.AddComponent<Text>();
         tmDDLabel.text = "Normal (1x)";
-        tmDDLabel.font = font;
+        tmDDLabel.font = legacyFont;
         tmDDLabel.fontSize = 13;
         tmDDLabel.resizeTextForBestFit = true;
         tmDDLabel.resizeTextMinSize = 8;
@@ -1362,7 +1374,7 @@ public class MasterUIManager : MonoBehaviour
         tmItemLabelGO.transform.SetParent(timeModeDropdownGO.transform, false);
         Text tmItemLabel = tmItemLabelGO.AddComponent<Text>();
         tmItemLabel.text = "";
-        tmItemLabel.font = font;
+        tmItemLabel.font = legacyFont;
         tmItemLabel.fontSize = 13;
         tmItemLabel.resizeTextForBestFit = true;
         tmItemLabel.resizeTextMinSize = 8;
@@ -1372,7 +1384,7 @@ public class MasterUIManager : MonoBehaviour
         timeModeDropdown.itemText = tmItemLabel;
 
         dropdowns["TimeMode"] = timeModeDropdown;
-        SetupDropdownTemplate(timeModeDropdown, font);
+        SetupDropdownTemplate(timeModeDropdown, legacyFont);
 
         timeModeDropdown.onValueChanged.AddListener((idx) =>
         {
@@ -1391,7 +1403,7 @@ public class MasterUIManager : MonoBehaviour
         return module;
     }
 
-    void BuildModule6GlobalButtons(GameObject parent, Font font)
+    void BuildModule6GlobalButtons(GameObject parent, TMP_FontAsset font)
     {
         GameObject btnSection = new GameObject("Module_GlobalBtns");
         btnSection.transform.SetParent(parent.transform, false);
@@ -1514,7 +1526,7 @@ public class MasterUIManager : MonoBehaviour
         GameObject itemLabelGO = new GameObject("Item Label");
         itemLabelGO.transform.SetParent(itemGO.transform, false);
         Text itemLabel = itemLabelGO.AddComponent<Text>();
-        itemLabel.font = font;
+        itemLabel.font = legacyFont;
         itemLabel.fontSize = 13;
         itemLabel.resizeTextForBestFit = true;
         itemLabel.resizeTextMinSize = 8;
@@ -1535,7 +1547,7 @@ public class MasterUIManager : MonoBehaviour
         dropdown.template = templateRT;
     }
 
-    GameObject CreateToggleRow(GameObject parent, string name, string label, bool defaultValue, Font font)
+    GameObject CreateToggleRow(GameObject parent, string name, string label, bool defaultValue, TMP_FontAsset font)
     {
         GameObject row = new GameObject(name);
         row.transform.SetParent(parent.transform, false);
@@ -1552,15 +1564,15 @@ public class MasterUIManager : MonoBehaviour
 
         GameObject labelGO = new GameObject("Label");
         labelGO.transform.SetParent(row.transform, false);
-        Text labelTxt = labelGO.AddComponent<Text>();
+        TextMeshProUGUI labelTxt = labelGO.AddComponent<TextMeshProUGUI>();
         labelTxt.text = label;
         labelTxt.font = font;
         labelTxt.fontSize = 13;
-        labelTxt.resizeTextForBestFit = true;
-        labelTxt.resizeTextMinSize = 8;
-        labelTxt.resizeTextMaxSize = 13;
+        labelTxt.enableAutoSizing = true;
+        labelTxt.fontSizeMin = 8;
+        labelTxt.fontSizeMax = 13;
         labelTxt.color = Color.white;
-        labelTxt.alignment = TextAnchor.MiddleLeft;
+        labelTxt.alignment = TextAlignmentOptions.Left;
         labelGO.AddComponent<LayoutElement>().minWidth = 140;
 
         GameObject toggleGO = new GameObject("Toggle");
@@ -1924,7 +1936,7 @@ public class MasterUIManager : MonoBehaviour
         string rosHz = ros2Bridge != null ? ros2Bridge.sendRate.ToString("F0") : "10";
         SetHUDValue("HUDRosStatus", rosCon ? "ON " + rosHz + "Hz" : "OFF");
         Color rosColor = rosCon ? new Color(0.2f, 0.9f, 0.3f, heartbeatAlpha) : new Color(0.5f, 0.5f, 0.5f);
-        if (hudTexts.TryGetValue("HUDRosStatus", out Text rosVal) && rosVal != null) rosVal.color = rosColor;
+        if (hudTexts.TryGetValue("HUDRosStatus", out TextMeshProUGUI rosVal) && rosVal != null) rosVal.color = rosColor;
 
         string ts = "x" + Time.timeScale.ToString("F0");
         SetHUDValue("HUDTimeScale", ts);
@@ -1932,14 +1944,14 @@ public class MasterUIManager : MonoBehaviour
         Transform timeLabel = topBar != null ? topBar.transform.Find("TimeLabel") : null;
         if (timeLabel != null)
         {
-            Text tl = timeLabel.GetComponent<Text>();
+            TextMeshProUGUI tl = timeLabel.GetComponent<TextMeshProUGUI>();
             if (tl != null) tl.text = "Time " + ts;
         }
 
         Transform rosDot = topBar != null ? topBar.transform.Find("RosStatusDot") : null;
         if (rosDot != null)
         {
-            Text rd = rosDot.GetComponent<Text>();
+            TextMeshProUGUI rd = rosDot.GetComponent<TextMeshProUGUI>();
             if (rd != null)
             {
                 rd.text = rosCon ? "ROS2 ON" : "ROS2 OFF";
@@ -1952,7 +1964,7 @@ public class MasterUIManager : MonoBehaviour
 
     void SetHUDValue(string key, string value)
     {
-        if (hudTexts.TryGetValue(key, out Text txt) && txt != null)
+        if (hudTexts.TryGetValue(key, out TextMeshProUGUI txt) && txt != null)
         {
             txt.text = value;
         }

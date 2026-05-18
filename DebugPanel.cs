@@ -1,19 +1,20 @@
 using UnityEngine;
 using UnityEngine.UI;
+using TMPro;
 using System.Text;
 
 public class DebugPanel : MonoBehaviour
 {
     [Header("=== UI 文本组件 ===")]
-    public Text worldStatsText;          // 世界统计信息
-    public Text mouseHoverInfoText;      // 鼠标悬停语义信息
-    public Text cameraGroundInfoText;    // 相机下方语义信息
+    public TextMeshProUGUI worldStatsText;
+    public TextMeshProUGUI mouseHoverInfoText;
+    public TextMeshProUGUI cameraGroundInfoText;
 
     [Header("=== UI 按钮组件 ===")]
-    public Button toggleRecordButton;     // 一键录制按钮
-    public Text recordButtonText;         // 录制按钮状态文本
-    public Button toggleCountrysideButton;// 城乡模式切换按钮
-    public Text modeButtonText;           // 模式按钮状态文本
+    public Button toggleRecordButton;
+    public TextMeshProUGUI recordButtonText;
+    public Button toggleCountrysideButton;
+    public TextMeshProUGUI modeButtonText;
 
     [Header("=== 观测台设置 ===")]
     public KeyCode togglePanelKey = KeyCode.F1; // 开关面板快捷键
@@ -36,23 +37,124 @@ public class DebugPanel : MonoBehaviour
         roadGen = FindObjectOfType<RoadNetworkGenerator>();
         trafficManager = FindObjectOfType<TrafficManager>();
         ros2Bridge = FindObjectOfType<ROS2BridgeV2>();
-        
-        // 初始化录制按钮事件
+
+        if (worldStatsText == null)
+        {
+            CreateDebugUI();
+        }
+
         if (toggleRecordButton != null)
         {
             toggleRecordButton.onClick.AddListener(OnToggleRecordClicked);
         }
-        
-        // 初始化城乡模式切换按钮事件
+
         if (toggleCountrysideButton != null)
         {
             toggleCountrysideButton.onClick.AddListener(ToggleMode);
         }
-        
-        // 初始更新UI
+
         UpdateWorldStats();
         UpdateRecordButtonUI(false);
         UpdateModeButtonUI();
+    }
+
+    private void CreateDebugUI()
+    {
+        TMP_FontAsset font = Resources.Load<TMP_FontAsset>("simhei SDF");
+        if (font != null) font.atlasPopulationMode = AtlasPopulationMode.Dynamic;
+
+        Canvas canvas = gameObject.AddComponent<Canvas>();
+        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        canvas.sortingOrder = 100;
+        gameObject.AddComponent<UnityEngine.UI.CanvasScaler>();
+        gameObject.AddComponent<UnityEngine.UI.GraphicRaycaster>();
+
+        GameObject panelGo = new GameObject("PanelBg");
+        panelGo.transform.SetParent(transform, false);
+        RectTransform panelRt = panelGo.AddComponent<RectTransform>();
+        panelRt.anchorMin = new Vector2(0, 1);
+        panelRt.anchorMax = new Vector2(0, 1);
+        panelRt.pivot = new Vector2(0, 1);
+        panelRt.anchoredPosition = new Vector2(10, -10);
+        panelRt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, 520f);
+        panelRt.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, 380f);
+        Image panelBg = panelGo.AddComponent<Image>();
+        panelBg.color = new Color(0, 0, 0, 0.75f);
+
+        worldStatsText = CreateTMPText("StatsText", panelRt, font, 18f,
+            new Vector2(10, -10), new Vector2(0, 1), new Vector2(0, 1), new Vector2(0, 1), 500f, 200f);
+
+        mouseHoverInfoText = CreateTMPText("HoverText", panelRt, font, 16f,
+            new Vector2(10, -215), new Vector2(0, 1), new Vector2(0, 1), new Vector2(0, 1), 500f, 100f);
+
+        cameraGroundInfoText = CreateTMPText("CameraText", panelRt, font, 16f,
+            new Vector2(10, -280), new Vector2(0, 1), new Vector2(0, 1), new Vector2(0, 1), 500f, 80f);
+
+        GameObject btnBar = new GameObject("ButtonBar");
+        btnBar.transform.SetParent(panelRt, false);
+        RectTransform barRt = btnBar.AddComponent<RectTransform>();
+        barRt.anchorMin = new Vector2(0, 1);
+        barRt.anchorMax = new Vector2(0, 1);
+        barRt.pivot = new Vector2(0, 1);
+        barRt.anchoredPosition = new Vector2(10, -350);
+        barRt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, 500f);
+        barRt.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, 30f);
+
+        toggleRecordButton = CreateButton("RecordBtn", barRt, font, "🎬 开始录制",
+            new Vector2(0, 0), new Vector2(0, 1), new Vector2(0, 1), new Vector2(0.5f, 1), 240f, 28f);
+        recordButtonText = toggleRecordButton.GetComponentInChildren<TextMeshProUGUI>();
+        toggleRecordButton.onClick.AddListener(OnToggleRecordClicked);
+
+        toggleCountrysideButton = CreateButton("CountryBtn", barRt, font, "切换至乡村起伏",
+            new Vector2(0, 0), new Vector2(0.5f, 1), new Vector2(1, 1), new Vector2(1, 1), 240f, 28f);
+        modeButtonText = toggleCountrysideButton.GetComponentInChildren<TextMeshProUGUI>();
+        toggleCountrysideButton.onClick.AddListener(ToggleMode);
+    }
+
+    private TextMeshProUGUI CreateTMPText(string name, RectTransform parent, TMP_FontAsset font, float fontSize,
+        Vector2 pos, Vector2 anchorMin, Vector2 anchorMax, Vector2 pivot, float width, float height)
+    {
+        GameObject go = new GameObject(name);
+        go.transform.SetParent(parent, false);
+        RectTransform rt = go.AddComponent<RectTransform>();
+        rt.anchorMin = anchorMin;
+        rt.anchorMax = anchorMax;
+        rt.pivot = pivot;
+        rt.anchoredPosition = pos;
+        rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, width);
+        rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, height);
+        TextMeshProUGUI tmp = go.AddComponent<TextMeshProUGUI>();
+        tmp.font = font;
+        tmp.fontSize = fontSize;
+        tmp.color = Color.white;
+        tmp.alignment = TextAlignmentOptions.TopLeft;
+        return tmp;
+    }
+
+    private Button CreateButton(string name, RectTransform parent, TMP_FontAsset font, string label,
+        Vector2 pos, Vector2 anchorMin, Vector2 anchorMax, Vector2 pivot, float width, float height)
+    {
+        GameObject go = new GameObject(name);
+        go.transform.SetParent(parent, false);
+        RectTransform rt = go.AddComponent<RectTransform>();
+        rt.anchorMin = anchorMin;
+        rt.anchorMax = anchorMax;
+        rt.pivot = pivot;
+        rt.anchoredPosition = pos;
+        rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, width);
+        rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, height);
+        Image img = go.AddComponent<Image>();
+        img.color = new Color(0.3f, 0.3f, 0.3f, 0.9f);
+        Button btn = go.AddComponent<Button>();
+        btn.targetGraphic = img;
+
+        TextMeshProUGUI tmp = CreateTMPText("Label", rt, font, 16f,
+            Vector2.zero,
+            new Vector2(0, 0), new Vector2(1, 1), new Vector2(0.5f, 0.5f), width, height);
+        tmp.alignment = TextAlignmentOptions.Center;
+        tmp.color = Color.white;
+
+        return btn;
     }
 
     void Update()
