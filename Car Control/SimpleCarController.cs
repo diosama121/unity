@@ -96,9 +96,11 @@ public partial class SimpleCarController : MonoBehaviour
         RaycastHit hit;
         bool isGrounded = Physics.Raycast(transform.position + Vector3.up * 0.3f, Vector3.down, out hit, 2.0f);
 
+        Vector3 projForward = transform.forward;
+
         if (isGrounded)
         {
-            Vector3 projForward = Vector3.ProjectOnPlane(transform.forward, hit.normal);
+            projForward = Vector3.ProjectOnPlane(transform.forward, hit.normal);
             Vector3 safeForward = CarControlUtility.SafeNormalize(projForward, Vector3.zero);
             Quaternion slopeRot = Quaternion.LookRotation(safeForward, hit.normal);
             rb.MoveRotation(Quaternion.Slerp(rb.rotation, slopeRot, Time.fixedDeltaTime * 8f));
