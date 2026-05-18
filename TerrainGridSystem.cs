@@ -188,7 +188,7 @@ public class TerrainGridSystem : MonoBehaviour
         WorldModel wm = WorldModel.Instance;
         List<RoadSegment> segments = new List<RoadSegment>();
         
-        // 【核心修复 1】：将边按照 2D 样条线细分成小段，让山谷完全跟随道路拐弯！
+        // Subdivide edges along 2D spline to make valleys follow road curves
         if (roadGen != null && roadGen.edges != null)
         {
             float seedOff = roadGen.seed * 1000f;

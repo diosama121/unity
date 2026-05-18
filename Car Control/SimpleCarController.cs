@@ -1,5 +1,7 @@
 using UnityEngine;
 
+public enum VehiclePriority { Normal, Emergency }
+
 public partial class SimpleCarController : MonoBehaviour
 {
     [Header("车辆参数")]
@@ -23,6 +25,9 @@ public partial class SimpleCarController : MonoBehaviour
 
     [Header("物理环境")]
     public float slipFactor = 0.5f;
+
+    [Header("优先级")]
+    public VehiclePriority vehiclePriority = VehiclePriority.Normal;
 
     private Rigidbody rb;
     private float targetSpeed = 0f;

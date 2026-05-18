@@ -2,9 +2,6 @@ using System.Collections.Generic;
 using UnityEngine;
 using System.Linq;
 
-// ==========================================
-// 【V2.2 核心语义定义】
-// ==========================================
 public enum NodeType { Endpoint, Straight, Merge, Intersection }
 public enum IntersectionState { Uncontrolled, GreenLight, RedLight, YellowLight }
 
@@ -24,7 +21,7 @@ public class WorldModel : MonoBehaviour
 {
     public static WorldModel Instance { get; private set; }
 
-    [Header("系统挂载 (V2.2 核心组件)")]
+    [Header("System Components")]
     public RoadNetworkGenerator roadGenerator;
     public TerrainGridSystem terrainGrid;
     public ProceduralRoadBuilder roadBuilder;
@@ -33,6 +30,9 @@ public class WorldModel : MonoBehaviour
 
     private Dictionary<int, RoadNode> _graph = new Dictionary<int, RoadNode>();
     private KDTree _spatialIndex;
+
+    private List<LaneKDEntry> _laneSamples = new List<LaneKDEntry>();
+    private KDTree _laneSpatialIndex;
 
     public Dictionary<int, Lane> GlobalLanes = new Dictionary<int, Lane>();
     public Dictionary<int, LaneConnector> GlobalConnectors = new Dictionary<int, LaneConnector>();
@@ -51,63 +51,55 @@ public class WorldModel : MonoBehaviour
         else Destroy(gameObject);
     }
 
-    /// <summary>
-    /// 【总指挥点火接口】V2.2 严密初始化序列
-    /// </summary>
     public void TriggerWorldGeneration()
     {
-        Debug.Log("[WorldModel] 🚀 创世序列启动...");
+        Debug.Log("[WorldModel] World generation sequence started...");
 
-        // 1. 触发图拓扑随机生成 (V1.0)
+        GlobalSplineCache.Clear();
+        _laneSamples.Clear();
+        _laneSpatialIndex = null;
+
         roadGenerator.Generate();
 
-        // 2. 动态计算地形包围盒 (给 a1 裙边预留 100m 冗余)
         Bounds worldBounds = CalculateWorldBounds();
         
-        // 【V4.1 生命周期时序锁 - 绝对起点】
-        // 必须严格排在 IngestAndPrecomputeGraph 之前！否则高度图未生成，路网全坠入 Y=0
         terrainGrid.Initialize(worldBounds);
 
-        // 3. 建立真理层 (核心：高度平滑 + 切线计算 + 坐标锁死)
         IngestAndPrecomputeGraph(roadGenerator);
 
-        // 3.5. 生成车道图（Lane语义层：Nav Layer主导）
         GenerateAndRegisterLanes();
 
-        // 4. 通知 a1 视觉层执行 (a1 现在只需"按图填色")
         roadBuilder.BuildRoads();
 
-        // 4.5. 生成停止线锚点（Traffic Control 精确制动目标）—— 乡村模式不需要
         if (roadGenerator != null && !roadGenerator.isCountryside)
         {
             GenerateStopLines();
         }
 
-        // 5. 通知 a3 交通层执行（红绿灯仅城镇模式，NPC乡村/城镇均保留）
         if (trafficLightManager != null && !roadGenerator.isCountryside)
             trafficLightManager.PlaceTrafficLights();
-        if (trafficManager != null) trafficManager.ResetSpawnState();
+        if (trafficManager != null)
+        {
+            foreach (var npc in trafficManager.ActiveNPCs)
+            {
+                if (npc != null) Destroy(npc.gameObject);
+            }
+            trafficManager.ResetSpawnState();
+        }
         if (trafficManager != null) trafficManager.SpawnNPCs();
 
-        Debug.Log("[WorldModel] ✨ 世界生成完成，真理层已就绪。");
+        Debug.Log("[WorldModel] World generation complete.");
     }
 
-    /// <summary>
-    /// 【核心手术】吞入原始图并预计算所有几何向量
-    /// </summary>
-  private void IngestAndPrecomputeGraph(RoadNetworkGenerator source)
+    private void IngestAndPrecomputeGraph(RoadNetworkGenerator source)
 {
     _graph.Clear();
 
-    // 防穿插离地偏移量（节点初始略高于地形，避免 Z-fighting 与踩空感）
     const float NODE_GROUND_OFFSET = 0.1f;
 
-    // --- 第一步：统一高度基准 + 离地偏移 ---
     foreach (var raw in source.nodes)
     {
-        // 强制调用唯一真理接口获取地形高度
         float baseY = GetUnifiedHeight(raw.position.x, raw.position.z);
-        // 叠加偏移，确保节点视觉与逻辑始终在地表之上
         float finalY = baseY + NODE_GROUND_OFFSET;
 
         _graph[raw.id] = new RoadNode
@@ -120,16 +112,10 @@ public class WorldModel : MonoBehaviour
         };
     }
 
-    // --- 第二步：高程平滑处理 ---
-    // 【V4.1 删除】此方法会篡改真理高度，导致节点重新拉偏，已彻底移除！
-    // SmoothNodeHeights();
-
-    // --- 第2.5步：极角排序 + 相邻夹角 + 动态半径预计算 ---
     foreach (var node in _graph.Values)
     {
         if (node.NeighborIds.Count < 3) continue;
 
-        // 1. 极角排序邻居
         List<int> sorted = node.NeighborIds
             .OrderBy(nbId => Mathf.Atan2(
                 _graph[nbId].WorldPos.z - node.WorldPos.z,
@@ -137,7 +123,6 @@ public class WorldModel : MonoBehaviour
             .ToList();
         node.PolarSortedNeighbors = sorted;
 
-        // 2. 计算相邻道路夹角（弧度）
         node.AngleToNextNeighbor = new Dictionary<int, float>();
         int count = sorted.Count;
 
@@ -164,10 +149,8 @@ public class WorldModel : MonoBehaviour
             node.AngleToNextNeighbor[nbA] = theta;
         }
 
-        // 3. IntersectionRadius 保留为兜底最大值
         node.IntersectionRadius = Mathf.Clamp(maxDist, 6f, 20f);
 
-        // 4. 语义分类
         node.Kind = node.NeighborIds.Count switch
         {
             3 => IntersectionKind.T_Junction,
@@ -176,7 +159,6 @@ public class WorldModel : MonoBehaviour
         };
     }
 
-    // --- 第三步：预计算切线与法线 ---
     foreach (var node in _graph.Values)
     {
         node.Tangent = CalculateNodeTangent(node);
@@ -184,7 +166,7 @@ public class WorldModel : MonoBehaviour
     }
 
     _spatialIndex = new KDTree(_graph.Values);
-    }
+}
 
     private void GenerateAndRegisterLanes()
     {
@@ -211,7 +193,7 @@ public class WorldModel : MonoBehaviour
                 List<SplinePoint> centerSpline = RoadMathUtility.GetRoadSpline(node.Id, neighborId, stepDist, roadWidth);
                 if (centerSpline == null || centerSpline.Count < 2) continue;
 
-                GlobalSplineCache[edgeKey] = centerSpline; // 【新增】共享缓存
+                GlobalSplineCache[edgeKey] = centerSpline;
 
                 var (fwdPath, revPath) = RoadMathUtility.GenerateLanePathsFromCenter(centerSpline, roadWidth);
                 if (fwdPath.Count < 2 && revPath.Count < 2) continue;
@@ -261,6 +243,8 @@ public class WorldModel : MonoBehaviour
         }
 
         Debug.Log($"[WorldModel] 车道图注册完成: {GlobalLanes.Count}条车道, {GlobalConnectors.Count}个连接器");
+
+        RebuildLaneSpatialIndex();
     }
 
     private void GenerateStopLines()
@@ -322,8 +306,6 @@ public class WorldModel : MonoBehaviour
         return nearest;
     }
 
-    // --- a4 的几何计算车间 ---
-
     private Vector3 CalculateNodeTangent(RoadNode node)
     {
         if (node.NeighborIds.Count == 0) return Vector3.forward;
@@ -341,22 +323,6 @@ public class WorldModel : MonoBehaviour
             avgDir += (_graph[nbId].WorldPos - node.WorldPos).normalized;
         }
         return (avgDir / node.NeighborIds.Count).normalized;
-    }
-
-    private void SmoothNodeHeights()
-    {
-        for (int iteration = 0; iteration < 2; iteration++)
-        {
-            foreach (var node in _graph.Values)
-            {
-                if (node.NeighborIds.Count == 0) continue;
-                float neighborAvgY = 0;
-                foreach (var nid in node.NeighborIds) neighborAvgY += _graph[nid].WorldPos.y;
-                neighborAvgY /= node.NeighborIds.Count;
-
-                node.WorldPos.y = Mathf.Lerp(node.WorldPos.y, neighborAvgY, 0.8f);
-            }
-        }
     }
 
     private Bounds CalculateWorldBounds()
@@ -397,7 +363,7 @@ public class WorldModel : MonoBehaviour
     public void SetIntersectionState(int id, IntersectionState s) 
     { 
         if (_graph.ContainsKey(id)) _graph[id].State = s; 
-        PhaseStates[id] = s; // 兼容：phaseId == nodeId 时同步
+        PhaseStates[id] = s;
     }
 
     public void SetPhaseState(int phaseId, IntersectionState s)
@@ -444,6 +410,20 @@ public class WorldModel : MonoBehaviour
 
     public int FindNearestLane(Vector3 worldPos)
     {
+        if (_laneSpatialIndex != null && _laneSamples.Count > 0)
+        {
+            int bestIdx = _laneSpatialIndex.QueryNearest(worldPos);
+            if (bestIdx >= 0 && bestIdx < _laneSamples.Count)
+            {
+                return _laneSamples[bestIdx].LaneId;
+            }
+        }
+
+        return FindNearestLaneBruteForce(worldPos);
+    }
+
+    public int FindNearestLaneBruteForce(Vector3 worldPos)
+    {
         int bestLaneId = -1;
         float bestDist = 900f;
         Vector2 posXZ = new Vector2(worldPos.x, worldPos.z);
@@ -481,4 +461,49 @@ public class WorldModel : MonoBehaviour
 
         return bestLaneId;
     }
+
+    public void RebuildLaneSpatialIndex()
+    {
+        _laneSamples.Clear();
+
+        foreach (var kvp in GlobalLanes)
+        {
+            Lane lane = kvp.Value;
+            if (lane.CenterSpline == null || lane.CenterSpline.TotalLength <= 0) continue;
+
+            for (float dist = 0; dist <= lane.CenterSpline.TotalLength; dist += 5f)
+            {
+                float t = Mathf.Clamp01(dist / lane.CenterSpline.TotalLength);
+                Vector3 pt = lane.CenterSpline.GetPoint(t);
+                _laneSamples.Add(new LaneKDEntry
+                {
+                    Point = pt,
+                    LaneId = lane.LaneId
+                });
+            }
+        }
+
+        if (_laneSamples.Count > 0)
+        {
+            var fakeNodes = new List<RoadNode>(_laneSamples.Count);
+            for (int i = 0; i < _laneSamples.Count; i++)
+            {
+                fakeNodes.Add(new RoadNode
+                {
+                    Id = i,
+                    WorldPos = _laneSamples[i].Point
+                });
+            }
+
+            _laneSpatialIndex = new KDTree(fakeNodes);
+        }
+
+        Debug.Log($"[WorldModel] Lane KD-Tree built: {_laneSamples.Count} samples");
+    }
+}
+
+public class LaneKDEntry
+{
+    public Vector3 Point;
+    public int LaneId;
 }

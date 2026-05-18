@@ -2,11 +2,6 @@ using UnityEngine;
 using UnityEngine.UI;
 using System.Text;
 
-/// <summary>
-/// V4.1 上帝视角观测台 (a5 视觉与数据观测官)
-/// 核心准则：零物理射线，纯语义数据驱动
-/// 功能：节点总数统计、NPC活跃监控、模式状态实时观测、城乡一键切换、高程场健康度监控、一键数据录制
-/// </summary>
 public class DebugPanel : MonoBehaviour
 {
     [Header("=== UI 文本组件 ===")]
@@ -45,7 +40,7 @@ public class DebugPanel : MonoBehaviour
         // 初始化城乡模式切换按钮事件
         if (toggleCountrysideButton != null)
         {
-            toggleCountrysideButton.onClick.AddListener(OnToggleCountrysideClicked);
+            toggleCountrysideButton.onClick.AddListener(ToggleMode);
         }
         
         // 初始更新UI
@@ -115,7 +110,7 @@ public class DebugPanel : MonoBehaviour
     }
 
     /// <summary>
-    /// 更新鼠标悬停位置的语义信息 (零物理射线 + V4.1 状态监控)
+    /// Update semantic info at mouse hover position (zero physics ray, semantic data driven)
     /// </summary>
     void UpdateMouseHoverInfo()
     {
@@ -124,7 +119,6 @@ public class DebugPanel : MonoBehaviour
         StringBuilder sb = new StringBuilder();
         sb.AppendLine("=== 🖱️ 鼠标悬停语义 ===");
 
-        // 【V4.1 核心新增】生成模式与种子状态探测
         if (roadGen != null)
         {
             sb.AppendLine($"当前模式: {(roadGen.isCountryside ? "🏞️ 乡村起伏" : "🏙️ 城市纯平")}");
@@ -166,9 +160,9 @@ public class DebugPanel : MonoBehaviour
             sb.AppendLine("未检测到有效路网节点");
         }
 
-        // 【V4.1 核心新增】统一高程观测
-        float unifiedY = WorldModel.Instance.GetUnifiedHeight(mouseXZ.x, mouseXZ.y);
-        sb.AppendLine($"地表绝对高程: {unifiedY:F2} m");
+        // 统一高程观测
+        float terrainHeight = WorldModel.Instance.GetUnifiedHeight(mouseXZ.x, mouseXZ.y);
+        sb.AppendLine($"地表绝对高程: {terrainHeight:F2} m");
 
         mouseHoverInfoText.text = sb.ToString();
     }
@@ -214,10 +208,7 @@ public class DebugPanel : MonoBehaviour
         cameraGroundInfoText.text = sb.ToString();
     }
 
-    /// <summary>
-    /// 【V4.1 新增】一键切换城乡生成模式
-    /// </summary>
-    void OnToggleCountrysideClicked()
+    public void ToggleMode()
     {
         if (roadGen == null)
         {

@@ -73,7 +73,7 @@ public class TrafficLightManager : MonoBehaviour
     {
         public int nodeId;
         public int directionIndex;
-        public int phaseId; // 【V2.3】世界坐标方位ID，与WorldModel.StopLine.AssociatedPhaseId绝对对齐
+        public int phaseId;
         public Vector3 position;
         public GameObject gameObject;
         public TrafficLightController controller;
@@ -225,7 +225,6 @@ public class TrafficLightManager : MonoBehaviour
         controller.yellowDuration = yellowDuration;
         controller.greenDuration = greenDuration;
 
-        // 【V2.3 真相位核心】基于世界坐标方位，绝对锁定 NS/EW
         Vector3 approachDir = (node.position - neighborPos);
         approachDir.y = 0;
         bool isNS = Mathf.Abs(approachDir.z) > Mathf.Abs(approachDir.x);

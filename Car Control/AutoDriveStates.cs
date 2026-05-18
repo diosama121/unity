@@ -6,12 +6,14 @@ public partial class SimpleAutoDrive : MonoBehaviour
     {
         if (obstacleDetected && avoidCooldown <= 0f)
         {
+            AppendThought("Obstacle detected < " + safeDistance.ToString("F1") + "m -> Switch to Avoiding");
             currentState = DriveState.Avoiding;
             return;
         }
 
         if (currentIntersectionState == IntersectionState.RedLight || currentIntersectionState == IntersectionState.YellowLight)
         {
+            AppendThought("Traffic light " + currentIntersectionState + " -> Stopping");
             int stopNodeId = (nearestIntersectionNodeId >= 0) ? nearestIntersectionNodeId : currentDestinationNodeId;
             if (stopNodeId >= 0 && WorldModel.Instance != null)
             {
@@ -93,6 +95,8 @@ public partial class SimpleAutoDrive : MonoBehaviour
         {
             carController.SetAutoControl(0f, 0f);
             carController.SetAutoBrake(brakeMaxDecel);
+            AppendThought("Hard brake! Dist=" + distToStop.ToString("F2") + "m Speed=" + speed.ToString("F1") + "m/s");
+            TriggerTORIfNeeded(distToStop, speed);
             return;
         }
 
@@ -135,11 +139,18 @@ public partial class SimpleAutoDrive : MonoBehaviour
             currentT = Mathf.Clamp01(currentT);
         }
 
+        float activeLookAhead = lookAheadT;
+        if (dynamicLookAhead)
+        {
+            float speedFraction = Mathf.Clamp01(actualSpeed / targetSpeed);
+            activeLookAhead = Mathf.Lerp(lookAheadMin, lookAheadMax, speedFraction);
+        }
+
         Vector3 posOnSpline = currentSpline.GetPoint(currentT);
         Vector3 lateralTarget = posOnSpline;
         bool hasLaneAnchor = false;
 
-        float targetLookAheadT = Mathf.Min(currentT + lookAheadT, 1f);
+        float targetLookAheadT = Mathf.Min(currentT + activeLookAhead, 1f);
         Vector3 lookAheadPos = currentSpline.GetPoint(targetLookAheadT);
 
         if (WorldModel.Instance != null)
@@ -179,7 +190,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
                         Vector3 lanePoint = lane.CenterSpline.GetPoint(bestLaneT);
                         lateralTarget.x = lanePoint.x;
                         lateralTarget.z = lanePoint.z;
-                        float laneLookT = Mathf.Clamp01(bestLaneT + (lookAheadT * 2f));
+                        float laneLookT = Mathf.Clamp01(bestLaneT + (activeLookAhead * 2f));
                         Vector3 laneLook = lane.CenterSpline.GetPoint(laneLookT);
                         lookAheadPos.x = laneLook.x;
                         lookAheadPos.z = laneLook.z;
@@ -196,8 +207,9 @@ public partial class SimpleAutoDrive : MonoBehaviour
             Vector3 tangent = CarControlUtility.SafeNormalize(tangentRaw, transform.forward);
             Vector3 rightVector = Vector3.Cross(Vector3.up, tangent).normalized;
 
-            lateralTarget = posOnSpline + rightVector * rightLaneOffset;
-            lookAheadPos = lookAheadPos + rightVector * rightLaneOffset;
+            float offset = isYielding ? yieldRightOffset : rightLaneOffset;
+            lateralTarget = posOnSpline + rightVector * offset;
+            lookAheadPos = lookAheadPos + rightVector * offset;
         }
 
         lookAheadPos.y = transform.position.y;

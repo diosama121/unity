@@ -7,6 +7,8 @@ using UnityEngine.UI;
 /// </summary>
 public static class UIPanelBuilder
 {
+    public static Font SharedFont { get; set; }
+
     public static GameObject CreateTitle(GameObject parent, string text)
     {
         GameObject go = new GameObject("Title");
@@ -16,6 +18,9 @@ public static class UIPanelBuilder
         txt.text = text;
         txt.font = GetDefaultFont();
         txt.fontSize = 18;
+        txt.resizeTextForBestFit = true;
+        txt.resizeTextMinSize = 10;
+        txt.resizeTextMaxSize = 18;
         txt.fontStyle = FontStyle.Bold;
         txt.color = new Color(0.3f, 0.8f, 1f);
         txt.alignment = TextAnchor.MiddleCenter;
@@ -31,6 +36,9 @@ public static class UIPanelBuilder
         txt.text = text;
         txt.font = GetDefaultFont();
         txt.fontSize = 13;
+        txt.resizeTextForBestFit = true;
+        txt.resizeTextMinSize = 8;
+        txt.resizeTextMaxSize = 13;
         txt.fontStyle = FontStyle.Bold;
         txt.color = new Color(0.6f, 0.6f, 0.7f);
         txt.alignment = TextAnchor.MiddleLeft;
@@ -57,6 +65,9 @@ public static class UIPanelBuilder
         labelTxt.text = label;
         labelTxt.font = GetDefaultFont();
         labelTxt.fontSize = 13;
+        labelTxt.resizeTextForBestFit = true;
+        labelTxt.resizeTextMinSize = 8;
+        labelTxt.resizeTextMaxSize = 13;
         labelTxt.color = Color.white;
         labelTxt.alignment = TextAnchor.MiddleLeft;
         labelGO.AddComponent<LayoutElement>().minWidth = 90;
@@ -103,6 +114,9 @@ public static class UIPanelBuilder
         valTxt.text = defaultValue.ToString(format);
         valTxt.font = GetDefaultFont();
         valTxt.fontSize = 13;
+        valTxt.resizeTextForBestFit = true;
+        valTxt.resizeTextMinSize = 7;
+        valTxt.resizeTextMaxSize = 13;
         valTxt.color = new Color(0.3f, 0.8f, 1f);
         valTxt.alignment = TextAnchor.MiddleRight;
         valGO.AddComponent<LayoutElement>().minWidth = 36;
@@ -130,6 +144,9 @@ public static class UIPanelBuilder
         labelTxt.text = placeholder;
         labelTxt.font = GetDefaultFont();
         labelTxt.fontSize = 13;
+        labelTxt.resizeTextForBestFit = true;
+        labelTxt.resizeTextMinSize = 8;
+        labelTxt.resizeTextMaxSize = 13;
         labelTxt.color = Color.white;
         labelTxt.alignment = TextAnchor.MiddleLeft;
         labelGO.AddComponent<LayoutElement>().minWidth = 50;
@@ -147,6 +164,9 @@ public static class UIPanelBuilder
         inputText.text = defaultValue;
         inputText.font = GetDefaultFont();
         inputText.fontSize = 13;
+        inputText.resizeTextForBestFit = true;
+        inputText.resizeTextMinSize = 8;
+        inputText.resizeTextMaxSize = 13;
         inputText.color = Color.black;
         inputText.alignment = TextAnchor.MiddleLeft;
         inputText.supportRichText = false;
@@ -162,6 +182,9 @@ public static class UIPanelBuilder
         placeholderTxt.text = placeholder;
         placeholderTxt.font = GetDefaultFont();
         placeholderTxt.fontSize = 13;
+        placeholderTxt.resizeTextForBestFit = true;
+        placeholderTxt.resizeTextMinSize = 8;
+        placeholderTxt.resizeTextMaxSize = 13;
         placeholderTxt.fontStyle = FontStyle.Italic;
         placeholderTxt.color = new Color(0.5f, 0.5f, 0.5f);
         placeholderTxt.alignment = TextAnchor.MiddleLeft;
@@ -197,6 +220,9 @@ public static class UIPanelBuilder
         labelTxt.text = label;
         labelTxt.font = GetDefaultFont();
         labelTxt.fontSize = 13;
+        labelTxt.resizeTextForBestFit = true;
+        labelTxt.resizeTextMinSize = 8;
+        labelTxt.resizeTextMaxSize = 13;
         labelTxt.color = Color.white;
         labelTxt.alignment = TextAnchor.MiddleLeft;
         labelGO.AddComponent<LayoutElement>().minWidth = 75;
@@ -207,6 +233,9 @@ public static class UIPanelBuilder
         keyTxt.text = defaultKey;
         keyTxt.font = GetDefaultFont();
         keyTxt.fontSize = 13;
+        keyTxt.resizeTextForBestFit = true;
+        keyTxt.resizeTextMinSize = 7;
+        keyTxt.resizeTextMaxSize = 13;
         keyTxt.fontStyle = FontStyle.Bold;
         keyTxt.color = new Color(1f, 0.85f, 0.2f);
         keyTxt.alignment = TextAnchor.MiddleCenter;
@@ -228,6 +257,9 @@ public static class UIPanelBuilder
         btnTxt.text = "Rebind";
         btnTxt.font = GetDefaultFont();
         btnTxt.fontSize = 12;
+        btnTxt.resizeTextForBestFit = true;
+        btnTxt.resizeTextMinSize = 7;
+        btnTxt.resizeTextMaxSize = 12;
         btnTxt.color = Color.white;
         btnTxt.alignment = TextAnchor.MiddleCenter;
         RectTransform btnTxtRT = btnTextGO.GetComponent<RectTransform>();
@@ -255,6 +287,9 @@ public static class UIPanelBuilder
         btnTxt.text = label;
         btnTxt.font = GetDefaultFont();
         btnTxt.fontSize = 14;
+        btnTxt.resizeTextForBestFit = true;
+        btnTxt.resizeTextMinSize = 8;
+        btnTxt.resizeTextMaxSize = 14;
         btnTxt.fontStyle = FontStyle.Bold;
         btnTxt.color = Color.white;
         btnTxt.alignment = TextAnchor.MiddleCenter;
@@ -290,6 +325,9 @@ public static class UIPanelBuilder
         labelTxt.text = label;
         labelTxt.font = GetDefaultFont();
         labelTxt.fontSize = 11;
+        labelTxt.resizeTextForBestFit = true;
+        labelTxt.resizeTextMinSize = 7;
+        labelTxt.resizeTextMaxSize = 11;
         labelTxt.color = new Color(0.65f, 0.65f, 0.7f);
         labelTxt.alignment = TextAnchor.MiddleLeft;
         labelGO.AddComponent<LayoutElement>().minWidth = 80;
@@ -301,6 +339,9 @@ public static class UIPanelBuilder
         valTxt.text = defaultVal;
         valTxt.font = GetDefaultFont();
         valTxt.fontSize = 11;
+        valTxt.resizeTextForBestFit = true;
+        valTxt.resizeTextMinSize = 7;
+        valTxt.resizeTextMaxSize = 11;
         valTxt.fontStyle = FontStyle.Bold;
         valTxt.color = new Color(0.4f, 0.9f, 0.6f);
         valTxt.alignment = TextAnchor.MiddleRight;
@@ -321,6 +362,9 @@ public static class UIPanelBuilder
         txt.text = text;
         txt.font = GetDefaultFont();
         txt.fontSize = 10;
+        txt.resizeTextForBestFit = true;
+        txt.resizeTextMinSize = 7;
+        txt.resizeTextMaxSize = 10;
         txt.fontStyle = FontStyle.Italic;
         txt.color = new Color(0.45f, 0.45f, 0.5f);
         txt.alignment = TextAnchor.MiddleLeft;
@@ -339,6 +383,9 @@ public static class UIPanelBuilder
         txt.text = text;
         txt.font = GetDefaultFont();
         txt.fontSize = 11;
+        txt.resizeTextForBestFit = true;
+        txt.resizeTextMinSize = 7;
+        txt.resizeTextMaxSize = 11;
         txt.fontStyle = FontStyle.Normal;
         txt.color = new Color(0.5f, 0.5f, 0.55f);
         txt.alignment = TextAnchor.MiddleCenter;
@@ -347,6 +394,6 @@ public static class UIPanelBuilder
 
     public static Font GetDefaultFont()
     {
-        return Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        return SharedFont != null ? SharedFont : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
     }
 }

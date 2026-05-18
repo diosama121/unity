@@ -2,9 +2,7 @@ using UnityEngine;
 using System.Collections.Generic;
 
 /// <summary>
-/// 影视级多视角相机控制器 (毕设 Demo 录制专用)
-/// 功能：自由漫游、目标跟随、多车无缝切换
-/// V2.0 升级：使用 WorldModel 地形高度，无物理射线/碰撞
+/// Multi-view camera controller with terrain height via WorldModel
 /// </summary>
 public class CameraController : MonoBehaviour
 {
@@ -131,15 +129,13 @@ public class CameraController : MonoBehaviour
         Vector3 moveDir = (transform.forward * v) + (transform.right * h) + (Vector3.up * u);
         transform.position += moveDir * currentSpeed * Time.deltaTime;
 
-        // V2.0 语义地形高度约束
         Vector2 currentXZ = new Vector2(transform.position.x, transform.position.z);
         float terrainHeight = WorldModel.Instance.GetTerrainHeight(currentXZ);
         transform.position = new Vector3(transform.position.x, terrainHeight + 1f, transform.position.z);
     }
 
     /// <summary>
-    /// 平滑跟随逻辑 (车载稳定器视角)
-    /// V2.0：使用 WorldModel 地形高度
+    /// Smooth follow with terrain height via WorldModel
     /// </summary>
     void HandleFollow()
     {
@@ -153,7 +149,6 @@ public class CameraController : MonoBehaviour
         // 2. 计算目标位置 (车辆位置 + 旋转后的偏移量)
         Vector3 targetPosition = target.position + currentRotation * followOffset;
 
-        // V2.0 语义地形高度适配
         Vector2 targetXZ = new Vector2(targetPosition.x, targetPosition.z);
         float terrainHeight = WorldModel.Instance.GetTerrainHeight(targetXZ);
         targetPosition.y = terrainHeight + followOffset.y;

@@ -3,10 +3,6 @@ using System.IO;
 using System.Text;
 using System.Collections.Generic;
 
-/// <summary>
-/// V2.0 数据管理：基于 a2 PathPlanner 真实字段重构
-/// 真实字段：Id / WorldPos / NeighborIds
-/// </summary>
 public class SystemDataManager : MonoBehaviour
 {
     [Header("=== 车辆遥测数据 (生成CSV供Excel画图) ===")]
@@ -86,9 +82,6 @@ public class SystemDataManager : MonoBehaviour
         Rigidbody rb = targetCar.GetComponent<Rigidbody>();
         float speedKmh = rb != null ? rb.velocity.magnitude * 3.6f : 0f;
 
-        // ======================
-        // V2.0 语义数据（基于 a2 真实字段）
-        // ======================
         Vector3 carPos = targetCar.transform.position;
         RoadNode currentNode = WorldModel.Instance.GetNearestNode(carPos);
         

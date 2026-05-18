@@ -19,6 +19,10 @@ public class ROS2BridgeV2 : MonoBehaviour
     public SimpleAutoDrive autoDrive;
     [Header("发送频率")]
     public float sendRate = 10f;
+    [Header("激光雷达模拟")]
+    public int lidarRayCount = 32;
+    public float lidarMaxRange = 30f;
+    private float[] cachedLidarPoints = new float[0];
     [Header("安全与降级策略")]
     public float rosTimeout = 2.0f; // 超过 2 秒没收到数据，认为 ROS2 掉线
     private float lastReceiveTime = 0f; // 记录最后一次收到数据的时间
@@ -42,8 +46,7 @@ public class ROS2BridgeV2 : MonoBehaviour
 
     void Start()
     {
-        // 【核心修复】防止生成的 NPC 车辆也去抢占 ROS2 端口
-        // 假设你的 NPC 名字里带有 "NPC" 或者 "Clone"
+        // prevent spawned NPC duplicates from grabbing the ROS2 port
         if (gameObject.name.Contains("NPC") || gameObject.name.Contains("Clone"))
         {
             Debug.Log($"🚫 {gameObject.name} 是 NPC 车辆，已关闭其 ROS2 连接节点。");
@@ -99,7 +102,7 @@ public class ROS2BridgeV2 : MonoBehaviour
         string cleanIP = rosIP.Trim();
         Debug.Log($"🔌 正在后台尝试连接到 ROS2: {cleanIP}:{rosPort}...");
 
-        // 【核心修复 1】将连接过程打包丢进后台线程！从此再也不会卡死 Unity！
+        // push connection attempt to background thread to avoid blocking Unity
         connectThread = new Thread(() =>
         {
             try
@@ -152,7 +155,7 @@ public class ROS2BridgeV2 : MonoBehaviour
             lastReceiveTime = Time.time;
         }
 
-        // 🌟 【核心修复】：降级机制必须在 `return` 之前执行！
+        // degradation must run before return; if timeout or disconnected, yield control to local AI
         // 触发条件：超过两秒没数据，或者 TCP 连接被强制断开（比如 Ctrl+C）
         bool isTimeout = (Time.time - lastReceiveTime > rosTimeout);
         
@@ -204,6 +207,8 @@ public class ROS2BridgeV2 : MonoBehaviour
 
         try
         {
+            GenerateLidarScan();
+
             var state = new VehicleState
             {
                 position = new float[] { transform.position.x, transform.position.y, transform.position.z },
@@ -211,11 +216,11 @@ public class ROS2BridgeV2 : MonoBehaviour
                 velocity = carController != null ? carController.GetSpeed() : 0f,
                 steering_angle = carController != null ? carController.currentSteeringAngle : 0f,
                 auto_drive_state = (autoDrive != null && autoDrive.enabled) ? autoDrive.GetCurrentState().ToString() : "ROS2_Controlled",
-                // 【Phase 4】语义感知数据
                 lane_id = autoDrive != null ? autoDrive.currentLaneId : -1,
                 stopline_distance = -1f,
                 phase_state = "Uncontrolled",
-                timestamp = Time.time
+                timestamp = Time.time,
+                lidar_points = cachedLidarPoints
             };
 
             // 【Phase 4】填充 stopline_distance 和 phase_state
@@ -361,6 +366,32 @@ public class ROS2BridgeV2 : MonoBehaviour
         if (client != null) client.Close();
     }
 
+    void GenerateLidarScan()
+    {
+        float[] points = new float[lidarRayCount * 3];
+        float angleStep = 360f / lidarRayCount;
+
+        for (int i = 0; i < lidarRayCount; i++)
+        {
+            float angle = i * angleStep * Mathf.Deg2Rad;
+            Vector3 dir = new Vector3(Mathf.Sin(angle), 0, Mathf.Cos(angle));
+            Vector3 worldDir = transform.TransformDirection(dir);
+
+            float dist = lidarMaxRange;
+            if (Physics.Raycast(transform.position + Vector3.up * 0.4f, worldDir, out RaycastHit hit, lidarMaxRange))
+            {
+                dist = hit.distance;
+            }
+
+            Vector3 relPoint = transform.InverseTransformPoint(transform.position + worldDir * dist);
+            points[i * 3] = relPoint.x;
+            points[i * 3 + 1] = relPoint.y;
+            points[i * 3 + 2] = relPoint.z;
+        }
+
+        cachedLidarPoints = points;
+    }
+
     [System.Serializable]
     public class VehicleState
     {
@@ -374,6 +405,7 @@ public class ROS2BridgeV2 : MonoBehaviour
         public int lane_id;
         public float stopline_distance;
         public string phase_state;
+        public float[] lidar_points;
     }
 
     [System.Serializable]
