@@ -80,11 +80,7 @@ public class WorldModel : MonoBehaviour
             trafficLightManager.PlaceTrafficLights();
         if (trafficManager != null)
         {
-            foreach (var npc in trafficManager.ActiveNPCs)
-            {
-                if (npc != null) Destroy(npc.gameObject);
-            }
-            trafficManager.ResetSpawnState();
+            trafficManager.ClearAllNPCs();
         }
         if (trafficManager != null) trafficManager.SpawnNPCs();
 

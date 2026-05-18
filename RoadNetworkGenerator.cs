@@ -84,7 +84,13 @@ public class RoadNetworkGenerator : MonoBehaviour
 
     public void Generate()
     {
-        // 1. 初始化与清空脏数据
+        float maxSafeOffset = cellSize * 0.4f;
+        if (randomOffset > maxSafeOffset)
+        {
+            Debug.LogWarning($"[RoadNetworkGenerator] randomOffset ({randomOffset}) > safe limit ({maxSafeOffset:F1}), clamping to avoid node overlap.");
+            randomOffset = maxSafeOffset;
+        }
+
         nodes.Clear();
         edges.Clear();
         roadSegments.Clear();

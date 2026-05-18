@@ -11,8 +11,8 @@ public partial class SimpleAutoDrive : MonoBehaviour
     public float safeDistance = 8f;
     public float lookAheadT = 0.02f;
     public bool dynamicLookAhead = true;
-    public float lookAheadMin = 0.015f;
-    public float lookAheadMax = 0.06f;
+    public float lookAheadMin = 3f;
+    public float lookAheadMax = 12f;
 
     public float rightLaneOffset = 3.5f;
 

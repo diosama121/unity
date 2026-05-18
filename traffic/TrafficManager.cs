@@ -5,7 +5,7 @@ public class TrafficManager : MonoBehaviour
 {
     [Header("NPC 配置")]
     public GameObject[] vehiclePrefabs;
-    public GameObject emergencyVehiclePrefab;
+    public GameObject[] emergencyVehiclePrefabs;
     public int npcCount = 3;
 
     [Header("自适应调度")]
@@ -22,6 +22,16 @@ public class TrafficManager : MonoBehaviour
     private bool _hasSpawned = false;
 
     public void ResetSpawnState() { _hasSpawned = false; }
+
+    public void ClearAllNPCs()
+    {
+        foreach (var npc in npcVehicles)
+        {
+            if (npc != null) Destroy(npc.gameObject);
+        }
+        npcVehicles.Clear();
+        _hasSpawned = false;
+    }
 
     void Update()
     {
@@ -130,7 +140,11 @@ public class TrafficManager : MonoBehaviour
 
     public GameObject SpawnEmergencyVehicle(Vector3 nearPosition)
     {
-        GameObject prefab = emergencyVehiclePrefab;
+        GameObject prefab = null;
+        if (emergencyVehiclePrefabs != null && emergencyVehiclePrefabs.Length > 0)
+        {
+            prefab = emergencyVehiclePrefabs[Random.Range(0, emergencyVehiclePrefabs.Length)];
+        }
         if (prefab == null && vehiclePrefabs != null && vehiclePrefabs.Length > 0)
         {
             prefab = vehiclePrefabs[0];

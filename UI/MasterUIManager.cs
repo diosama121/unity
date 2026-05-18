@@ -301,7 +301,7 @@ public class MasterUIManager : MonoBehaviour
             for (int i = thoughtLines.Count - 1; i >= 0; i--)
                 full += thoughtLines[i] + "\n";
             thoughtStreamText.text = full;
-        }
+        } 
     }
 
     #region Toggle & Shortcuts
@@ -328,7 +328,7 @@ public class MasterUIManager : MonoBehaviour
 
     void BuildCompleteUI()
     {
-        Font font = customFont != null ? customFont : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        Font font = customFont != null ? customFont : Resources.Load<Font>("simhei");
         UIPanelBuilder.SharedFont = font;
 
         Canvas canvas = FindObjectOfType<Canvas>();
@@ -390,8 +390,8 @@ public class MasterUIManager : MonoBehaviour
         topBar = new GameObject("TopBar");
         topBar.transform.SetParent(root.transform, false);
         RectTransform tbRT = topBar.AddComponent<RectTransform>();
-        tbRT.anchorMin = new Vector2(0, 0);
-tbRT.anchorMax = new Vector2(1, 1);
+        tbRT.anchorMin = new Vector2(0, 0.93f);
+        tbRT.anchorMax = new Vector2(1, 1);
         tbRT.offsetMin = Vector2.zero;
         tbRT.offsetMax = Vector2.zero;
 
@@ -1010,81 +1010,10 @@ tbRT.anchorMax = new Vector2(1, 1);
         modeDropdown.itemText = ddItemLabel;
 
         dropdowns["CityMode"] = modeDropdown;
+        SetupDropdownTemplate(modeDropdown, font);
 
         citySubPanel = BuildFoldoutSection(module, "城市设置", font);
         countrysideSubPanel = BuildFoldoutSection(module, "乡村设置", font);
-
-        GameObject weatherRow = new GameObject("WeatherDropdownRow");
-        weatherRow.transform.SetParent(module.transform, false);
-        weatherRow.AddComponent<LayoutElement>().minHeight = 36;
-        HorizontalLayoutGroup whlg = weatherRow.AddComponent<HorizontalLayoutGroup>();
-        whlg.padding = new RectOffset(4, 4, 8, 4);
-        whlg.spacing = 8;
-        whlg.childAlignment = TextAnchor.MiddleLeft;
-        whlg.childControlWidth = true;
-        whlg.childControlHeight = true;
-        whlg.childForceExpandWidth = false;
-        whlg.childForceExpandHeight = true;
-
-        GameObject weatherLabel = new GameObject("Label");
-        weatherLabel.transform.SetParent(weatherRow.transform, false);
-        Text weatherLabelTxt = weatherLabel.AddComponent<Text>();
-        weatherLabelTxt.text = "天气:";
-        weatherLabelTxt.font = font;
-        weatherLabelTxt.fontSize = 13;
-        weatherLabelTxt.resizeTextForBestFit = true;
-        weatherLabelTxt.resizeTextMinSize = 8;
-        weatherLabelTxt.resizeTextMaxSize = 13;
-        weatherLabelTxt.color = Color.white;
-        weatherLabelTxt.alignment = TextAnchor.MiddleLeft;
-        weatherLabel.AddComponent<LayoutElement>().minWidth = 70;
-
-        GameObject weatherDropdownGO = new GameObject("Dropdown");
-        weatherDropdownGO.transform.SetParent(weatherRow.transform, false);
-        weatherDropdownGO.AddComponent<LayoutElement>().flexibleWidth = 1;
-        Dropdown weatherDropdown = weatherDropdownGO.AddComponent<Dropdown>();
-        weatherDropdown.options = new List<Dropdown.OptionData>
-        {
-            new Dropdown.OptionData("Sunny"),
-            new Dropdown.OptionData("Rain/Snow")
-        };
-        weatherDropdown.value = 0;
-
-        Image wdImg = weatherDropdownGO.AddComponent<Image>();
-        wdImg.color = new Color(0.2f, 0.22f, 0.3f);
-
-        GameObject wdLabelGO = new GameObject("Label");
-        wdLabelGO.transform.SetParent(weatherDropdownGO.transform, false);
-        Text wdLabel = wdLabelGO.AddComponent<Text>();
-        wdLabel.text = "Sunny";
-        wdLabel.font = font;
-        wdLabel.fontSize = 13;
-        wdLabel.resizeTextForBestFit = true;
-        wdLabel.resizeTextMinSize = 8;
-        wdLabel.resizeTextMaxSize = 13;
-        wdLabel.color = Color.white;
-        wdLabel.alignment = TextAnchor.MiddleLeft;
-        RectTransform wdLRT = wdLabelGO.GetComponent<RectTransform>();
-        wdLRT.anchorMin = Vector2.zero;
-        wdLRT.anchorMax = Vector2.one;
-        wdLRT.offsetMin = new Vector2(8, 0);
-        wdLRT.offsetMax = new Vector2(-20, 0);
-        weatherDropdown.captionText = wdLabel;
-
-        GameObject wdItemLabelGO = new GameObject("ItemLabel");
-        wdItemLabelGO.transform.SetParent(weatherDropdownGO.transform, false);
-        Text wdItemLabel = wdItemLabelGO.AddComponent<Text>();
-        wdItemLabel.text = "";
-        wdItemLabel.font = font;
-        wdItemLabel.fontSize = 13;
-        wdItemLabel.resizeTextForBestFit = true;
-        wdItemLabel.resizeTextMinSize = 8;
-        wdItemLabel.resizeTextMaxSize = 13;
-        wdItemLabel.color = Color.black;
-        wdItemLabel.alignment = TextAnchor.MiddleLeft;
-        weatherDropdown.itemText = wdItemLabel;
-
-        dropdowns["Weather"] = weatherDropdown;
 
         RegisterToggle(CreateToggleRow(citySubPanel, "GenCityToggle", "Generate Buildings", true, font), "GenCity");
         RegisterInputField(UIPanelBuilder.CreateInputRow(citySubPanel, "BldHeightInput", "Bld Height", "10", InputField.ContentType.DecimalNumber), "BldHeight");
@@ -1203,6 +1132,7 @@ tbRT.anchorMax = new Vector2(1, 1);
         npcModeDropdown.itemText = nmItemLabel;
 
         dropdowns["NPCMode"] = npcModeDropdown;
+        SetupDropdownTemplate(npcModeDropdown, font);
 
         RegisterInputField(UIPanelBuilder.CreateInputRow(foldContent, "NPCMaxSpeedInput", "NPC Max Speed", "30", InputField.ContentType.DecimalNumber), "NPCMaxSpeed");
         RegisterInputField(UIPanelBuilder.CreateInputRow(foldContent, "NPCSafeDistInput", "Safe Distance", "8", InputField.ContentType.DecimalNumber), "NPCSafeDist");
@@ -1367,6 +1297,7 @@ tbRT.anchorMax = new Vector2(1, 1);
         camModeDropdown.itemText = cmItemLabel;
 
         dropdowns["CamMode"] = camModeDropdown;
+        SetupDropdownTemplate(camModeDropdown, font);
 
         GameObject timeModeRow = new GameObject("TimeModeDropdownRow");
         timeModeRow.transform.SetParent(foldContent.transform, false);
@@ -1441,6 +1372,7 @@ tbRT.anchorMax = new Vector2(1, 1);
         timeModeDropdown.itemText = tmItemLabel;
 
         dropdowns["TimeMode"] = timeModeDropdown;
+        SetupDropdownTemplate(timeModeDropdown, font);
 
         timeModeDropdown.onValueChanged.AddListener((idx) =>
         {
@@ -1504,6 +1436,104 @@ tbRT.anchorMax = new Vector2(1, 1);
     #endregion
 
     #region UI Helper Methods
+
+    void SetupDropdownTemplate(Dropdown dropdown, Font font)
+    {
+        GameObject templateGO = new GameObject("Template");
+        templateGO.transform.SetParent(dropdown.transform, false);
+        RectTransform templateRT = templateGO.AddComponent<RectTransform>();
+        templateRT.anchorMin = new Vector2(0, 0);
+        templateRT.anchorMax = new Vector2(1, 0);
+        templateRT.pivot = new Vector2(0.5f, 1);
+        templateRT.sizeDelta = new Vector2(0, 150);
+
+        Image templateImg = templateGO.AddComponent<Image>();
+        templateImg.color = new Color(0.12f, 0.13f, 0.18f);
+
+        ScrollRect scrollRect = templateGO.AddComponent<ScrollRect>();
+        scrollRect.horizontal = false;
+        scrollRect.vertical = true;
+
+        GameObject viewportGO = new GameObject("Viewport");
+        viewportGO.transform.SetParent(templateGO.transform, false);
+        RectTransform vpRT = viewportGO.AddComponent<RectTransform>();
+        vpRT.anchorMin = Vector2.zero;
+        vpRT.anchorMax = Vector2.one;
+        vpRT.sizeDelta = Vector2.zero;
+        Image vpImg = viewportGO.AddComponent<Image>();
+        vpImg.color = new Color(0.12f, 0.13f, 0.18f);
+        Mask vpMask = viewportGO.AddComponent<Mask>();
+        vpMask.showMaskGraphic = false;
+
+        GameObject contentGO = new GameObject("Content");
+        contentGO.transform.SetParent(viewportGO.transform, false);
+        RectTransform cntRT = contentGO.AddComponent<RectTransform>();
+        cntRT.anchorMin = new Vector2(0, 1);
+        cntRT.anchorMax = Vector2.one;
+        cntRT.pivot = new Vector2(0.5f, 1);
+        cntRT.sizeDelta = new Vector2(0, 0);
+
+        VerticalLayoutGroup cntVLG = contentGO.AddComponent<VerticalLayoutGroup>();
+        cntVLG.childControlWidth = true;
+        cntVLG.childControlHeight = true;
+        cntVLG.childForceExpandWidth = true;
+        cntVLG.childForceExpandHeight = false;
+
+        ContentSizeFitter cntCSF = contentGO.AddComponent<ContentSizeFitter>();
+        cntCSF.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+        GameObject itemGO = new GameObject("Item");
+        itemGO.transform.SetParent(contentGO.transform, false);
+        RectTransform itemRT = itemGO.AddComponent<RectTransform>();
+        itemRT.anchorMin = new Vector2(0, 0.5f);
+        itemRT.anchorMax = new Vector2(1, 0.5f);
+        itemRT.sizeDelta = new Vector2(0, 24);
+
+        Toggle itemToggle = itemGO.AddComponent<Toggle>();
+
+        GameObject itemBgGO = new GameObject("Item Background");
+        itemBgGO.transform.SetParent(itemGO.transform, false);
+        Image itemBgImg = itemBgGO.AddComponent<Image>();
+        itemBgImg.color = new Color(0.25f, 0.27f, 0.35f);
+        RectTransform ibRT = itemBgGO.GetComponent<RectTransform>();
+        ibRT.anchorMin = Vector2.zero;
+        ibRT.anchorMax = Vector2.one;
+        ibRT.sizeDelta = Vector2.zero;
+        itemToggle.targetGraphic = itemBgImg;
+
+        GameObject checkmarkGO = new GameObject("Item Checkmark");
+        checkmarkGO.transform.SetParent(itemGO.transform, false);
+        Image cmImg = checkmarkGO.AddComponent<Image>();
+        cmImg.color = new Color(0.3f, 0.8f, 1f);
+        RectTransform cmRT = checkmarkGO.GetComponent<RectTransform>();
+        cmRT.anchorMin = new Vector2(0, 0);
+        cmRT.anchorMax = new Vector2(0, 1);
+        cmRT.sizeDelta = new Vector2(20, 0);
+        itemToggle.graphic = cmImg;
+
+        GameObject itemLabelGO = new GameObject("Item Label");
+        itemLabelGO.transform.SetParent(itemGO.transform, false);
+        Text itemLabel = itemLabelGO.AddComponent<Text>();
+        itemLabel.font = font;
+        itemLabel.fontSize = 13;
+        itemLabel.resizeTextForBestFit = true;
+        itemLabel.resizeTextMinSize = 8;
+        itemLabel.resizeTextMaxSize = 13;
+        itemLabel.color = Color.white;
+        itemLabel.alignment = TextAnchor.MiddleLeft;
+        RectTransform ilRT = itemLabelGO.GetComponent<RectTransform>();
+        ilRT.anchorMin = Vector2.zero;
+        ilRT.anchorMax = Vector2.one;
+        ilRT.offsetMin = new Vector2(26, 0);
+        ilRT.offsetMax = new Vector2(-8, 0);
+
+        dropdown.itemText = itemLabel;
+
+        scrollRect.viewport = vpRT;
+        scrollRect.content = cntRT;
+
+        dropdown.template = templateRT;
+    }
 
     GameObject CreateToggleRow(GameObject parent, string name, string label, bool defaultValue, Font font)
     {
@@ -1621,7 +1651,6 @@ tbRT.anchorMax = new Vector2(1, 1);
         SyncDropdownValue("CityMode", (roadGen != null && roadGen.isCountryside) ? 1 : 0);
         SyncDropdownValue("CamMode", cameraController != null ? (cameraController.currentMode == CameraController.CameraMode.Follow ? 0 : 1) : 0);
         SyncDropdownValue("TimeMode", Mathf.Approximately(Time.timeScale, 0f) ? 0 : (Mathf.Approximately(Time.timeScale, 2f) ? 2 : (Mathf.Approximately(Time.timeScale, 5f) ? 3 : 1)));
-        SyncDropdownValue("Weather", 0);
 
         if (citySubPanel != null) citySubPanel.SetActive((roadGen == null) || !roadGen.isCountryside);
         if (countrysideSubPanel != null) countrysideSubPanel.SetActive(roadGen != null && roadGen.isCountryside);
@@ -1733,15 +1762,6 @@ tbRT.anchorMax = new Vector2(1, 1);
             });
         }
 
-        if (dropdowns.TryGetValue("Weather", out Dropdown weatherDD))
-        {
-            weatherDD.onValueChanged.AddListener((idx) =>
-            {
-                WeatherManager weather = FindObjectOfType<WeatherManager>();
-                if (weather != null) weather.SetWeather(idx == 0 ? WeatherType.Sunny : WeatherType.RainSnow);
-            });
-        }
-
         if (dropdowns.TryGetValue("NPCMode", out Dropdown npcDD))
         {
             npcDD.onValueChanged.AddListener((idx) =>
@@ -1848,7 +1868,6 @@ tbRT.anchorMax = new Vector2(1, 1);
         SyncDropdownValue("CityMode", 0);
         SyncDropdownValue("CamMode", 0);
         SyncDropdownValue("TimeMode", 1);
-        SyncDropdownValue("Weather", 0);
 
         if (citySubPanel != null) citySubPanel.SetActive(true);
         if (countrysideSubPanel != null) countrysideSubPanel.SetActive(false);

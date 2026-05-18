@@ -368,25 +368,40 @@ public class ROS2BridgeV2 : MonoBehaviour
 
     void GenerateLidarScan()
     {
-        float[] points = new float[lidarRayCount * 3];
-        float angleStep = 360f / lidarRayCount;
+        int rayCount = 16;
+        float[] points = new float[rayCount * 3];
 
-        for (int i = 0; i < lidarRayCount; i++)
+        float[] angles = { -60f, -50f, -40f, -30f, -20f, -10f, 0f, 10f, 20f, 30f, 40f, 50f, 60f };
+        int writeIdx = 0;
+
+        for (int layer = 0; layer < 2; layer++)
         {
-            float angle = i * angleStep * Mathf.Deg2Rad;
-            Vector3 dir = new Vector3(Mathf.Sin(angle), 0, Mathf.Cos(angle));
-            Vector3 worldDir = transform.TransformDirection(dir);
+            float pitch = layer == 0 ? 0f : -8f;
+            float pitchRad = pitch * Mathf.Deg2Rad;
 
-            float dist = lidarMaxRange;
-            if (Physics.Raycast(transform.position + Vector3.up * 0.4f, worldDir, out RaycastHit hit, lidarMaxRange))
+            for (int a = 0; a < angles.Length && writeIdx < rayCount * 3; a++)
             {
-                dist = hit.distance;
-            }
+                float yawRad = angles[a] * Mathf.Deg2Rad;
+                Vector3 dir = new Vector3(
+                    Mathf.Sin(yawRad) * Mathf.Cos(pitchRad),
+                    Mathf.Sin(pitchRad),
+                    Mathf.Cos(yawRad) * Mathf.Cos(pitchRad)
+                );
+                Vector3 worldDir = transform.TransformDirection(dir);
 
-            Vector3 relPoint = transform.InverseTransformPoint(transform.position + worldDir * dist);
-            points[i * 3] = relPoint.x;
-            points[i * 3 + 1] = relPoint.y;
-            points[i * 3 + 2] = relPoint.z;
+                float dist = lidarMaxRange;
+                Vector3 origin = transform.position + Vector3.up * 0.4f;
+                if (Physics.Raycast(origin, worldDir, out RaycastHit hit, lidarMaxRange))
+                {
+                    dist = hit.distance;
+                }
+
+                Vector3 relPoint = transform.InverseTransformPoint(origin + worldDir * dist);
+                points[writeIdx] = relPoint.x;
+                points[writeIdx + 1] = relPoint.y;
+                points[writeIdx + 2] = relPoint.z;
+                writeIdx += 3;
+            }
         }
 
         cachedLidarPoints = points;

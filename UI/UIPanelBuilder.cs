@@ -394,6 +394,6 @@ public static class UIPanelBuilder
 
     public static Font GetDefaultFont()
     {
-        return SharedFont != null ? SharedFont : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        return SharedFont != null ? SharedFont : Resources.Load<Font>("simhei");
     }
 }

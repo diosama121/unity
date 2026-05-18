@@ -8,6 +8,7 @@ public class AIStateBubble : MonoBehaviour
 
     private Canvas bubbleCanvas;
     private Text stateText;
+    private Transform canvasTrans;
     private SimpleAutoDrive autoDrive;
     private SimpleCarController carController;
 
@@ -23,6 +24,8 @@ public class AIStateBubble : MonoBehaviour
         canvasGO.transform.SetParent(transform, false);
         canvasGO.transform.localPosition = worldOffset;
         canvasGO.transform.localRotation = Quaternion.identity;
+        canvasTrans = canvasGO.transform;
+        canvasTrans.localScale = new Vector3(0.01f, 0.01f, 0.01f);
 
         bubbleCanvas = canvasGO.AddComponent<Canvas>();
         bubbleCanvas.renderMode = RenderMode.WorldSpace;
@@ -32,7 +35,7 @@ public class AIStateBubble : MonoBehaviour
         cs.dynamicPixelsPerUnit = 10;
 
         RectTransform rt = canvasGO.GetComponent<RectTransform>();
-        rt.sizeDelta = new Vector2(200, 60);
+        rt.sizeDelta = new Vector2(240, 90);
 
         GameObject bgGO = new GameObject("Bg");
         bgGO.transform.SetParent(canvasGO.transform, false);
@@ -46,7 +49,7 @@ public class AIStateBubble : MonoBehaviour
         GameObject txtGO = new GameObject("Text");
         txtGO.transform.SetParent(canvasGO.transform, false);
         stateText = txtGO.AddComponent<Text>();
-        stateText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        stateText.font = Resources.Load<Font>("simhei");
         stateText.fontSize = (int)fontSize;
         stateText.fontStyle = FontStyle.Bold;
         stateText.color = Color.green;
@@ -61,7 +64,14 @@ public class AIStateBubble : MonoBehaviour
 
     void LateUpdate()
     {
+        if (canvasTrans != null && Camera.main != null)
+        {
+            canvasTrans.forward = Camera.main.transform.forward;
+        }
+
         if (stateText == null) return;
+
+        System.Text.StringBuilder sb = new System.Text.StringBuilder();
 
         string state = "IDLE";
         Color col = Color.gray;
@@ -99,12 +109,20 @@ public class AIStateBubble : MonoBehaviour
             }
         }
 
-        stateText.text = state;
+        sb.AppendLine(state);
         stateText.color = col;
 
-        if (carController != null && carController.currentSpeed > 5f)
+        if (autoDrive != null && autoDrive.currentLaneId >= 0)
         {
-            stateText.text += "\n" + carController.currentSpeed.ToString("F0") + " m/s";
+            sb.AppendLine("<color=#88CCFF>Lane:" + autoDrive.currentLaneId + "</color>");
         }
+
+        if (carController != null)
+        {
+            float kmh = carController.currentSpeed * 3.6f;
+            sb.AppendLine(kmh.ToString("F0") + " km/h");
+        }
+
+        stateText.text = sb.ToString().TrimEnd();
     }
 }

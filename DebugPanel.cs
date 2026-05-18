@@ -22,14 +22,20 @@ public class DebugPanel : MonoBehaviour
     // 内部引用缓存
     private SystemDataManager dataManager;
     private RoadNetworkGenerator roadGen;
+    private TrafficManager trafficManager;
+    private ROS2BridgeV2 ros2Bridge;
     private float updateTimer;
     private bool isPanelVisible = true;
+    private float fpsAccumulator = 0f;
+    private int fpsFrameCount = 0;
+    private float currentFPS = 60f;
 
     void Start()
     {
-        // 预缓存核心管理器，避免每帧查找损耗
         dataManager = FindObjectOfType<SystemDataManager>();
         roadGen = FindObjectOfType<RoadNetworkGenerator>();
+        trafficManager = FindObjectOfType<TrafficManager>();
+        ros2Bridge = FindObjectOfType<ROS2BridgeV2>();
         
         // 初始化录制按钮事件
         if (toggleRecordButton != null)
@@ -51,7 +57,15 @@ public class DebugPanel : MonoBehaviour
 
     void Update()
     {
-        // 面板开关控制
+        fpsAccumulator += Time.unscaledDeltaTime;
+        fpsFrameCount++;
+        if (fpsAccumulator >= 0.25f)
+        {
+            currentFPS = fpsFrameCount / fpsAccumulator;
+            fpsAccumulator = 0f;
+            fpsFrameCount = 0;
+        }
+
         if (Input.GetKeyDown(togglePanelKey))
         {
             isPanelVisible = !isPanelVisible;
@@ -60,7 +74,6 @@ public class DebugPanel : MonoBehaviour
 
         if (!isPanelVisible) return;
 
-        // 定时刷新数据
         updateTimer += Time.deltaTime;
         if (updateTimer >= updateInterval)
         {
@@ -79,32 +92,31 @@ public class DebugPanel : MonoBehaviour
         if (worldStatsText == null) return;
 
         StringBuilder sb = new StringBuilder();
-        sb.AppendLine("=== 🌍 世界语义统计 ===");
-        
-        // 1. 获取节点总数 (通过 WorldModel 接口)
+        sb.AppendLine("<color=#FFDD44>=== 系统监控面板 ===</color>");
+        sb.AppendLine($"<color=#00FFAA>FPS: {currentFPS:F0}</color>");
+
         int nodeCount = 0;
         if (WorldModel.Instance != null)
         {
-            var nodeCountProp = WorldModel.Instance.GetType().GetProperty("NodeCount");
-            if (nodeCountProp != null)
-            {
-                nodeCount = (int)nodeCountProp.GetValue(WorldModel.Instance);
-            }
-            else
-            {
-                var nodesProp = WorldModel.Instance.GetType().GetProperty("Nodes");
-                if (nodesProp != null)
-                {
-                    var nodesList = nodesProp.GetValue(WorldModel.Instance) as System.Collections.IList;
-                    nodeCount = nodesList?.Count ?? 0;
-                }
-            }
+            nodeCount = WorldModel.Instance.NodeCount;
         }
-        sb.AppendLine($"路网节点总数: {nodeCount}");
+        sb.AppendLine($"路网节点: {nodeCount}");
 
-        // 2. 获取活跃 NPC 数量
-        int npcCount = FindObjectsOfType<SimpleAutoDrive>().Length;
-        sb.AppendLine($"活跃 NPC 数量: {npcCount}");
+        int npcCount = (trafficManager != null && trafficManager.ActiveNPCs != null)
+            ? trafficManager.ActiveNPCs.Count : 0;
+        sb.AppendLine($"<color=#00FFAA>活跃车辆: {npcCount}</color>");
+
+        if (ros2Bridge != null)
+        {
+            string status = ros2Bridge.isConnected ? "已连接" : "未连接";
+            string freq = ros2Bridge.sendRate.ToString("F0") + "Hz";
+            string pcd = ros2Bridge.isConnected ? "Active" : "Idle";
+            sb.AppendLine($"<color=#33EE55>ROS2: {status} | {freq} | PCD:{pcd}</color>");
+        }
+        else
+        {
+            sb.AppendLine("<color=#888888>ROS2 Bridge 未加载</color>");
+        }
 
         worldStatsText.text = sb.ToString();
     }

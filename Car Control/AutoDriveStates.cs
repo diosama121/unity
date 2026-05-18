@@ -140,10 +140,11 @@ public partial class SimpleAutoDrive : MonoBehaviour
         }
 
         float activeLookAhead = lookAheadT;
-        if (dynamicLookAhead)
+        if (dynamicLookAhead && currentSpline.TotalLength > 0.1f)
         {
             float speedFraction = Mathf.Clamp01(actualSpeed / targetSpeed);
-            activeLookAhead = Mathf.Lerp(lookAheadMin, lookAheadMax, speedFraction);
+            float activeLookDist = Mathf.Lerp(lookAheadMin, lookAheadMax, speedFraction);
+            activeLookAhead = activeLookDist / currentSpline.TotalLength;
         }
 
         Vector3 posOnSpline = currentSpline.GetPoint(currentT);
