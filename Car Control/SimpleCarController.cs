@@ -294,7 +294,7 @@ public partial class SimpleCarController : MonoBehaviour
         }
         else transform.position = originalPosition + Vector3.up * 1f;
 
-        if (rb != null) { rb.velocity = Vector3.zero; rb.angularVelocity = Vector3.zero; }
+        if (rb != null && !rb.isKinematic) { rb.velocity = Vector3.zero; rb.angularVelocity = Vector3.zero; }
         targetSpeed = 0f; currentSpeed = 0f;
     }
 }

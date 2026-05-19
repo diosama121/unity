@@ -110,10 +110,6 @@ if (Input.GetKeyDown(KeyCode.R) && carController != null)
                 carController.ResetPosition();
                 if (thoughtStreamText != null) AppendThoughtLine("已将主车位置重置到安全路面");
             }
-        if (Input.GetKeyDown(KeyCode.R))
-        {
-            if (carController != null) carController.ResetPosition();
-        }
 
         if (RuntimeInputManager.Instance == null) return;
 
@@ -511,7 +507,7 @@ if (Input.GetKeyDown(KeyCode.R) && carController != null)
         artLabel.fontSizeMin = 7;
         artLabel.fontSizeMax = 12;
         artLabel.color = Color.white;
-        artLabel.alignment = TextAlignmentOptions.MiddleLeft;
+        artLabel.alignment = TextAlignmentOptions.MidlineLeft;
         artLabelGO.AddComponent<LayoutElement>().minWidth = 80;
 
         GameObject artToggleGO = new GameObject("Toggle");
@@ -2097,6 +2093,12 @@ if (Input.GetKeyDown(KeyCode.R) && carController != null)
         {
             TextMeshProUGUI tl = timeLabel.GetComponent<TextMeshProUGUI>();
             if (tl != null) tl.text = "Time " + ts;
+        }
+
+        if (cameraController != null && dropdowns.TryGetValue("CamMode", out Dropdown camDD) && camDD != null)
+        {
+            int camIdx = cameraController.currentMode == CameraController.CameraMode.Follow ? 0 : 1;
+            if (camDD.value != camIdx) camDD.value = camIdx;
         }
 
         Transform rosDot = topBar != null ? topBar.transform.Find("RosStatusDot") : null;

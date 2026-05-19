@@ -28,6 +28,7 @@ private float radarTimer = 0f;
 private bool cachedPedestrianDetected = false;
 private bool cachedAmbulanceDetected = false;
 private bool cachedTrafficAhead = false;
+ private bool isReversingEscape = false;
     [Header("速度基准")]
     public float cruiseSpeedBase = 15f;
     public float minCruiseSpeed = 2f;
