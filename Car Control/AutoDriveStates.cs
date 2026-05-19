@@ -223,6 +223,21 @@ public partial class SimpleAutoDrive : MonoBehaviour
         if (Mathf.Abs(angle) > 25f) speedFactor = 0.4f;
 
         if (currentIntersectionState == IntersectionState.RedLight) speedFactor = 0f;
+        if (isYielding) speedFactor = 0f;
+
+        if (currentSpline != null && currentT < 0.99f)
+        {
+            Vector3 splinePos = currentSpline.GetPoint(currentT);
+            Vector3 lateralVec = transform.position - splinePos;
+            lateralVec.y = 0;
+            if (lateralVec.magnitude > 12f)
+            {
+                speedFactor = 0f;
+                localTarget = transform.InverseTransformPoint(splinePos);
+                angle = Mathf.Atan2(localTarget.x, localTarget.z) * Mathf.Rad2Deg;
+                steering = Mathf.Clamp(angle / 45f, -1f, 1f);
+            }
+        }
 
         float throttle = CarControlUtility.SafeDivide(targetSpeed * speedFactor, carController.maxSpeed);
         carController.SetAutoControl(throttle, steering);

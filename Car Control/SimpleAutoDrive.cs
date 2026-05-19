@@ -138,6 +138,29 @@ public partial class SimpleAutoDrive : MonoBehaviour
                     isYielding = true;
                 }
             }
+
+            if (!isYielding && Physics.SphereCast(transform.position + Vector3.up * 0.5f, 3f, transform.forward, out hit, safeDistance * 3f))
+            {
+                var frontCar = hit.collider.GetComponentInParent<SimpleCarController>();
+                if (frontCar != null && frontCar != this.carController && frontCar.vehiclePriority == VehiclePriority.Emergency)
+                {
+                    isYielding = true;
+                }
+            }
+
+            if (!isYielding)
+            {
+                Collider[] nearbyColliders = Physics.OverlapSphere(transform.position, safeDistance * 1.5f);
+                foreach (var col in nearbyColliders)
+                {
+                    var nearbyCar = col.GetComponentInParent<SimpleCarController>();
+                    if (nearbyCar != null && nearbyCar != this.carController && nearbyCar.vehiclePriority == VehiclePriority.Emergency)
+                    {
+                        isYielding = true;
+                        break;
+                    }
+                }
+            }
         }
 
         if (WorldModel.Instance != null)

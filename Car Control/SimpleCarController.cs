@@ -139,17 +139,47 @@ public partial class SimpleCarController : MonoBehaviour
 
         if (WorldModel.Instance != null)
         {
-            float baseGroundY = WorldModel.Instance.GetUnifiedHeight(transform.position.x, transform.position.z);
-            float frontY = WorldModel.Instance.GetUnifiedHeight(transform.position.x + transform.forward.x, transform.position.z + transform.forward.z);
-
             Vector3 pos = transform.position;
+            float baseGroundY;
+            if (Physics.Raycast(pos + Vector3.up * 5f, Vector3.down, out RaycastHit hit, 20f))
+            {
+                baseGroundY = hit.point.y;
+            }
+            else
+            {
+                baseGroundY = WorldModel.Instance.GetUnifiedHeight(pos.x, pos.z);
+            }
+
+            Vector3 frontCheck = pos + transform.forward * 2f;
+            float frontY;
+            if (Physics.Raycast(frontCheck + Vector3.up * 5f, Vector3.down, out RaycastHit frontHit, 20f))
+            {
+                frontY = frontHit.point.y;
+            }
+            else
+            {
+                frontY = WorldModel.Instance.GetUnifiedHeight(frontCheck.x, frontCheck.z);
+            }
+
             pos.y = baseGroundY + npcSuspensionHeight;
             transform.position = pos;
 
             Vector3 slopeForward = new Vector3(transform.forward.x, frontY - baseGroundY, transform.forward.z).normalized;
 
-            float leftY = WorldModel.Instance.GetUnifiedHeight(transform.position.x - transform.right.x, transform.position.z - transform.right.z);
-            float rightY = WorldModel.Instance.GetUnifiedHeight(transform.position.x + transform.right.x, transform.position.z + transform.right.z);
+            Vector3 leftCheck = pos - transform.right * 1.5f;
+            float leftY;
+            if (Physics.Raycast(leftCheck + Vector3.up * 5f, Vector3.down, out RaycastHit leftHit, 20f))
+                leftY = leftHit.point.y;
+            else
+                leftY = WorldModel.Instance.GetUnifiedHeight(leftCheck.x, leftCheck.z);
+
+            Vector3 rightCheck = pos + transform.right * 1.5f;
+            float rightY;
+            if (Physics.Raycast(rightCheck + Vector3.up * 5f, Vector3.down, out RaycastHit rightHit, 20f))
+                rightY = rightHit.point.y;
+            else
+                rightY = WorldModel.Instance.GetUnifiedHeight(rightCheck.x, rightCheck.z);
+
             Vector3 slopeRight = new Vector3(transform.right.x, rightY - leftY, transform.right.z).normalized;
 
             Vector3 trueUp = Vector3.Cross(slopeForward, slopeRight).normalized;
