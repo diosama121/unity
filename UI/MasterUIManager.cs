@@ -28,6 +28,7 @@ public class MasterUIManager : MonoBehaviour
     private TrafficManager trafficManager;
     private RoadNetworkGenerator roadGen;
     private ProceduralRoadBuilder roadBuilder;
+    private PedestrianSpawner pedestrianSpawner;
 
     private bool isRebinding = false;
 
@@ -133,7 +134,7 @@ public class MasterUIManager : MonoBehaviour
             }
         }
 
-        hudRefreshTimer += Time.deltaTime;
+        hudRefreshTimer += Time.unscaledDeltaTime;
         if (hudRefreshTimer >= hudRefreshInterval)
         {
             RefreshHUD();
@@ -170,6 +171,7 @@ public class MasterUIManager : MonoBehaviour
         trafficManager = FindObjectOfType<TrafficManager>();
         roadGen = FindObjectOfType<RoadNetworkGenerator>();
         roadBuilder = FindObjectOfType<ProceduralRoadBuilder>();
+        pedestrianSpawner = FindObjectOfType<PedestrianSpawner>();
 
         if (carController == null) Debug.LogWarning("[MasterUIManager] SimpleCarController not found");
         if (autoDrive == null) Debug.LogWarning("[MasterUIManager] SimpleAutoDrive not found");
@@ -322,7 +324,11 @@ public class MasterUIManager : MonoBehaviour
         isMinimalMode = !isMinimalMode;
         if (rightPanel != null) rightPanel.SetActive(!isMinimalMode);
         DebugPanel dbg = FindObjectOfType<DebugPanel>();
-        if (dbg != null) dbg.gameObject.SetActive(!isMinimalMode);
+        if (dbg != null)
+        {
+            Canvas dbgCanvas = dbg.GetComponent<Canvas>();
+            if (dbgCanvas != null) dbgCanvas.enabled = !isMinimalMode;
+        }
     }
 
     void ToggleAutoDrive()
@@ -1032,8 +1038,6 @@ public class MasterUIManager : MonoBehaviour
         RegisterInputField(UIPanelBuilder.CreateInputRow(citySubPanel, "SidewalkInput", "Sidewalk Width", "2", InputField.ContentType.DecimalNumber), "Sidewalk");
         RegisterToggle(CreateToggleRow(citySubPanel, "TrafficLightToggle", "Traffic Lights", true, font), "TrafficLights");
         RegisterInputField(UIPanelBuilder.CreateInputRow(citySubPanel, "TLChanceInput", "TL Frequency", "0.1", InputField.ContentType.DecimalNumber), "TLChance");
-        RegisterToggle(CreateToggleRow(citySubPanel, "PedestrianToggle", "Pedestrians", false, font), "Pedestrians");
-        RegisterInputField(UIPanelBuilder.CreateInputRow(citySubPanel, "PedSpawnInput", "Ped Spawn Rate", "1.0", InputField.ContentType.DecimalNumber), "PedSpawn");
 
         RegisterToggle(CreateToggleRow(countrysideSubPanel, "CountryUniformToggle", "Uniform Materials", true, font), "CountryUniform");
 
@@ -1046,6 +1050,36 @@ public class MasterUIManager : MonoBehaviour
 
         citySubPanel.SetActive(true);
         countrysideSubPanel.SetActive(false);
+
+        GameObject pedFoldContent = BuildFoldoutSection(module, "行人设置", font);
+        RegisterToggle(CreateToggleRow(pedFoldContent, "PedestrianToggle", "Enable Pedestrians", false, font), "Pedestrians");
+        RegisterInputField(UIPanelBuilder.CreateInputRow(pedFoldContent, "PedSpawnInput", "Spawn Rate", "0.2", InputField.ContentType.DecimalNumber), "PedSpawn");
+        RegisterInputField(UIPanelBuilder.CreateInputRow(pedFoldContent, "PedMaxInput", "Max Pedestrians", "15", InputField.ContentType.IntegerNumber), "PedMax");
+        RegisterInputField(UIPanelBuilder.CreateInputRow(pedFoldContent, "PedSpeedInput", "Walk Speed", "1.2", InputField.ContentType.DecimalNumber), "PedSpeed");
+
+        GameObject bakeBtn = UIPanelBuilder.CreateButton(module, "BakeTerrainBtn", "烘焙地形");
+        Button bakeButton = bakeBtn.GetComponent<Button>();
+        if (bakeButton != null)
+        {
+            Image bakeImg = bakeBtn.GetComponent<Image>();
+            if (bakeImg != null) bakeImg.color = new Color(0.3f, 0.5f, 0.3f);
+            bakeButton.onClick.AddListener(() =>
+            {
+                if (roadBuilder != null) roadBuilder.BakeTerrainMask();
+            });
+        }
+
+        GameObject buildingBtn = UIPanelBuilder.CreateButton(module, "GenerateBuildingsBtn", "生成建筑");
+        Button buildingButton = buildingBtn.GetComponent<Button>();
+        if (buildingButton != null)
+        {
+            Image bldImg = buildingBtn.GetComponent<Image>();
+            if (bldImg != null) bldImg.color = new Color(0.25f, 0.4f, 0.7f);
+            buildingButton.onClick.AddListener(() =>
+            {
+                if (WorldModel.Instance != null) WorldModel.Instance.GenerateBuildings();
+            });
+        }
 
         module.SetActive(false);
         return module;
@@ -1679,6 +1713,11 @@ public class MasterUIManager : MonoBehaviour
         SyncInputFieldValue("TLChance", trafficLightManager != null ? trafficLightManager.placementChance.ToString("F2") : "0.1");
         SyncToggleValue("CountryUniform", roadBuilder != null ? roadBuilder.useCountrysideUniformMaterials : true);
 
+        SyncToggleValue("Pedestrians", pedestrianSpawner != null ? pedestrianSpawner.enabled : false);
+        SyncInputFieldValue("PedSpawn", pedestrianSpawner != null ? pedestrianSpawner.spawnChance.ToString("F2") : "0.20");
+        SyncInputFieldValue("PedMax", pedestrianSpawner != null ? pedestrianSpawner.maxPedestrians.ToString() : "15");
+        SyncInputFieldValue("PedSpeed", pedestrianSpawner != null ? pedestrianSpawner.walkSpeed.ToString("F1") : "1.2");
+
         SyncInputFieldValue("NPCCount", trafficManager != null ? trafficManager.npcCount.ToString() : "3");
         SyncInputFieldValue("NPCMaxSpeed", carController != null ? carController.maxSpeed.ToString("F0") : "30");
         SyncInputFieldValue("NPCSafeDist", autoDrive != null ? autoDrive.safeDistance.ToString("F0") : "8");
@@ -1797,22 +1836,69 @@ public class MasterUIManager : MonoBehaviour
         {
             isMinimalMode = on;
             if (rightPanel != null) rightPanel.SetActive(!on);
+            DebugPanel dbg = FindObjectOfType<DebugPanel>();
+            if (dbg != null)
+            {
+                Canvas dbgCanvas = dbg.GetComponent<Canvas>();
+                if (dbgCanvas != null) dbgCanvas.enabled = !on;
+            }
+        });
+
+        BindToggleEvent("Pedestrians", (on) =>
+        {
+            if (pedestrianSpawner == null) pedestrianSpawner = FindObjectOfType<PedestrianSpawner>();
+            if (pedestrianSpawner != null) pedestrianSpawner.enabled = on;
+        });
+
+        BindInputFieldEvent("PedSpawn", (v) =>
+        {
+            if (pedestrianSpawner == null) pedestrianSpawner = FindObjectOfType<PedestrianSpawner>();
+            if (pedestrianSpawner != null && float.TryParse(v, out float f)) pedestrianSpawner.spawnChance = f;
+        });
+        BindInputFieldEvent("PedMax", (v) =>
+        {
+            if (pedestrianSpawner == null) pedestrianSpawner = FindObjectOfType<PedestrianSpawner>();
+            if (pedestrianSpawner != null && int.TryParse(v, out int i)) pedestrianSpawner.maxPedestrians = i;
+        });
+        BindInputFieldEvent("PedSpeed", (v) =>
+        {
+            if (pedestrianSpawner == null) pedestrianSpawner = FindObjectOfType<PedestrianSpawner>();
+            if (pedestrianSpawner != null && float.TryParse(v, out float f)) pedestrianSpawner.walkSpeed = f;
         });
 
         if (dropdowns.TryGetValue("CityMode", out Dropdown cityDD))
         {
             cityDD.onValueChanged.AddListener((idx) =>
             {
-                if (roadGen != null)
+                try
                 {
-                    roadGen.isCountryside = (idx == 1);
-                    if (trafficManager != null) trafficManager.ClearAllNPCs();
-                    roadGen.Generate();
-                    if (roadBuilder != null) roadBuilder.BuildRoads();
-                    Debug.Log($"[MasterUIManager] 切换为{(idx == 1 ? "乡村" : "城市")}模式，已重建路网");
+                    if (roadGen == null) roadGen = FindObjectOfType<RoadNetworkGenerator>();
+                    if (roadBuilder == null) roadBuilder = FindObjectOfType<ProceduralRoadBuilder>();
+                    if (trafficManager == null) trafficManager = FindObjectOfType<TrafficManager>();
+
+                    if (roadGen != null)
+                    {
+                        trafficManager?.ClearAllNPCs();
+                        roadGen.isCountryside = (idx == 1);
+
+                        if (WorldModel.Instance != null)
+                        {
+                            WorldModel.Instance.TriggerWorldGeneration();
+                        }
+                        else
+                        {
+                            roadGen.Generate();
+                            if (roadBuilder != null) roadBuilder.BuildRoads();
+                            trafficManager?.SpawnNPCs();
+                        }
+                    }
+                    if (citySubPanel != null) citySubPanel.SetActive(idx == 0);
+                    if (countrysideSubPanel != null) countrysideSubPanel.SetActive(idx == 1);
                 }
-                if (citySubPanel != null) citySubPanel.SetActive(idx == 0);
-                if (countrysideSubPanel != null) countrysideSubPanel.SetActive(idx == 1);
+                catch (System.Exception ex)
+                {
+                    Debug.LogError($"[MasterUIManager] City mode switch failed: {ex.Message}");
+                }
             });
         }
 

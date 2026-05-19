@@ -47,15 +47,20 @@ public class ROS2BridgeV2 : MonoBehaviour
 
     void Start()
     {
-        // prevent spawned NPC duplicates from grabbing the ROS2 port
         if (gameObject.name.Contains("NPC") || gameObject.name.Contains("Clone"))
         {
-            Debug.Log($"{gameObject.name} 是 NPC 车辆，已关闭其 ROS2 连接节点。");
-            this.enabled = false; // 直接禁用本脚本
+            this.enabled = false;
             return;
         }
 
         FindComponents();
+
+        if (carController != null && carController.isNPC)
+        {
+            this.enabled = false;
+            return;
+        }
+
         ConnectToROS2();
     }
 
@@ -141,7 +146,9 @@ public class ROS2BridgeV2 : MonoBehaviour
         connectThread.Start();
     }
 
- void Update()
+ private float diagnosticTimer = 0f;
+    private float diagnosticInterval = 2f;
+    void Update()
     {
         // 1. 解析队列中的指令
         bool receivedThisFrame = false;
@@ -202,6 +209,13 @@ public class ROS2BridgeV2 : MonoBehaviour
                 float targetSteering = Mathf.Clamp(-rosAngularVelocity / 1.5f, -1f, 1f);
 
                 carController.SetAutoControl(targetThrottle, targetSteering);
+
+                diagnosticTimer += Time.deltaTime;
+                if (diagnosticTimer >= diagnosticInterval)
+                {
+                    Debug.Log($"[ROS2] linear={rosLinearVelocity:F3} angular={rosAngularVelocity:F3} | throttle={targetThrottle:F3} steer={targetSteering:F3} | autoMode={carController.autoMode} speed={carController.currentSpeed:F1}");
+                    diagnosticTimer = 0f;
+                }
             }
         }
         else
@@ -330,24 +344,29 @@ public class ROS2BridgeV2 : MonoBehaviour
     {
         try
         {
-            // 清除多余换行符，防止 JSON 解析器报错罢工
             jsonData = jsonData.Trim();
 
             ControlCommand cmd = JsonUtility.FromJson<ControlCommand>(jsonData);
-            if (cmd != null)
+            if (cmd != null && (Mathf.Abs(cmd.linear_velocity) > 0.001f || Mathf.Abs(cmd.angular_velocity) > 0.001f || cmd.enable_control))
             {
                 rosLinearVelocity = cmd.linear_velocity;
                 rosAngularVelocity = cmd.angular_velocity;
-
-                // 霸道逻辑：无视其他状态，只要 ROS2 发来了数据，无脑强行接管方向盘！
-                useRosControl = true;
+                useRosControl = cmd.enable_control || rosLinearVelocity != 0f || rosAngularVelocity != 0f;
             }
-            Debug.Log($"JSON解析结果: 提取到的速度 = {rosLinearVelocity}");
+            else
+            {
+                TwistCommand twist = JsonUtility.FromJson<TwistCommand>(jsonData);
+                if (twist != null && twist.linear != null && twist.angular != null)
+                {
+                    rosLinearVelocity = twist.linear.x;
+                    rosAngularVelocity = twist.angular.z;
+                    useRosControl = true;
+                }
+            }
         }
         catch (Exception e)
         {
-            // 如果解析失败，在控制台静默提示，绝不卡死
-            Debug.LogWarning($"JSON 解析异常: {e.Message} | 数据: {jsonData}");
+            Debug.LogWarning($"JSON parse error: {e.Message}");
         }
     }
     public void Reconnect()
@@ -463,5 +482,20 @@ public class ROS2BridgeV2 : MonoBehaviour
         public float linear_velocity;
         public float angular_velocity;
         public bool enable_control;
+    }
+
+    [System.Serializable]
+    public class TwistCommand
+    {
+        public TwistVector3 linear;
+        public TwistVector3 angular;
+    }
+
+    [System.Serializable]
+    public class TwistVector3
+    {
+        public float x;
+        public float y;
+        public float z;
     }
 }

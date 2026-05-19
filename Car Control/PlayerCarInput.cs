@@ -43,6 +43,10 @@ public partial class SimpleCarController : MonoBehaviour
 
         if (Input.GetMouseButtonDown(1) && !isNPC)
         {
+            if (UnityEngine.EventSystems.EventSystem.current != null &&
+                UnityEngine.EventSystems.EventSystem.current.IsPointerOverGameObject())
+                return;
+
             Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
             if (Physics.Raycast(ray, out RaycastHit hit, 1000f))
             {

@@ -28,6 +28,7 @@ public class WorldModel : MonoBehaviour
     public TrafficLightManager trafficLightManager;
     public TrafficManager trafficManager;
     public PedestrianSpawner pedestrianSpawner;
+    public EnvironmentMeshBuilder environmentBuilder;
 
     private Dictionary<int, RoadNode> _graph = new Dictionary<int, RoadNode>();
     private KDTree _spatialIndex;
@@ -85,17 +86,82 @@ public class WorldModel : MonoBehaviour
         if (pedestrianSpawner != null)
         {
             pedestrianSpawner.ClearAllPedestrians();
-            if (!roadGenerator.isCountryside)
-            {
-                pedestrianSpawner.enabled = true;
-            }
-            else
-            {
-                pedestrianSpawner.enabled = false;
-            }
+            pedestrianSpawner.enabled = true;
         }
 
         Debug.Log("[WorldModel] World generation complete.");
+    }
+
+    public void GenerateBuildings()
+    {
+        if (roadGenerator == null || roadGenerator.nodes == null || roadGenerator.nodes.Count == 0)
+        {
+            Debug.LogWarning("[WorldModel] 无路网节点，无法生成建筑。");
+            return;
+        }
+
+        GameObject existing = GameObject.Find("City_Buildings");
+        if (existing != null)
+        {
+            if (Application.isPlaying) Destroy(existing);
+            else DestroyImmediate(existing);
+        }
+
+        GameObject buildingRoot = new GameObject("City_Buildings");
+        buildingRoot.transform.SetParent(transform, false);
+
+        float buildingHeight = roadBuilder != null ? roadBuilder.buildingHeight : 10f;
+        float roadW = roadBuilder != null ? roadBuilder.roadWidth : 6f;
+        int builtCount = 0;
+
+        foreach (var node in roadGenerator.nodes)
+        {
+            if (Random.value > 0.4f) continue;
+
+            float angle = Random.Range(0f, Mathf.PI * 2f);
+            float dist = roadW * 1.5f + Random.Range(2f, roadW * 2.5f);
+            float offsetX = Mathf.Cos(angle) * dist;
+            float offsetZ = Mathf.Sin(angle) * dist;
+
+            Vector3 pos = node.position + new Vector3(offsetX, 0, offsetZ);
+            pos.y = GetUnifiedHeight(pos.x, pos.z);
+
+            float h = buildingHeight * Random.Range(0.4f, 2.5f);
+            float sx = Random.Range(3f, 9f);
+            float sz = Random.Range(3f, 9f);
+
+            GameObject cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            cube.name = "Building_" + builtCount;
+            cube.transform.SetParent(buildingRoot.transform, false);
+            cube.transform.position = new Vector3(pos.x, pos.y + h * 0.5f, pos.z);
+            cube.transform.localScale = new Vector3(sx, h, sz);
+            cube.layer = LayerMask.NameToLayer("Default");
+
+            float gray = Random.Range(0.5f, 0.9f);
+            Material mat = new Material(Shader.Find("Standard"));
+            mat.color = new Color(gray, gray * Random.Range(0.8f, 1f), gray * Random.Range(0.7f, 0.95f));
+            cube.GetComponent<MeshRenderer>().sharedMaterial = mat;
+            cube.GetComponent<MeshRenderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
+
+            Collider col = cube.GetComponent<Collider>();
+            if (col != null)
+            {
+                if (Application.isPlaying) Destroy(col);
+                else DestroyImmediate(col);
+            }
+
+            builtCount++;
+        }
+
+        Debug.Log($"[WorldModel] 生成了 {builtCount} 栋建筑。");
+    }
+
+    public void BakeTerrain()
+    {
+        if (roadBuilder != null)
+        {
+            roadBuilder.BakeTerrainMask();
+        }
     }
 
     private void IngestAndPrecomputeGraph(RoadNetworkGenerator source)

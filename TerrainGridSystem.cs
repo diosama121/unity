@@ -46,7 +46,7 @@ public class TerrainGridSystem : MonoBehaviour
 
     private void Awake() 
     {
-        if (cellSize > 2.0f) cellSize = 2.0f;
+        if (cellSize < 2.0f) cellSize = 2.0f;
         if (Instance != null) { Destroy(gameObject); return; }
         Instance = this;
     }

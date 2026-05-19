@@ -197,7 +197,8 @@ public class TrafficLightManager : MonoBehaviour
         Vector3 basePos = new Vector3(node.position.x, groundY, node.position.z) + Vector3.up * heightOffset;
         Vector3 rightDir = Vector3.Cross(Vector3.up, facingDir).normalized;
         
-        float safeOffset = offsetFromCenter + 1.5f;
+        float roadW = (roadBuilder != null && roadBuilder.roadWidth > 0f) ? roadBuilder.roadWidth : 6f;
+        float safeOffset = offsetFromCenter + roadW * 0.9f;
         Vector3 spawnPos = basePos + facingDir * safeOffset + rightDir * safeOffset;
         
         // 创建交通灯GameObject

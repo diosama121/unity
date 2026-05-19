@@ -69,21 +69,12 @@ public class PedestrianSpawner : MonoBehaviour
             return;
         }
 
-        isCityMode = !roadGen.isCountryside;
-        if (!isCityMode)
-        {
-            Debug.Log("[PedestrianSpawner] 当前为乡村模式，行人系统暂不激活，由WorldModel统一管控。");
-            return;
-        }
-
-        Debug.Log("[PedestrianSpawner] 行人系统已就绪（城市模式），最大" + maxPedestrians + "人。");
+        isCityMode = true;
+        Debug.Log("[PedestrianSpawner] 行人系统已就绪，最大" + maxPedestrians + "人。");
     }
 
     void Update()
     {
-        if (!isCityMode) return;
-
-        // 生成计时
         spawnTimer += Time.deltaTime;
         if (spawnTimer >= spawnInterval)
         {
@@ -91,7 +82,6 @@ public class PedestrianSpawner : MonoBehaviour
             TrySpawnPedestrian();
         }
 
-        // 更新所有行人漫游
         UpdatePedestrians();
     }
 
@@ -130,13 +120,18 @@ public class PedestrianSpawner : MonoBehaviour
             mr.material.color = pedColor;
         }
 
-        // 移除碰撞体（不需要物理交互）
         Collider col = pedObj.GetComponent<Collider>();
         if (col != null)
         {
-            if (Application.isPlaying) Destroy(col);
-            else DestroyImmediate(col);
+            col.isTrigger = false;
         }
+
+        Rigidbody rb = pedObj.GetComponent<Rigidbody>();
+        if (rb == null) rb = pedObj.AddComponent<Rigidbody>();
+        rb.isKinematic = true;
+        rb.useGravity = false;
+
+        pedObj.layer = LayerMask.NameToLayer("Default");
 
         // 创建行人数据
         Pedestrian ped = new Pedestrian

@@ -48,12 +48,17 @@ public class ProceduralRoadBuilder : MonoBehaviour
     public Material sidewalkMaterial;
     public float sidewalkHeight = 0.2f;
 
+    [Header("=== 性能选项 ===")]
+    public bool skipBaking = true;
+    public bool skipMeshCombine = false;
+
     [Header("=== 调试可视化 ===")]
     public bool showSplineGizmos = false;
 
     private RoadNetworkGenerator roadGen;
     public RoadNetworkGenerator RoadGen => roadGen;
     private GameObject meshRoot;
+    private List<Vector3[]> _cachedAllPolys;
 
     void Awake() => roadGen = GetComponent<RoadNetworkGenerator>();
 
@@ -165,19 +170,41 @@ public class ProceduralRoadBuilder : MonoBehaviour
             }
         }
 
+        _cachedAllPolys = allPolys;
+
         Mesh roadMesh = RoadMeshUtility.BuildRoadMesh(allPolys, allUVs);
         if (roadMesh == null) return;
 
         CreateRoadObject("Temp_Road_Mesh", roadMesh, BuildMaterialArray(roadMaterial), roadLayer, meshRoot.transform);
-        RoadMeshCombiner.CombineRoadMeshes(meshRoot.transform);
 
-        var terrainGrid = TerrainGridSystem.Instance;
-        if (terrainGrid != null)
+        if (!skipMeshCombine)
         {
-            if (roadGen != null && !roadGen.isCountryside)
-            {
-                terrainGrid.BakeRoadMask(allPolys);
-            }
+            RoadMeshCombiner.CombineRoadMeshes(meshRoot.transform);
+        }
+
+        if (!skipBaking)
+        {
+            BakeTerrainMask();
+        }
+    }
+
+    public void BakeTerrainMask()
+    {
+        var terrainGrid = TerrainGridSystem.Instance;
+        if (terrainGrid == null) return;
+        if (_cachedAllPolys != null && _cachedAllPolys.Count > 0)
+        {
+            terrainGrid.BakeRoadMask(_cachedAllPolys);
+            Debug.Log("[ProceduralRoadBuilder] 地形烘焙完成。");
+        }
+    }
+
+    public void CombineMeshesNow()
+    {
+        if (meshRoot != null)
+        {
+            RoadMeshCombiner.CombineRoadMeshes(meshRoot.transform);
+            Debug.Log("[ProceduralRoadBuilder] 网格合批完成。");
         }
     }
 

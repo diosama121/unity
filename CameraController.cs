@@ -168,9 +168,24 @@ public class CameraController : MonoBehaviour
     {
         allVehicles.Clear();
         SimpleCarController[] cars = FindObjectsOfType<SimpleCarController>();
+        Transform mainCar = null;
         foreach (var car in cars)
         {
-            allVehicles.Add(car.transform);
+            if (car.transform.position.y < -50f) continue;
+            if (!car.isNPC)
+            {
+                allVehicles.Insert(0, car.transform);
+                if (mainCar == null) mainCar = car.transform;
+            }
+            else
+            {
+                allVehicles.Add(car.transform);
+            }
+        }
+        if (mainCar != null && target == null)
+        {
+            target = mainCar;
+            currentTargetIndex = 0;
         }
     }
 }
