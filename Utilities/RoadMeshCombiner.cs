@@ -1,6 +1,10 @@
 using System.Collections.Generic;
 using UnityEngine;
 
+/// <summary>
+/// 道路网格静态合批工具类 (V4.1 终极版)
+/// 负责接管所有散碎路面，按材质分组聚合，突破 65535 顶点限制，并统一铺设物理碰撞体。
+/// </summary>
 public static class RoadMeshCombiner
 {
     public static void CombineRoadMeshes(Transform rootTransform)
@@ -31,6 +35,7 @@ public static class RoadMeshCombiner
                 Material mat = materials[i];
                 if (mat == null) continue;
 
+                // 【核心防御】：防止材质槽位数量大于实际子网格数量导致的越界崩溃！
                 if (i >= sourceMesh.subMeshCount) break; 
 
                 if (!materialToCombineInstances.ContainsKey(mat))
@@ -75,16 +80,19 @@ public static class RoadMeshCombiner
             combinedRenderer.sharedMaterial = mat; 
 
             Mesh combinedMesh = new Mesh { name = $"CombinedMesh_{mat.name}" };
+            // 【核心】：突破顶点数限制
             combinedMesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
             combinedMesh.CombineMeshes(instances.ToArray(), true, true);
 
             combinedFilter.sharedMesh = combinedMesh;
 
+            // 【核心】：统一烘焙物理碰撞体，车辆从此绝不会掉入虚空
             MeshCollider collider = combinedGO.AddComponent<MeshCollider>();
             collider.sharedMesh = combinedMesh;
             collider.convex = false; 
         }
 
+        // 清理战场：安全的销毁机制
         foreach (GameObject obj in originalObjects)
         {
             if (Application.isPlaying)
@@ -93,6 +101,6 @@ public static class RoadMeshCombiner
                 GameObject.DestroyImmediate(obj); // 兼容编辑器模式下点击生成
         }
 
-        Debug.Log($"[RoadMeshCombiner] 合批完成！散碎网格数量: {originalObjects.Count} -> 合并为超级网格: {materialToCombineInstances.Count} 个，碰撞体已铺设。");
+        Debug.Log($"[RoadMeshCombiner] ✅ 合批完成！散碎网格数量: {originalObjects.Count} -> 合并为超级网格: {materialToCombineInstances.Count} 个，碰撞体已铺设。");
     }
 }

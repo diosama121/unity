@@ -20,7 +20,7 @@ public class TrafficLightManager : MonoBehaviour
     [Header("=== 放置配置 ===")]
     [Tooltip("在十字路口放置交通灯的概率 0-1")]
     [Range(0f, 1f)]
-    public float placementChance = 0.1f;
+    public float placementChance = 0.6f;
 
     [Tooltip("交通灯放置的随机种子（和路网种子一致保证复现）")]
     public int placementSeed = 42;
@@ -73,7 +73,7 @@ public class TrafficLightManager : MonoBehaviour
     {
         public int nodeId;
         public int directionIndex;
-        public int phaseId;
+        public int phaseId; // 【V2.3】世界坐标方位ID，与WorldModel.StopLine.AssociatedPhaseId绝对对齐
         public Vector3 position;
         public GameObject gameObject;
         public TrafficLightController controller;
@@ -128,12 +128,16 @@ public class TrafficLightManager : MonoBehaviour
             if (connections < 3) continue;
             if (Random.value > placementChance) continue;
 
-            PlaceSingleTrafficLightAtNode(node);
-            placed++;
+            // 【Phase 3 真相位】为每个入口方向创建独立交通灯
+            for (int dirIdx = 0; dirIdx < node.neighbors.Count; dirIdx++)
+            {
+                PlaceTrafficLightAtNode(node, dirIdx);
+                placed++;
+            }
         }
 
         if (showDebugLog)
-            Debug.Log($"交通灯放置完成：{placed} 个路口");
+            Debug.Log($"✅ 交通灯放置完成：{placed} 个路口");
     }
 
     /// <summary>
@@ -179,53 +183,79 @@ public class TrafficLightManager : MonoBehaviour
 {
     return trafficLights.Select(t => t.gameObject).ToList();
 }
-    void PlaceSingleTrafficLightAtNode(RoadNetworkGenerator.WaypointNode node)
+    void PlaceTrafficLightAtNode(RoadNetworkGenerator.WaypointNode node, int directionIndex)
     {
-        float groundY = WorldModel.Instance != null ? WorldModel.Instance.GetUnifiedHeight(node.position.x, node.position.z) : 0f;
-        Vector3 spawnPos = new Vector3(node.position.x, groundY + heightOffset, node.position.z);
+        int neighborId = node.neighbors[directionIndex];
+        Vector3 neighborPos = roadGen.nodes[neighborId].position;
+        
+        Vector3 facingDir = (neighborPos - node.position);
+        facingDir.y = 0;
+        if (facingDir == Vector3.zero) facingDir = Vector3.forward;
+        facingDir.Normalize();
 
+        float groundY = WorldModel.Instance != null ? WorldModel.Instance.GetUnifiedHeight(node.position.x, node.position.z) : 0f;
+        Vector3 basePos = new Vector3(node.position.x, groundY, node.position.z) + Vector3.up * heightOffset;
+        Vector3 rightDir = Vector3.Cross(Vector3.up, facingDir).normalized;
+        
+        float safeOffset = offsetFromCenter + 1.5f;
+        Vector3 spawnPos = basePos + facingDir * safeOffset + rightDir * safeOffset;
+        
+        // 创建交通灯GameObject
         GameObject tlObj;
         if (trafficLightPrefab != null)
         {
             tlObj = Instantiate(trafficLightPrefab, spawnPos,
-                Quaternion.identity, trafficLightRoot.transform);
+                Quaternion.LookRotation(-facingDir), trafficLightRoot.transform);
         }
         else
         {
-            tlObj = CreatePlaceholderLight(spawnPos, Vector3.forward);
+            // 无Prefab时创建占位杆子
+            tlObj = CreatePlaceholderLight(spawnPos, facingDir);
         }
 
-        tlObj.name = $"TrafficLight_Node{node.id}";
+        tlObj.name = $"TrafficLight_Node{node.id}_Dir{directionIndex}";
 
+        // 添加/获取 TrafficLightController
         TrafficLightController controller = tlObj.GetComponent<TrafficLightController>();
         if (controller == null)
             controller = tlObj.AddComponent<TrafficLightController>();
 
+        // 配置时间
         controller.redDuration = greenDuration + yellowDuration;
         controller.yellowDuration = yellowDuration;
         controller.greenDuration = greenDuration;
 
-        int phaseId = node.id;
-        controller.SetPhaseOffset(0f);
+        // 【V2.3 真相位核心】基于世界坐标方位，绝对锁定 NS/EW
+        Vector3 approachDir = (node.position - neighborPos);
+        approachDir.y = 0;
+        bool isNS = Mathf.Abs(approachDir.z) > Mathf.Abs(approachDir.x);
+        int phaseId = node.id * 10 + (isNS ? 0 : 1);
+        float phaseOffset = isNS ? 0f : (greenDuration + yellowDuration);
+        controller.SetPhaseOffset(phaseOffset);
 
+        // 添加Light组件（挂在子物体上）
         Light lightComp = AddLightToTrafficLight(tlObj);
 
+        // 把Light传给Controller，让Controller直接控制颜色
         controller.managedLight = lightComp;
         controller.redColor = redColor;
         controller.yellowColor = yellowColor;
         controller.greenColor = greenColor;
 
+        // 添加碰撞体（供RaycastSensor检测）
         if (tlObj.GetComponent<Collider>() == null)
         {
             BoxCollider col = tlObj.AddComponent<BoxCollider>();
-            col.size = new Vector3(0.5f, 4f, 0.5f);
+            // 【修复】将灯柱碰撞体改为 0.5x0.5，防止侵占转弯车道
+            col.size = new Vector3(0.5f, 4f, 0.5f); 
             col.center = new Vector3(0, 2f, 0);
         }
 
+        // 记录实例
         var instance = new TrafficLightInstance
         {
             nodeId = node.id,
-            directionIndex = 0,
+            directionIndex = directionIndex,
             phaseId = phaseId,
             position = spawnPos,
             gameObject = tlObj,

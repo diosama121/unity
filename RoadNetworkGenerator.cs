@@ -84,13 +84,7 @@ public class RoadNetworkGenerator : MonoBehaviour
 
     public void Generate()
     {
-        float maxSafeOffset = cellSize * 0.4f;
-        if (randomOffset > maxSafeOffset)
-        {
-            Debug.LogWarning($"[RoadNetworkGenerator] randomOffset ({randomOffset}) > safe limit ({maxSafeOffset:F1}), clamping to avoid node overlap.");
-            randomOffset = maxSafeOffset;
-        }
-
+        // 1. 初始化与清空脏数据
         nodes.Clear();
         edges.Clear();
         roadSegments.Clear();
@@ -173,7 +167,7 @@ public class RoadNetworkGenerator : MonoBehaviour
             }
         }
 
-        Debug.Log($"[RoadNetworkGenerator] 拓扑生成完毕! 节点数: {nodes.Count}, 边数: {edges.Count}");
+        Debug.Log($"[RoadNetworkGenerator] 🟢 拓扑生成完毕! 节点数: {nodes.Count}, 边数: {edges.Count}");
     }
 
     // =============================================
@@ -230,7 +224,7 @@ public class RoadNetworkGenerator : MonoBehaviour
         }
 
         if (mergeCount > 0)
-            Debug.Log($"[RoadNetworkGenerator] 节点聚类熔断: 合并了 {mergeCount} 个过密节点");
+            Debug.Log($"[RoadNetworkGenerator] 🔗 节点聚类熔断: 合并了 {mergeCount} 个过密节点");
     }
 
     private void AddEdge(int a, int b)

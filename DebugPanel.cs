@@ -1,20 +1,24 @@
 using UnityEngine;
 using UnityEngine.UI;
-using TMPro;
 using System.Text;
 
+/// <summary>
+/// V4.1 上帝视角观测台 (a5 视觉与数据观测官)
+/// 核心准则：零物理射线，纯语义数据驱动
+/// 功能：节点总数统计、NPC活跃监控、模式状态实时观测、城乡一键切换、高程场健康度监控、一键数据录制
+/// </summary>
 public class DebugPanel : MonoBehaviour
 {
     [Header("=== UI 文本组件 ===")]
-    public TextMeshProUGUI worldStatsText;
-    public TextMeshProUGUI mouseHoverInfoText;
-    public TextMeshProUGUI cameraGroundInfoText;
+    public Text worldStatsText;          // 世界统计信息
+    public Text mouseHoverInfoText;      // 鼠标悬停语义信息
+    public Text cameraGroundInfoText;    // 相机下方语义信息
 
     [Header("=== UI 按钮组件 ===")]
-    public Button toggleRecordButton;
-    public TextMeshProUGUI recordButtonText;
-    public Button toggleCountrysideButton;
-    public TextMeshProUGUI modeButtonText;
+    public Button toggleRecordButton;     // 一键录制按钮
+    public Text recordButtonText;         // 录制按钮状态文本
+    public Button toggleCountrysideButton;// 城乡模式切换按钮
+    public Text modeButtonText;           // 模式按钮状态文本
 
     [Header("=== 观测台设置 ===")]
     public KeyCode togglePanelKey = KeyCode.F1; // 开关面板快捷键
@@ -23,157 +27,45 @@ public class DebugPanel : MonoBehaviour
     // 内部引用缓存
     private SystemDataManager dataManager;
     private RoadNetworkGenerator roadGen;
-    private TrafficManager trafficManager;
-    private ROS2BridgeV2 ros2Bridge;
     private float updateTimer;
     private bool isPanelVisible = true;
-    private float fpsAccumulator = 0f;
-    private int fpsFrameCount = 0;
-    private float currentFPS = 60f;
 
     void Start()
     {
+        // 预缓存核心管理器，避免每帧查找损耗
         dataManager = FindObjectOfType<SystemDataManager>();
         roadGen = FindObjectOfType<RoadNetworkGenerator>();
-        trafficManager = FindObjectOfType<TrafficManager>();
-        ros2Bridge = FindObjectOfType<ROS2BridgeV2>();
-
-        if (worldStatsText == null)
-        {
-            CreateDebugUI();
-        }
-
+        
+        // 初始化录制按钮事件
         if (toggleRecordButton != null)
         {
             toggleRecordButton.onClick.AddListener(OnToggleRecordClicked);
         }
-
+        
+        // 初始化城乡模式切换按钮事件
         if (toggleCountrysideButton != null)
         {
-            toggleCountrysideButton.onClick.AddListener(ToggleMode);
+            toggleCountrysideButton.onClick.AddListener(OnToggleCountrysideClicked);
         }
-
+        
+        // 初始更新UI
         UpdateWorldStats();
         UpdateRecordButtonUI(false);
         UpdateModeButtonUI();
     }
 
-    private void CreateDebugUI()
-    {
-        TMP_FontAsset font = Resources.Load<TMP_FontAsset>("NotoSansSC-Regular SDF");
-        if (font != null) font.atlasPopulationMode = AtlasPopulationMode.Dynamic;
-
-        Canvas canvas = gameObject.AddComponent<Canvas>();
-        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-        canvas.sortingOrder = 100;
-        CanvasScaler scaler = gameObject.AddComponent<UnityEngine.UI.CanvasScaler>();
-        scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-        scaler.referenceResolution = new Vector2(1920, 1080);
-        scaler.matchWidthOrHeight = 0.5f;
-        gameObject.AddComponent<UnityEngine.UI.GraphicRaycaster>();
-
-        GameObject panelGo = new GameObject("PanelBg");
-        panelGo.transform.SetParent(transform, false);
-        RectTransform panelRt = panelGo.AddComponent<RectTransform>();
-        panelRt.anchorMin = new Vector2(0, 1);
-        panelRt.anchorMax = new Vector2(0, 1);
-        panelRt.pivot = new Vector2(0, 1);
-        panelRt.anchoredPosition = new Vector2(10, -10);
-        panelRt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, 440f);
-        panelRt.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, 260f);
-        Image panelBg = panelGo.AddComponent<Image>();
-        panelBg.color = new Color(0, 0, 0, 0.75f);
-
-        worldStatsText = CreateTMPText("StatsText", panelRt, font, 16f,
-            new Vector2(8, -8), new Vector2(0, 1), new Vector2(0, 1), new Vector2(0, 1), 424f, 120f);
-
-        mouseHoverInfoText = CreateTMPText("HoverText", panelRt, font, 14f,
-            new Vector2(8, -132), new Vector2(0, 1), new Vector2(0, 1), new Vector2(0, 1), 424f, 55f);
-
-        cameraGroundInfoText = CreateTMPText("CameraText", panelRt, font, 14f,
-            new Vector2(8, -192), new Vector2(0, 1), new Vector2(0, 1), new Vector2(0, 1), 424f, 55f);
-
-        GameObject btnBar = new GameObject("ButtonBar");
-        btnBar.transform.SetParent(panelRt, false);
-        RectTransform barRt = btnBar.AddComponent<RectTransform>();
-        barRt.anchorMin = new Vector2(0, 1);
-        barRt.anchorMax = new Vector2(0, 1);
-        barRt.pivot = new Vector2(0, 1);
-        barRt.anchoredPosition = new Vector2(8, -252);
-        barRt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, 424f);
-        barRt.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, 26f);
-
-        toggleRecordButton = CreateButton("RecordBtn", barRt, font, "录制",
-            new Vector2(0, 0), new Vector2(0, 1), new Vector2(0, 1), new Vector2(0.5f, 1), 208f, 24f);
-        recordButtonText = toggleRecordButton.GetComponentInChildren<TextMeshProUGUI>();
-        toggleRecordButton.onClick.AddListener(OnToggleRecordClicked);
-    }
-
-    private TextMeshProUGUI CreateTMPText(string name, RectTransform parent, TMP_FontAsset font, float fontSize,
-        Vector2 pos, Vector2 anchorMin, Vector2 anchorMax, Vector2 pivot, float width, float height)
-    {
-        GameObject go = new GameObject(name);
-        go.transform.SetParent(parent, false);
-        RectTransform rt = go.AddComponent<RectTransform>();
-        rt.anchorMin = anchorMin;
-        rt.anchorMax = anchorMax;
-        rt.pivot = pivot;
-        rt.anchoredPosition = pos;
-        rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, width);
-        rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, height);
-        TextMeshProUGUI tmp = go.AddComponent<TextMeshProUGUI>();
-        tmp.font = font;
-        tmp.fontSize = fontSize;
-        tmp.color = Color.white;
-        tmp.alignment = TextAlignmentOptions.TopLeft;
-        return tmp;
-    }
-
-    private Button CreateButton(string name, RectTransform parent, TMP_FontAsset font, string label,
-        Vector2 pos, Vector2 anchorMin, Vector2 anchorMax, Vector2 pivot, float width, float height)
-    {
-        GameObject go = new GameObject(name);
-        go.transform.SetParent(parent, false);
-        RectTransform rt = go.AddComponent<RectTransform>();
-        rt.anchorMin = anchorMin;
-        rt.anchorMax = anchorMax;
-        rt.pivot = pivot;
-        rt.anchoredPosition = pos;
-        rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, width);
-        rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, height);
-        Image img = go.AddComponent<Image>();
-        img.color = new Color(0.3f, 0.3f, 0.3f, 0.9f);
-        Button btn = go.AddComponent<Button>();
-        btn.targetGraphic = img;
-
-        TextMeshProUGUI tmp = CreateTMPText("Label", rt, font, 16f,
-            Vector2.zero,
-            new Vector2(0, 0), new Vector2(1, 1), new Vector2(0.5f, 0.5f), width, height);
-        tmp.alignment = TextAlignmentOptions.Center;
-        tmp.color = Color.white;
-
-        return btn;
-    }
-
     void Update()
     {
-        fpsAccumulator += Time.unscaledDeltaTime;
-        fpsFrameCount++;
-        if (fpsAccumulator >= 0.25f)
-        {
-            currentFPS = fpsFrameCount / fpsAccumulator;
-            fpsAccumulator = 0f;
-            fpsFrameCount = 0;
-        }
-
+        // 面板开关控制
         if (Input.GetKeyDown(togglePanelKey))
         {
             isPanelVisible = !isPanelVisible;
-            GetComponent<Canvas>().enabled = isPanelVisible;
+            gameObject.SetActive(isPanelVisible);
         }
 
         if (!isPanelVisible) return;
 
+        // 定时刷新数据
         updateTimer += Time.deltaTime;
         if (updateTimer >= updateInterval)
         {
@@ -192,53 +84,55 @@ public class DebugPanel : MonoBehaviour
         if (worldStatsText == null) return;
 
         StringBuilder sb = new StringBuilder();
-        sb.AppendLine("<color=#FFDD44>=== 系统监控面板 ===</color>");
-        sb.AppendLine($"<color=#00FFAA>FPS: {currentFPS:F0}</color>");
-
+        sb.AppendLine("=== 🌍 世界语义统计 ===");
+        
+        // 1. 获取节点总数 (通过 WorldModel 接口)
         int nodeCount = 0;
         if (WorldModel.Instance != null)
         {
-            nodeCount = WorldModel.Instance.NodeCount;
+            var nodeCountProp = WorldModel.Instance.GetType().GetProperty("NodeCount");
+            if (nodeCountProp != null)
+            {
+                nodeCount = (int)nodeCountProp.GetValue(WorldModel.Instance);
+            }
+            else
+            {
+                var nodesProp = WorldModel.Instance.GetType().GetProperty("Nodes");
+                if (nodesProp != null)
+                {
+                    var nodesList = nodesProp.GetValue(WorldModel.Instance) as System.Collections.IList;
+                    nodeCount = nodesList?.Count ?? 0;
+                }
+            }
         }
-        sb.AppendLine($"路网节点: {nodeCount}");
+        sb.AppendLine($"路网节点总数: {nodeCount}");
 
-        int npcCount = (trafficManager != null && trafficManager.ActiveNPCs != null)
-            ? trafficManager.ActiveNPCs.Count : 0;
-        sb.AppendLine($"<color=#00FFAA>活跃车辆: {npcCount}</color>");
-
-        if (ros2Bridge != null)
-        {
-            string status = ros2Bridge.isConnected ? "已连接" : "未连接";
-            string freq = ros2Bridge.sendRate.ToString("F0") + "Hz";
-            string pcd = ros2Bridge.isConnected ? "Active" : "Idle";
-            sb.AppendLine($"<color=#33EE55>ROS2: {status} | {freq} | PCD:{pcd}</color>");
-        }
-        else
-        {
-            sb.AppendLine("<color=#888888>ROS2 Bridge 未加载</color>");
-        }
+        // 2. 获取活跃 NPC 数量
+        int npcCount = FindObjectsOfType<SimpleAutoDrive>().Length;
+        sb.AppendLine($"活跃 NPC 数量: {npcCount}");
 
         worldStatsText.text = sb.ToString();
     }
 
     /// <summary>
-    /// Update semantic info at mouse hover position (zero physics ray, semantic data driven)
+    /// 更新鼠标悬停位置的语义信息 (零物理射线 + V4.1 状态监控)
     /// </summary>
     void UpdateMouseHoverInfo()
     {
         if (mouseHoverInfoText == null || WorldModel.Instance == null) return;
 
         StringBuilder sb = new StringBuilder();
-        sb.AppendLine("=== 鼠标悬停语义 ===");
+        sb.AppendLine("=== 🖱️ 鼠标悬停语义 ===");
 
+        // 【V4.1 核心新增】生成模式与种子状态探测
         if (roadGen != null)
         {
-            sb.AppendLine($"当前模式: {(roadGen.isCountryside ? " 乡村起伏" : " 城市纯平")}");
+            sb.AppendLine($"当前模式: {(roadGen.isCountryside ? "🏞️ 乡村起伏" : "🏙️ 城市纯平")}");
             sb.AppendLine($"当前种子 (Seed): {roadGen.seed}");
         }
         else
         {
-            sb.AppendLine("未找到 RoadNetworkGenerator 组件");
+            sb.AppendLine("⚠️ 未找到 RoadNetworkGenerator 组件");
         }
 
         // 零物理射线坐标转换
@@ -272,9 +166,9 @@ public class DebugPanel : MonoBehaviour
             sb.AppendLine("未检测到有效路网节点");
         }
 
-        // 统一高程观测
-        float terrainHeight = WorldModel.Instance.GetUnifiedHeight(mouseXZ.x, mouseXZ.y);
-        sb.AppendLine($"地表绝对高程: {terrainHeight:F2} m");
+        // 【V4.1 核心新增】统一高程观测
+        float unifiedY = WorldModel.Instance.GetUnifiedHeight(mouseXZ.x, mouseXZ.y);
+        sb.AppendLine($"地表绝对高程: {unifiedY:F2} m");
 
         mouseHoverInfoText.text = sb.ToString();
     }
@@ -287,7 +181,7 @@ public class DebugPanel : MonoBehaviour
         if (cameraGroundInfoText == null || WorldModel.Instance == null) return;
 
         StringBuilder sb = new StringBuilder();
-        sb.AppendLine("=== 相机下方语义 ===");
+        sb.AppendLine("=== 📷 相机下方语义 ===");
 
         Vector3 cameraPos = Camera.main.transform.position;
         Vector2 cameraXZ = new Vector2(cameraPos.x, cameraPos.z);
@@ -320,7 +214,10 @@ public class DebugPanel : MonoBehaviour
         cameraGroundInfoText.text = sb.ToString();
     }
 
-    public void ToggleMode()
+    /// <summary>
+    /// 【V4.1 新增】一键切换城乡生成模式
+    /// </summary>
+    void OnToggleCountrysideClicked()
     {
         if (roadGen == null)
         {
@@ -330,7 +227,7 @@ public class DebugPanel : MonoBehaviour
 
         // 翻转模式状态
         roadGen.isCountryside = !roadGen.isCountryside;
-        Debug.Log(roadGen.isCountryside ? "[DebugPanel] 已切换至乡村起伏模式" : "[DebugPanel] 已切换至城市纯平模式");
+        Debug.Log(roadGen.isCountryside ? "🏞️ [DebugPanel] 已切换至乡村起伏模式" : "🏙️ [DebugPanel] 已切换至城市纯平模式");
         
         // 更新按钮UI
         UpdateModeButtonUI();
@@ -358,11 +255,11 @@ public class DebugPanel : MonoBehaviour
             
             if (newState)
             {
-                Debug.Log(" [DebugPanel] 一键启动数据录制...");
+                Debug.Log("🔴 [DebugPanel] 一键启动数据录制...");
             }
             else
             {
-                Debug.Log("[DebugPanel] 一键停止数据录制，正在导出...");
+                Debug.Log("✅ [DebugPanel] 一键停止数据录制，正在导出...");
                 var exportMethod = dataManager.GetType().GetMethod("ExportToCSV", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
                 exportMethod?.Invoke(dataManager, null);
             }
@@ -388,7 +285,7 @@ public class DebugPanel : MonoBehaviour
     {
         if (recordButtonText != null)
         {
-            recordButtonText.text = isRecording ? "停止录制" : "录制";
+            recordButtonText.text = isRecording ? "🔴 停止录制" : "🎬 开始录制";
             recordButtonText.color = isRecording ? Color.red : Color.green;
         }
     }

@@ -12,7 +12,11 @@ public class CatmullRomSpline
 
     public CatmullRomSpline(List<Vector3> controlPoints, bool useCentripetal = false)
     {
-        ControlPoints = new List<Vector3>(controlPoints);
+        ControlPoints = new List<Vector3>();
+        foreach (var p in controlPoints)
+        {
+            ControlPoints.Add(new Vector3(p.x, 0, p.z));
+        }
         _useCentripetal = useCentripetal;
         BakeCurve();
     }

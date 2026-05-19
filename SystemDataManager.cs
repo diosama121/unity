@@ -3,6 +3,10 @@ using System.IO;
 using System.Text;
 using System.Collections.Generic;
 
+/// <summary>
+/// V2.0 数据管理：基于 a2 PathPlanner 真实字段重构
+/// 真实字段：Id / WorldPos / NeighborIds
+/// </summary>
 public class SystemDataManager : MonoBehaviour
 {
     [Header("=== 车辆遥测数据 (生成CSV供Excel画图) ===")]
@@ -43,18 +47,18 @@ public class SystemDataManager : MonoBehaviour
 
                 if (targetCar == null)
                 {
-                    Debug.LogError("找不到主车！数据录制失败。");
+                    Debug.LogError("❌ 找不到主车！数据录制失败。");
                     isRecording = false;
                 }
                 else
                 {
-                    Debug.Log("开始录制车辆数据... (含语义标签)");
+                    Debug.Log("🔴 开始录制车辆数据... (含语义标签)");
                 }
             }
             else 
             {
                 File.WriteAllText(csvPath, csvData.ToString());
-                Debug.Log($"车辆遥测数据已导出至: {csvPath}");
+                Debug.Log($"✅ 车辆遥测数据已导出至: {csvPath}");
             }
         }
 
@@ -82,6 +86,9 @@ public class SystemDataManager : MonoBehaviour
         Rigidbody rb = targetCar.GetComponent<Rigidbody>();
         float speedKmh = rb != null ? rb.velocity.magnitude * 3.6f : 0f;
 
+        // ======================
+        // V2.0 语义数据（基于 a2 真实字段）
+        // ======================
         Vector3 carPos = targetCar.transform.position;
         RoadNode currentNode = WorldModel.Instance.GetNearestNode(carPos);
         
@@ -125,7 +132,7 @@ public class SystemDataManager : MonoBehaviour
             data.nodes.Add(new NodeData { id = node.id, x = node.position.x, y = node.position.y, z = node.position.z });
         }
         File.WriteAllText(jsonPath, JsonUtility.ToJson(data, true));
-        Debug.Log($"路网数据已导出至: {jsonPath}");
+        Debug.Log($"✅ 路网数据已导出至: {jsonPath}");
     }
 
     [System.Serializable]
