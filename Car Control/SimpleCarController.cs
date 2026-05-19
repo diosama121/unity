@@ -1,5 +1,12 @@
 using UnityEngine;
 
+// 添加缺失的枚举定义（放在类外，方便全局访问）
+public enum VehiclePriority
+{
+    Normal,
+    Emergency
+}
+
 public partial class SimpleCarController : MonoBehaviour
 {
     [Header("车辆参数")]
@@ -8,6 +15,10 @@ public partial class SimpleCarController : MonoBehaviour
     public float brakeDeceleration = 10f;
     public float steeringSpeed = 80f;
     public float maxSteeringAngle = 45f;
+
+    // 新增：车辆优先级，由控制器统一管理
+    [Header("车辆优先级")]
+    public VehiclePriority vehiclePriority = VehiclePriority.Normal;
 
     [Header("控制模式")]
     public bool autoMode = false;
@@ -98,7 +109,6 @@ public partial class SimpleCarController : MonoBehaviour
         if (isGrounded)
         {
             projForward = Vector3.ProjectOnPlane(transform.forward, hit.normal);
-            // 幻觉清除：直接用原生的 normalized，如果是 zero 向量则退化为默认前向
             Vector3 safeForward = projForward.sqrMagnitude > 0.0001f ? projForward.normalized : transform.forward;
             Quaternion slopeRot = Quaternion.LookRotation(safeForward, hit.normal);
             rb.MoveRotation(Quaternion.Slerp(rb.rotation, slopeRot, Time.fixedDeltaTime * 8f));
@@ -106,7 +116,6 @@ public partial class SimpleCarController : MonoBehaviour
 
         ApplySteering();
         
-        // 幻觉清除：原生的安全归一化
         Vector3 moveDir = isGrounded ? (projForward.sqrMagnitude > 0.0001f ? projForward.normalized : transform.forward) : transform.forward;
         Vector3 newVelocity = moveDir * targetSpeed;
         if (!isGrounded) newVelocity.y = rb.velocity.y;
@@ -126,7 +135,6 @@ public partial class SimpleCarController : MonoBehaviour
 
         if (Mathf.Abs(targetSpeed) > 0.01f)
         {
-            // 幻觉清除：用原生数学逻辑替换所谓的 CarControlUtility
             float speedFactor = maxSpeed > 0.001f ? (Mathf.Abs(targetSpeed) / maxSpeed) : 0f;
             float normalizedSteering = maxSteeringAngle > 0.001f ? (targetSteering / maxSteeringAngle) : 0f;
             
@@ -150,7 +158,6 @@ public partial class SimpleCarController : MonoBehaviour
             Vector3 slopeRight = new Vector3(transform.right.x, rightY - leftY, transform.right.z).normalized;
 
             Vector3 trueUp = Vector3.Cross(slopeForward, slopeRight).normalized;
-            // 防止 zero 向量报错
             if (slopeForward.sqrMagnitude > 0.001f && trueUp.sqrMagnitude > 0.001f)
             {
                 transform.rotation = Quaternion.LookRotation(slopeForward, trueUp);
@@ -207,7 +214,6 @@ public partial class SimpleCarController : MonoBehaviour
     {
         if (Mathf.Abs(currentSpeed) > 0.01f)
         {
-            // 幻觉清除：用原生数学逻辑替换所谓的 CarControlUtility
             float speedFactor = maxSpeed > 0.001f ? (Mathf.Abs(currentSpeed) / maxSpeed) : 0f;
             float normalizedSteering = maxSteeringAngle > 0.001f ? (targetSteering / maxSteeringAngle) : 0f;
             float turnRate = normalizedSteering * speedFactor * steeringSpeed * Time.fixedDeltaTime;

@@ -103,7 +103,8 @@ public partial class SimpleAutoDrive : MonoBehaviour
         }
 
         Vector3 diffToStop = stopTargetPosition - transform.position;
-        Vector3 dirToStop = CarControlUtility.SafeNormalize(diffToStop, transform.forward);
+        // 替换 CarControlUtility.SafeNormalize 为原生安全归一化
+        Vector3 dirToStop = diffToStop.sqrMagnitude > 0.0001f ? diffToStop.normalized : transform.forward;
         Vector3 localDir = transform.InverseTransformDirection(dirToStop);
         float steering = Mathf.Clamp(localDir.x * 2f, -1f, 1f);
 
@@ -182,7 +183,8 @@ public partial class SimpleAutoDrive : MonoBehaviour
                 {
                     float checkT = (bestLaneT < 0.95f) ? Mathf.Min(bestLaneT + 0.05f, 1f) : Mathf.Max(bestLaneT - 0.05f, 0f);
                     Vector3 laneDir = lane.CenterSpline.GetPoint(checkT) - lane.CenterSpline.GetPoint(bestLaneT);
-                    Vector3 laneDirection = CarControlUtility.SafeNormalize(laneDir, transform.forward);
+                    // 替换 CarControlUtility.SafeNormalize 为原生安全归一化
+                    Vector3 laneDirection = laneDir.sqrMagnitude > 0.0001f ? laneDir.normalized : transform.forward;
                     if (Vector3.Dot(transform.forward, laneDirection) > 0f)
                     {
                         Vector3 lanePoint = lane.CenterSpline.GetPoint(bestLaneT);
@@ -202,7 +204,8 @@ public partial class SimpleAutoDrive : MonoBehaviour
         {
             float nextT = (currentT < 0.999f) ? Mathf.Min(currentT + 0.001f, 1f) : Mathf.Max(currentT - 0.001f, 0f);
             Vector3 tangentRaw = currentSpline.GetPoint(nextT) - posOnSpline;
-            Vector3 tangent = CarControlUtility.SafeNormalize(tangentRaw, transform.forward);
+            // 替换 CarControlUtility.SafeNormalize 为原生安全归一化
+            Vector3 tangent = tangentRaw.sqrMagnitude > 0.0001f ? tangentRaw.normalized : transform.forward;
             Vector3 rightVector = Vector3.Cross(Vector3.up, tangent).normalized;
 
             lateralTarget = posOnSpline + rightVector * rightLaneOffset;
@@ -220,7 +223,8 @@ public partial class SimpleAutoDrive : MonoBehaviour
 
         if (currentIntersectionState == IntersectionState.RedLight) speedFactor = 0f;
 
-        float throttle = CarControlUtility.SafeDivide(targetSpeed * speedFactor, carController.maxSpeed);
+        // 替换 CarControlUtility.SafeDivide 为原生安全除法
+        float throttle = carController.maxSpeed > 0.001f ? (targetSpeed * speedFactor) / carController.maxSpeed : 0f;
         carController.SetAutoControl(throttle, steering);
         carController.SetAutoBrake(0f);
     }
