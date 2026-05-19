@@ -22,7 +22,12 @@ public enum DriveState
 public class VehicleBehaviorEngine : MonoBehaviour
 {
     public DriveState currentState = DriveState.DynamicCruising;
-
+[Header("性能与缓存")]
+public float radarScanInterval = 0.15f;
+private float radarTimer = 0f;
+private bool cachedPedestrianDetected = false;
+private bool cachedAmbulanceDetected = false;
+private bool cachedTrafficAhead = false;
     [Header("速度基准")]
     public float cruiseSpeedBase = 15f;
     public float minCruiseSpeed = 2f;
@@ -67,7 +72,6 @@ public class VehicleBehaviorEngine : MonoBehaviour
     private float deadlockTimer;
     private float stopToGoTimer;
     private float reverseEscapeTimer;
-    private bool isReversingEscape;
     private float overtakeBezierU;
 
     private Vector3 lastPosition;
@@ -105,40 +109,48 @@ public class VehicleBehaviorEngine : MonoBehaviour
             cachedRoadHalfWidth = cachedRoadBuilder.roadWidth * 0.5f;
     }
 
-    void Update()
+   void Update()
+{
+    if (autoDrive == null || carController == null) return;
+    if (!carController.autoMode && autoDrive.currentState != SimpleAutoDrive.DriveState.RemoteControlled) return;
+
+    // --- 【补丁：雷达降频】 ---
+    radarTimer += Time.deltaTime;
+    if (radarTimer >= radarScanInterval)
     {
-        if (autoDrive == null || carController == null) return;
-        if (!carController.autoMode && autoDrive.currentState != SimpleAutoDrive.DriveState.RemoteControlled)
-            return;
-
-        pendingBrakeOverride = false;
-
-        if (currentState == DriveState.FatalCrashed)
-            return;
-
-        if (CheckBoundaryFatal())
-        {
-            currentState = DriveState.FatalCrashed;
-            ExecuteFatalCrash();
-            return;
-        }
-
-        TickTimers();
-
-        if (DetectPedestrianOrCrosswalk())
-            ChangeState(DriveState.EmergencyAvoid);
-        else if (DetectApproachingIntersection() || DetectAmbulance())
-            ChangeState(DriveState.Intersection);
-        else if (DetectDeadlockOrStaticObstacle())
-            ChangeState(DriveState.DeadlockEscape);
-        else if (DetectTrafficAhead() || DetectMergeLane())
-            ChangeState(DriveState.PlatoonMerge);
-        else
-            ChangeState(DriveState.DynamicCruising);
-
-        ExecuteState();
+        radarTimer = 0f;
+        // 集中在这一帧做物理相交计算
+        cachedPedestrianDetected = DetectPedestrianOrCrosswalk();
+        cachedAmbulanceDetected = DetectAmbulance();
+        cachedTrafficAhead = DetectTrafficAhead();
     }
 
+    pendingBrakeOverride = false;
+    if (currentState == DriveState.FatalCrashed) return;
+
+    if (CheckBoundaryFatal())
+    {
+        currentState = DriveState.FatalCrashed;
+        ExecuteFatalCrash();
+        return;
+    }
+
+    TickTimers();
+
+    // --- 【补丁：使用缓存数据进行交规判定】 ---
+    if (cachedPedestrianDetected)
+        ChangeState(DriveState.EmergencyAvoid);
+    else if (DetectApproachingIntersection() || cachedAmbulanceDetected) // 接近路口暂不缓存，因为依赖距离
+        ChangeState(DriveState.Intersection);
+    else if (DetectDeadlockOrStaticObstacle())
+        ChangeState(DriveState.DeadlockEscape);
+    else if (cachedTrafficAhead || DetectMergeLane())
+        ChangeState(DriveState.PlatoonMerge);
+    else
+        ChangeState(DriveState.DynamicCruising);
+
+    ExecuteState();
+}
     void LateUpdate()
     {
         if (autoDrive == null || carController == null) return;

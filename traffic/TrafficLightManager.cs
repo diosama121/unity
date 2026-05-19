@@ -128,11 +128,19 @@ public class TrafficLightManager : MonoBehaviour
             if (connections < 3) continue;
             if (Random.value > placementChance) continue;
 
-            // 【Phase 3 真相位】为每个入口方向创建独立交通灯
-            for (int dirIdx = 0; dirIdx < node.neighbors.Count; dirIdx++)
+            // 【修复 Bug 14】红绿灯数学重构：T 路口 1 根，十字路口 2 根
+            if (connections == 3)
             {
-                PlaceTrafficLightAtNode(node, dirIdx);
+                // T 字路口：仅在主干道一侧放置 1 个灯柱
+                PlaceTrafficLightAtNode(node, 0);
                 placed++;
+            }
+            else if (connections >= 4)
+            {
+                // 十字路口：在对角线放置 2 个灯柱
+                PlaceTrafficLightAtNode(node, 0);
+                PlaceTrafficLightAtNode(node, 2);
+                placed += 2;
             }
         }
 

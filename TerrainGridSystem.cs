@@ -85,8 +85,10 @@ public class TerrainGridSystem : MonoBehaviour
         float noiseY = 0f;
         if (isCountry)
         {
-            float seedOffset = roadGen.seed * 1000f;
-            noiseY = Mathf.PerlinNoise((worldX + seedOffset) * noiseFrequency, (worldZ + seedOffset) * noiseFrequency) * roadGen.countrysideHeightScale;
+            // ✅ 修复：使用 roadGen 前先判空，如果为空默认给个 seed
+            float seedOffset = (roadGen != null ? roadGen.seed : 42) * 1000f;
+            float heightScale = (roadGen != null ? roadGen.countrysideHeightScale : 5f);
+            noiseY = Mathf.PerlinNoise((worldX + seedOffset) * noiseFrequency, (worldZ + seedOffset) * noiseFrequency) * heightScale;
         }
 
         float blendedY = noiseY;
@@ -158,8 +160,10 @@ public class TerrainGridSystem : MonoBehaviour
         float noiseY = 0f;
         if (isCountry)
         {
-            float seedOffset = roadGen.seed * 1000f;
-            noiseY = Mathf.PerlinNoise((worldX + seedOffset) * noiseFrequency, (worldZ + seedOffset) * noiseFrequency) * roadGen.countrysideHeightScale;
+            // ✅ 修复：使用 roadGen 前先判空
+            float seedOffset = (roadGen != null ? roadGen.seed : 42) * 1000f;
+            float heightScale = (roadGen != null ? roadGen.countrysideHeightScale : 5f);
+            noiseY = Mathf.PerlinNoise((worldX + seedOffset) * noiseFrequency, (worldZ + seedOffset) * noiseFrequency) * heightScale;
         }
         return noiseY + terrainHeightOffset;
     }

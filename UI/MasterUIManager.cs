@@ -17,7 +17,7 @@ public class MasterUIManager : MonoBehaviour
         {
             if (_legacyFont == null) _legacyFont = Resources.Load<Font>("NotoSansSC-Regular");
             return _legacyFont;
-        }    
+        }
     }
 
     private SimpleCarController carController;
@@ -60,6 +60,7 @@ public class MasterUIManager : MonoBehaviour
     private static readonly Vector2 refResolution = new Vector2(1920, 1080);
 
     private bool isMinimalMode = false;
+    private bool autoRegenTerrain = false;
 
     private GameObject minimapRawImage;
     private GameObject torOverlay;
@@ -100,21 +101,67 @@ public class MasterUIManager : MonoBehaviour
     {
         heartbeatAlpha = 0.5f + Mathf.Sin(Time.time * 4f) * 0.5f;
 
+        if (Input.GetKeyDown(KeyCode.F1))
+        {
+            ToggleMinimalMode();
+        }
+if (Input.GetKeyDown(KeyCode.R) && carController != null)
+            {
+                carController.ResetPosition();
+                if (thoughtStreamText != null) AppendThoughtLine("已将主车位置重置到安全路面");
+            }
+        if (Input.GetKeyDown(KeyCode.R))
+        {
+            if (carController != null) carController.ResetPosition();
+        }
+
         if (RuntimeInputManager.Instance == null) return;
 
         if (!isRebinding)
         {
-            if (RuntimeInputManager.Instance.GetKeyDown("ToggleUI"))
+            // [ESC] 隐藏/显示所有 UI 窗口
+            if (Input.GetKeyDown(KeyCode.Escape))
             {
-                ToggleMinimalMode();
+                bool anyActive = (leftPanel != null && leftPanel.activeSelf) ||
+                                 (rightPanel != null && rightPanel.activeSelf) ||
+                                 (thoughtStreamPanel != null && thoughtStreamPanel.activeSelf) ||
+                                 (topBar != null && topBar.activeSelf);
+                if (leftPanel != null) leftPanel.SetActive(!anyActive);
+                if (rightPanel != null) rightPanel.SetActive(!anyActive);
+                if (thoughtStreamPanel != null) thoughtStreamPanel.SetActive(!anyActive);
+                if (topBar != null) topBar.SetActive(!anyActive);
             }
 
-            if (RuntimeInputManager.Instance.GetKeyDown("ToggleAuto"))
+            // [F1] 开关左侧数据和日志
+            if (Input.GetKeyDown(KeyCode.F1))
             {
-                ToggleAutoDrive();
+                bool newState = leftPanel != null && !leftPanel.activeSelf;
+                if (leftPanel != null) leftPanel.SetActive(newState);
+                if (thoughtStreamPanel != null) thoughtStreamPanel.SetActive(newState);
             }
 
-            if (RuntimeInputManager.Instance.GetKey("Brake") && carController != null)
+            // [F2] 开关右侧参数设置
+            if (Input.GetKeyDown(KeyCode.F2))
+            {
+                if (rightPanel != null) rightPanel.SetActive(!rightPanel.activeSelf);
+            }
+
+            // [T] 切换自动驾驶/手动驾驶
+            if (Input.GetKeyDown(KeyCode.T) && carController != null)
+            {
+                carController.ToggleMode();
+                if (thoughtStreamText != null) AppendThoughtLine("已切换驾驶模式: " + (carController.autoMode ? "自动" : "手动"));
+            }
+
+            // [N] 重新导航 (重置状态)
+            if (Input.GetKeyDown(KeyCode.N) && autoDrive != null)
+            {
+                autoDrive.currentState = SimpleAutoDrive.DriveState.Idle;
+                if (thoughtStreamText != null) AppendThoughtLine("手动触发：导航状态重置");
+            }
+
+            // [Space] 原有刹车逻辑
+            if (RuntimeInputManager.Instance != null && RuntimeInputManager.Instance.GetKey("Brake") && carController != null)
             {
                 carController.SetAutoBrake(carController.brakeDeceleration);
             }
@@ -312,10 +359,18 @@ public class MasterUIManager : MonoBehaviour
             for (int i = thoughtLines.Count - 1; i >= 0; i--)
                 full += thoughtLines[i] + "\n";
             thoughtStreamText.text = full;
-        } 
+        }
     }
 
     #region Toggle & Shortcuts
+
+    void TryAutoRegenTerrain()
+    {
+        if (!autoRegenTerrain) return;
+        if (roadGen != null) roadGen.Generate();
+        if (roadBuilder != null) roadBuilder.BuildRoads();
+        Debug.Log("[MasterUIManager] 自动重生成地形已触发");
+    }
 
     void ToggleMinimalMode()
     {
@@ -423,7 +478,7 @@ public class MasterUIManager : MonoBehaviour
         tbh.childForceExpandWidth = false;
         tbh.childForceExpandHeight = true;
 
-        CreateNavButton(topBar, "NavHUD", "仪表", font, () => SwitchToModule(moduleBaseSettings));
+        CreateNavButton(topBar, "NavHUD", "路网", font, () => SwitchToModule(moduleBaseSettings));
         CreateNavButton(topBar, "NavTerrain", "地形", font, () => SwitchToModule(moduleTerrain));
         CreateNavButton(topBar, "NavTraffic", "交通", font, () => SwitchToModule(moduleTraffic));
         CreateNavButton(topBar, "NavSystem", "系统", font, () => SwitchToModule(moduleSystem));
@@ -433,36 +488,71 @@ public class MasterUIManager : MonoBehaviour
         spacer.transform.SetParent(topBar.transform, false);
         spacer.AddComponent<LayoutElement>().flexibleWidth = 1;
 
-        GameObject genWorldBtn = new GameObject("BtnGenerateWorld");
-        genWorldBtn.transform.SetParent(topBar.transform, false);
-        genWorldBtn.AddComponent<LayoutElement>().minWidth = 160;
-        genWorldBtn.AddComponent<LayoutElement>().minHeight = 36;
-        Button genBtn = genWorldBtn.AddComponent<Button>();
-        Image genImg = genWorldBtn.AddComponent<Image>();
-        genImg.color = new Color(0.85f, 0.25f, 0.25f);
-        genBtn.targetGraphic = genImg;
-        GameObject genTxtGO = new GameObject("Text");
-        genTxtGO.transform.SetParent(genWorldBtn.transform, false);
-        TextMeshProUGUI genTxt = genTxtGO.AddComponent<TextMeshProUGUI>();
-        genTxt.text = "生成世界";
-        genTxt.font = font;
-        genTxt.fontSize = 14;
-        genTxt.enableAutoSizing = true;
-        genTxt.fontSizeMin = 8;
-        genTxt.fontSizeMax = 14;
-        genTxt.fontStyle = FontStyles.Bold;
-        genTxt.color = Color.white;
-        genTxt.alignment = TextAlignmentOptions.Center;
-        RectTransform genTxtRT = genTxtGO.GetComponent<RectTransform>();
-        genTxtRT.anchorMin = Vector2.zero;
-        genTxtRT.anchorMax = Vector2.one;
-        genTxtRT.sizeDelta = Vector2.zero;
-        genBtn.onClick.AddListener(() =>
-        {
-            if (WorldModel.Instance != null)
-            {
-                WorldModel.Instance.TriggerWorldGeneration();
-            }
+        // 【新增】：自动重生成地形开关
+        GameObject autoRegenToggleRow = new GameObject("AutoRegenToggleRow");
+        autoRegenToggleRow.transform.SetParent(topBar.transform, false);
+        autoRegenToggleRow.AddComponent<LayoutElement>().minWidth = 160;
+        autoRegenToggleRow.AddComponent<LayoutElement>().minHeight = 36;
+        HorizontalLayoutGroup artHlg = autoRegenToggleRow.AddComponent<HorizontalLayoutGroup>();
+        artHlg.spacing = 6;
+        artHlg.childAlignment = TextAnchor.MiddleCenter;
+        artHlg.childControlWidth = true;
+        artHlg.childControlHeight = true;
+        artHlg.childForceExpandWidth = false;
+        artHlg.childForceExpandHeight = true;
+
+        GameObject artLabelGO = new GameObject("Label");
+        artLabelGO.transform.SetParent(autoRegenToggleRow.transform, false);
+        TextMeshProUGUI artLabel = artLabelGO.AddComponent<TextMeshProUGUI>();
+        artLabel.text = "自动重生成";
+        artLabel.font = font;
+        artLabel.fontSize = 12;
+        artLabel.enableAutoSizing = true;
+        artLabel.fontSizeMin = 7;
+        artLabel.fontSizeMax = 12;
+        artLabel.color = Color.white;
+        artLabel.alignment = TextAlignmentOptions.MiddleLeft;
+        artLabelGO.AddComponent<LayoutElement>().minWidth = 80;
+
+        GameObject artToggleGO = new GameObject("Toggle");
+        artToggleGO.transform.SetParent(autoRegenToggleRow.transform, false);
+        artToggleGO.AddComponent<LayoutElement>().minWidth = 30;
+        artToggleGO.AddComponent<LayoutElement>().minHeight = 22;
+        Toggle autoRegenToggle = artToggleGO.AddComponent<Toggle>();
+        autoRegenToggle.isOn = false;
+
+        GameObject artBgGO = new GameObject("Background");
+        artBgGO.transform.SetParent(artToggleGO.transform, false);
+        Image artBgImg = artBgGO.AddComponent<Image>();
+        artBgImg.color = new Color(0.25f, 0.25f, 0.35f);
+        RectTransform artBgRT = artBgGO.GetComponent<RectTransform>();
+        artBgRT.anchorMin = Vector2.zero; artBgRT.anchorMax = Vector2.one;
+        artBgRT.sizeDelta = Vector2.zero;
+        autoRegenToggle.targetGraphic = artBgImg;
+
+        GameObject artCheckGO = new GameObject("Checkmark");
+        artCheckGO.transform.SetParent(artBgGO.transform, false);
+        Image artCheckImg = artCheckGO.AddComponent<Image>();
+        artCheckImg.color = new Color(0.3f, 0.8f, 1f);
+        RectTransform artCheckRT = artCheckGO.GetComponent<RectTransform>();
+        artCheckRT.anchorMin = new Vector2(0.1f, 0.1f);
+        artCheckRT.anchorMax = new Vector2(0.9f, 0.9f);
+        artCheckRT.sizeDelta = Vector2.zero;
+        autoRegenToggle.graphic = artCheckImg;
+
+        autoRegenToggle.onValueChanged.AddListener((on) => {
+            autoRegenTerrain = on;
+            AppendThoughtLine(on ? "自动重生成地形：开启" : "自动重生成地形：关闭");
+        });
+
+        // 【新增】：生成交通按钮
+        GameObject trafficBtnGO = UIPanelBuilder.CreateButton(topBar, "BtnSpawnTraffic", "2. 生成交通");
+        trafficBtnGO.AddComponent<LayoutElement>().minWidth = 120;
+        Button trafficBtn = trafficBtnGO.GetComponent<Button>();
+        trafficBtn.GetComponent<Image>().color = new Color(0.25f, 0.65f, 0.85f); // 蓝色
+        trafficBtn.onClick.AddListener(() => {
+            if (trafficManager != null) { trafficManager.ResetSpawnState(); trafficManager.SpawnNPCs(); }
+            AppendThoughtLine("指令下发：生成NPC与交通流...");
         });
 
         GameObject rosDotGO = new GameObject("RosStatusDot");
@@ -600,14 +690,9 @@ public class MasterUIManager : MonoBehaviour
 
         UIPanelBuilder.CreateTitle(hudPanel, "车辆HUD");
 
-        GameObject minimapGO = new GameObject("Minimap");
-        minimapGO.transform.SetParent(hudPanel.transform, false);
-        minimapGO.AddComponent<LayoutElement>().minHeight = 100;
-        minimapGO.AddComponent<LayoutElement>().minWidth = 200;
-        RawImage rawImg = minimapGO.AddComponent<RawImage>();
-        rawImg.color = new Color(0.85f, 0.85f, 0.85f, 0.3f);
-        minimapRawImage = minimapGO;
 
+        hudTexts["HUDCurrentNode"] = CreateHUDLabel(hudPanel, "当前路口", "N/A", font);
+        hudTexts["HUDNextNode"] = CreateHUDLabel(hudPanel, "下一路口", "N/A", font);
         hudTexts["HUDSpeed"] = CreateHUDLabel(hudPanel, "车速", "0.0 m/s", font);
         hudTexts["HUDSteering"] = CreateHUDLabel(hudPanel, "转向角", "0.0 deg", font);
         hudTexts["HUDAutoMode"] = CreateHUDLabel(hudPanel, "自动驾驶", "否", font);
@@ -619,6 +704,29 @@ public class MasterUIManager : MonoBehaviour
         hudTexts["HUDFPS"] = CreateHUDLabel(hudPanel, "帧率", "0", font);
         hudTexts["HUDVehicleCount"] = CreateHUDLabel(hudPanel, "车辆数", "0", font);
         hudTexts["HUDRosStatus"] = CreateHUDLabel(hudPanel, "ROS2连接", "OFF", font);
+        hudTexts["HUDNodeCount"] = CreateHUDLabel(hudPanel, "路网节点数", "0", font);
+        hudTexts["HUDGroundY"] = CreateHUDLabel(hudPanel, "基准高程", "0.00 m", font);
+
+        UIPanelBuilder.CreateTitle(hudPanel, "主车定向导航");
+        
+        GameObject navRow = new GameObject("NavRow");
+        navRow.transform.SetParent(hudPanel.transform, false);
+        HorizontalLayoutGroup navHlg = navRow.AddComponent<HorizontalLayoutGroup>();
+        navHlg.spacing = 4; navHlg.childControlWidth = true;
+        
+        InputField xInput = UIPanelBuilder.CreateInputRow(navRow, "TargetX", "X:", "0", InputField.ContentType.DecimalNumber).GetComponentInChildren<InputField>();
+        InputField zInput = UIPanelBuilder.CreateInputRow(navRow, "TargetZ", "Z:", "0", InputField.ContentType.DecimalNumber).GetComponentInChildren<InputField>();
+        
+        GameObject goBtnObj = UIPanelBuilder.CreateButton(navRow, "GoBtn", "前往");
+        goBtnObj.GetComponent<Button>().onClick.AddListener(() => {
+            if (autoDrive != null && float.TryParse(xInput.text, out float tx) && float.TryParse(zInput.text, out float tz))
+            {
+                carController.ChangeRole(false); // 确保是主车
+                carController.autoMode = true;   // 强制开启自动驾驶
+                autoDrive.SetDestination(new Vector3(tx, 0, tz)); // 下发目标坐标
+                AppendThoughtLine($"主车自动驾驶激活，目标坐标: ({tx}, {tz})");
+            }
+        });
     }
 
     TextMeshProUGUI CreateHUDLabel(GameObject parent, string label, string defaultValue, TMP_FontAsset font)
@@ -688,9 +796,10 @@ public class MasterUIManager : MonoBehaviour
         keyTexts["S"] = CreateKeyDisplay(keyPanel, "S / Down", "后退", font);
         keyTexts["A"] = CreateKeyDisplay(keyPanel, "A", "左转", font);
         keyTexts["D"] = CreateKeyDisplay(keyPanel, "D", "右转", font);
-        keyTexts["N"] = CreateKeyDisplay(keyPanel, "N", "Reset Nav", font);
-        keyTexts["R"] = CreateKeyDisplay(keyPanel, "R", "Reset Pos", font);
-        keyTexts["Space"] = CreateKeyDisplay(keyPanel, "Space", "Brake", font);
+        keyTexts["N"] = CreateKeyDisplay(keyPanel, "N", "重新导航", font);
+        keyTexts["R"] = CreateKeyDisplay(keyPanel, "R", "重置位置", font);
+        keyTexts["T"] = CreateKeyDisplay(keyPanel, "T", "切换自动与否", font);
+        keyTexts["Space"] = CreateKeyDisplay(keyPanel, "刹车","控制", font);
     }
 
     TextMeshProUGUI CreateKeyDisplay(GameObject parent, string key, string desc, TMP_FontAsset font)
@@ -941,116 +1050,33 @@ public class MasterUIManager : MonoBehaviour
     {
         GameObject module = new GameObject("Module_Terrain");
         module.transform.SetParent(parent.transform, false);
-        module.AddComponent<LayoutElement>().minHeight = 100;
         VerticalLayoutGroup mVLG = module.AddComponent<VerticalLayoutGroup>();
-        mVLG.padding = new RectOffset(0, 0, 0, 0);
-        mVLG.spacing = 2;
-        mVLG.childAlignment = TextAnchor.UpperCenter;
-        mVLG.childControlWidth = true;
-        mVLG.childControlHeight = true;
-        mVLG.childForceExpandWidth = true;
-        mVLG.childForceExpandHeight = false;
-        ContentSizeFitter mCSF = module.AddComponent<ContentSizeFitter>();
-        mCSF.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+        mVLG.spacing = 2; mVLG.childControlWidth = true;
+        module.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
         UIPanelBuilder.CreateTitle(module, "地形与场景");
 
-        GameObject modeRow = new GameObject("ModeDropdownRow");
-        modeRow.transform.SetParent(module.transform, false);
-        modeRow.AddComponent<LayoutElement>().minHeight = 36;
-        HorizontalLayoutGroup mhlg = modeRow.AddComponent<HorizontalLayoutGroup>();
-        mhlg.padding = new RectOffset(4, 4, 0, 0);
-        mhlg.spacing = 8;
-        mhlg.childAlignment = TextAnchor.MiddleLeft;
-        mhlg.childControlWidth = true;
-        mhlg.childControlHeight = true;
-        mhlg.childForceExpandWidth = false;
-        mhlg.childForceExpandHeight = true;
-
-        GameObject modeLabel = new GameObject("Label");
-        modeLabel.transform.SetParent(modeRow.transform, false);
-        TextMeshProUGUI modeLabelTxt = modeLabel.AddComponent<TextMeshProUGUI>();
-        modeLabelTxt.text = "模式:";
-        modeLabelTxt.font = font;
-        modeLabelTxt.fontSize = 13;
-        modeLabelTxt.enableAutoSizing = true;
-        modeLabelTxt.fontSizeMin = 8;
-        modeLabelTxt.fontSizeMax = 13;
-        modeLabelTxt.color = Color.white;
-        modeLabelTxt.alignment = TextAlignmentOptions.Left;
-        modeLabel.AddComponent<LayoutElement>().minWidth = 55;
-
-        GameObject modeDropdownGO = new GameObject("Dropdown");
-        modeDropdownGO.transform.SetParent(modeRow.transform, false);
-        modeDropdownGO.AddComponent<LayoutElement>().flexibleWidth = 1;
-        Dropdown modeDropdown = modeDropdownGO.AddComponent<Dropdown>();
-        modeDropdown.options = new List<Dropdown.OptionData>
-        {
-            new Dropdown.OptionData("城市"),
-            new Dropdown.OptionData("乡村")
-        };
-        modeDropdown.value = 0;
-
-        Image ddImg = modeDropdownGO.AddComponent<Image>();
-        ddImg.color = new Color(0.2f, 0.22f, 0.3f);
-
-        GameObject ddLabelGO = new GameObject("Label");
-        ddLabelGO.transform.SetParent(modeDropdownGO.transform, false);
-        Text ddLabel = ddLabelGO.AddComponent<Text>();
-        ddLabel.text = "城市";
-        ddLabel.font = legacyFont;
-        ddLabel.fontSize = 13;
-        ddLabel.resizeTextForBestFit = true;
-        ddLabel.resizeTextMinSize = 8;
-        ddLabel.resizeTextMaxSize = 13;
-        ddLabel.color = Color.white;
-        ddLabel.alignment = TextAnchor.MiddleLeft;
-        RectTransform ddLRT = ddLabelGO.GetComponent<RectTransform>();
-        ddLRT.anchorMin = Vector2.zero;
-        ddLRT.anchorMax = Vector2.one;
-        ddLRT.offsetMin = new Vector2(8, 0);
-        ddLRT.offsetMax = new Vector2(-20, 0);
-        modeDropdown.captionText = ddLabel;
-
-        GameObject ddItemLabelGO = new GameObject("ItemLabel");
-        ddItemLabelGO.transform.SetParent(modeDropdownGO.transform, false);
-        Text ddItemLabel = ddItemLabelGO.AddComponent<Text>();
-        ddItemLabel.text = "";
-        ddItemLabel.font = legacyFont;
-        ddItemLabel.fontSize = 13;
-        ddItemLabel.resizeTextForBestFit = true;
-        ddItemLabel.resizeTextMinSize = 8;
-        ddItemLabel.resizeTextMaxSize = 13;
-        ddItemLabel.color = Color.black;
-        ddItemLabel.alignment = TextAnchor.MiddleLeft;
-        modeDropdown.itemText = ddItemLabel;
-
-        dropdowns["CityMode"] = modeDropdown;
-        SetupDropdownTemplate(modeDropdown, legacyFont);
+        // 【修复】：彻底抛弃Dropdown，使用按钮组
+        CreateButtonGroup(module, "CityMode", "生成模式:", new string[] { "城市纯平", "乡村起伏" }, 0, (idx) => {
+            bool isCity = (idx == 0);
+            if (citySubPanel != null) citySubPanel.SetActive(isCity);
+            if (countrysideSubPanel != null) countrysideSubPanel.SetActive(!isCity);
+            if (roadGen != null) roadGen.isCountryside = !isCity;
+        }, font);
 
         citySubPanel = BuildFoldoutSection(module, "城市设置", font);
         countrysideSubPanel = BuildFoldoutSection(module, "乡村设置", font);
 
-        RegisterToggle(CreateToggleRow(citySubPanel, "GenCityToggle", "Generate Buildings", true, font), "GenCity");
-        RegisterInputField(UIPanelBuilder.CreateInputRow(citySubPanel, "BldHeightInput", "Bld Height", "10", InputField.ContentType.DecimalNumber), "BldHeight");
-        RegisterInputField(UIPanelBuilder.CreateInputRow(citySubPanel, "SidewalkInput", "Sidewalk Width", "2", InputField.ContentType.DecimalNumber), "Sidewalk");
-        RegisterToggle(CreateToggleRow(citySubPanel, "TrafficLightToggle", "Traffic Lights", true, font), "TrafficLights");
-        RegisterInputField(UIPanelBuilder.CreateInputRow(citySubPanel, "TLChanceInput", "TL Frequency", "0.1", InputField.ContentType.DecimalNumber), "TLChance");
-        RegisterToggle(CreateToggleRow(citySubPanel, "PedestrianToggle", "Pedestrians", false, font), "Pedestrians");
-        RegisterInputField(UIPanelBuilder.CreateInputRow(citySubPanel, "PedSpawnInput", "Ped Spawn Rate", "1.0", InputField.ContentType.DecimalNumber), "PedSpawn");
+        RegisterToggle(CreateToggleRow(citySubPanel, "GenCityToggle", "生成建筑", true, font), "GenCity");
+        RegisterInputField(UIPanelBuilder.CreateInputRow(citySubPanel, "BldHeightInput", "建筑高度", "10", InputField.ContentType.DecimalNumber), "BldHeight");
 
-        RegisterToggle(CreateToggleRow(countrysideSubPanel, "CountryUniformToggle", "Uniform Materials", true, font), "CountryUniform");
-
-        modeDropdown.onValueChanged.AddListener((idx) =>
-        {
-            bool isCity = (idx == 0);
-            if (citySubPanel != null) citySubPanel.SetActive(isCity);
-            if (countrysideSubPanel != null) countrysideSubPanel.SetActive(!isCity);
-        });
+        // 【修复】：补齐所有乡村专用参数
+        RegisterToggle(CreateToggleRow(countrysideSubPanel, "CountryUniformToggle", "统一材质", true, font), "CountryUniform");
+        RegisterInputField(UIPanelBuilder.CreateInputRow(countrysideSubPanel, "CountrysideHeightInput", "高度缩放 (HeightScale)", "15", InputField.ContentType.DecimalNumber), "CountrysideHeightScale");
+        RegisterInputField(UIPanelBuilder.CreateInputRow(countrysideSubPanel, "NoiseScaleInput", "噪波频率 (Noise)", "0.05", InputField.ContentType.DecimalNumber), "NoiseScale");
 
         citySubPanel.SetActive(true);
         countrysideSubPanel.SetActive(false);
-
         module.SetActive(false);
         return module;
     }
@@ -1658,6 +1684,66 @@ public class MasterUIManager : MonoBehaviour
         }
     }
 
+    void CreateButtonGroup(GameObject parent, string groupName, string label, string[] options, int defaultIndex,
+        System.Action<int> onSelected, TMP_FontAsset font)
+    {
+        GameObject row = new GameObject(groupName + "_Row");
+        row.transform.SetParent(parent.transform, false);
+        row.AddComponent<LayoutElement>().minHeight = 36;
+        HorizontalLayoutGroup hlg = row.AddComponent<HorizontalLayoutGroup>();
+        hlg.padding = new RectOffset(4, 4, 0, 0);
+        hlg.spacing = 6;
+        hlg.childAlignment = TextAnchor.MiddleLeft;
+        hlg.childControlWidth = true;
+        hlg.childControlHeight = true;
+        hlg.childForceExpandWidth = false;
+        hlg.childForceExpandHeight = true;
+
+        GameObject lblGO = new GameObject("Label");
+        lblGO.transform.SetParent(row.transform, false);
+        TextMeshProUGUI lblTxt = lblGO.AddComponent<TextMeshProUGUI>();
+        lblTxt.text = label;
+        lblTxt.font = font;
+        lblTxt.fontSize = 13;
+        lblTxt.enableAutoSizing = true;
+        lblTxt.fontSizeMin = 8;
+        lblTxt.fontSizeMax = 13;
+        lblTxt.color = Color.white;
+        lblTxt.alignment = TextAlignmentOptions.Left;
+        lblGO.AddComponent<LayoutElement>().minWidth = 70;
+
+        for (int i = 0; i < options.Length; i++)
+        {
+            int idx = i;
+            GameObject btnGO = UIPanelBuilder.CreateButton(row, groupName + "_Btn" + i, options[i]);
+            btnGO.AddComponent<LayoutElement>().minWidth = 80;
+            Button btn = btnGO.GetComponent<Button>();
+            Image btnImg = btnGO.GetComponent<Image>();
+            if (idx == defaultIndex)
+                btnImg.color = new Color(0.25f, 0.55f, 0.85f);
+            else
+                btnImg.color = new Color(0.2f, 0.22f, 0.3f);
+
+            btn.onClick.AddListener(() =>
+            {
+                onSelected?.Invoke(idx);
+                // 高亮选中按钮
+                foreach (Transform child in row.transform)
+                {
+                    Button childBtn = child.GetComponent<Button>();
+                    if (childBtn != null)
+                    {
+                        Image childImg = child.GetComponent<Image>();
+                        if (childImg != null)
+                            childImg.color = (child.name == groupName + "_Btn" + idx)
+                                ? new Color(0.25f, 0.55f, 0.85f)
+                                : new Color(0.2f, 0.22f, 0.3f);
+                    }
+                }
+            });
+        }
+    }
+
     #endregion
 
     #region Sync & Bind
@@ -1742,9 +1828,12 @@ public class MasterUIManager : MonoBehaviour
         BindInputFieldEvent("UVScale", (v) => { if (roadBuilder != null && float.TryParse(v, out float f)) roadBuilder.uvScale = f; });
         BindInputFieldEvent("TangentLen", (v) => { if (roadBuilder != null && float.TryParse(v, out float f)) roadBuilder.tangentLength = f; });
 
-        BindInputFieldEvent("BldHeight", (v) => { if (roadBuilder != null && float.TryParse(v, out float f)) roadBuilder.buildingHeight = f; });
-        BindInputFieldEvent("Sidewalk", (v) => { if (roadBuilder != null && float.TryParse(v, out float f)) roadBuilder.sidewalkWidth = f; });
+        BindInputFieldEvent("BldHeight", (v) => { if (roadBuilder != null && float.TryParse(v, out float f)) { roadBuilder.buildingHeight = f; TryAutoRegenTerrain(); } });
+        BindInputFieldEvent("Sidewalk", (v) => { if (roadBuilder != null && float.TryParse(v, out float f)) { roadBuilder.sidewalkWidth = f; TryAutoRegenTerrain(); } });
         BindInputFieldEvent("TLChance", (v) => { if (trafficLightManager != null && float.TryParse(v, out float f)) trafficLightManager.placementChance = f; });
+
+        BindInputFieldEvent("CountrysideHeightScale", (v) => { if (roadGen != null && float.TryParse(v, out float f)) { roadGen.countrysideHeightScale = f; TryAutoRegenTerrain(); } });
+        BindInputFieldEvent("NoiseScale", (v) => { if (roadGen != null && float.TryParse(v, out float f)) { /* noiseFrequency 设置 */ TryAutoRegenTerrain(); } });
 
         BindInputFieldEvent("NPCCount", (v) => { if (trafficManager != null && int.TryParse(v, out int i)) trafficManager.npcCount = i; });
         BindInputFieldEvent("NPCMaxSpeed", (v) =>
@@ -1780,12 +1869,12 @@ public class MasterUIManager : MonoBehaviour
             }
         });
 
-        BindToggleEvent("GenCity", (on) => { if (roadBuilder != null) roadBuilder.generateCity = on; });
+        BindToggleEvent("GenCity", (on) => { if (roadBuilder != null) { roadBuilder.generateCity = on; TryAutoRegenTerrain(); } });
         BindToggleEvent("TrafficLights", (on) =>
         {
             if (trafficLightManager != null) trafficLightManager.enabled = on;
         });
-        BindToggleEvent("CountryUniform", (on) => { if (roadBuilder != null) roadBuilder.useCountrysideUniformMaterials = on; });
+        BindToggleEvent("CountryUniform", (on) => { if (roadBuilder != null) { roadBuilder.useCountrysideUniformMaterials = on; TryAutoRegenTerrain(); } });
         BindToggleEvent("SplineGizmos", (on) => { if (roadBuilder != null) roadBuilder.showSplineGizmos = on; });
         BindToggleEvent("ROS2Bridge", (on) =>
         {
@@ -2020,8 +2109,33 @@ public class MasterUIManager : MonoBehaviour
                 rd.color = rosColor;
             }
         }
+        int npcCount = FindObjectsOfType<SimpleAutoDrive>().Length;
+SetHUDValue("HUDCurrentNode", autoDrive != null ? autoDrive.currentLaneId.ToString() : "N/A");
+        SetHUDValue("HUDNextNode", autoDrive != null ? "计算中..." : "N/A"); 
 
-        SetHUDValue("TLStatus", trafficLightManager != null ? "Active" : "Inactive");
+        // 2. 动态读取底层的路网节点数 (安全反射防报错)
+        int nodeCount = 0;
+        if (WorldModel.Instance != null)
+        {
+            var nodeCountProp = WorldModel.Instance.GetType().GetProperty("NodeCount");
+            if (nodeCountProp != null) nodeCount = (int)nodeCountProp.GetValue(WorldModel.Instance);
+            else
+            {
+                var nodesProp = WorldModel.Instance.GetType().GetProperty("Nodes");
+                if (nodesProp != null)
+                {
+                    var nodesList = nodesProp.GetValue(WorldModel.Instance) as System.Collections.IList;
+                    nodeCount = nodesList?.Count ?? 0;
+                }
+            }
+        }
+        SetHUDValue("HUDNodeCount", nodeCount.ToString());
+
+        // 3. 读取基准高程
+        float groundY = (WorldModel.Instance != null && carController != null) ? 
+                        WorldModel.Instance.GetUnifiedHeight(carController.transform.position.x, carController.transform.position.z) : 0f;
+        SetHUDValue("HUDGroundY", $"{groundY:F2} m");
+
     }
 
     void SetHUDValue(string key, string value)

@@ -76,15 +76,12 @@ public class CameraController : MonoBehaviour
     /// <summary>
     /// 处理按键输入
     /// </summary>
-    void HandleInput()
+  void HandleInput()
     {
-        // 切换模式
+        // 切换模式 (原有逻辑)
         if (Input.GetKeyDown(modeSwitchKey))
         {
             currentMode = currentMode == CameraMode.Follow ? CameraMode.FreeFly : CameraMode.Follow;
-            Debug.Log($"📷 相机模式切换为: {currentMode}");
-            
-            // 切换到自由视角时，同步当前角度防止跳闪
             if (currentMode == CameraMode.FreeFly)
             {
                 pitch = transform.eulerAngles.x;
@@ -92,16 +89,32 @@ public class CameraController : MonoBehaviour
             }
         }
 
-        // 切换目标
+        // 切换目标并【真正移交控制权】
         if (Input.GetKeyDown(targetSwitchKey))
         {
             RefreshVehicleList();
             if (allVehicles.Count > 0)
             {
+                // 1. 剥夺当前旧车的控制权，将其变为 NPC
+                if (target != null)
+                {
+                    SimpleCarController oldCar = target.GetComponent<SimpleCarController>();
+                    if (oldCar != null) oldCar.ChangeRole(toNPC: true);
+                }
+
+                // 2. 寻找下一辆车
                 currentTargetIndex = (currentTargetIndex + 1) % allVehicles.Count;
                 target = allVehicles[currentTargetIndex];
-                currentMode = CameraMode.Follow; // 切换目标时强制转为跟随模式
-                Debug.Log($"🎯 相机目标切换为: {target.name}");
+                
+                // 3. 赋予新车控制权，将其变为 玩家主车
+                if (target != null)
+                {
+                    SimpleCarController newCar = target.GetComponent<SimpleCarController>();
+                    if (newCar != null) newCar.ChangeRole(toNPC: false);
+                }
+
+                currentMode = CameraMode.Follow; 
+                Debug.Log($"🎯 相机目标切换并接管控制: {target.name}");
             }
         }
     }
@@ -175,6 +188,8 @@ public class CameraController : MonoBehaviour
         SimpleCarController[] cars = FindObjectsOfType<SimpleCarController>();
         foreach (var car in cars)
         {
+            if (car == null) continue;
+            if (car.transform.position.y < -5f) continue; // 剔除掉进虚空的僵尸车
             allVehicles.Add(car.transform);
         }
     }

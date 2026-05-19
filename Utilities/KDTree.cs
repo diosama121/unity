@@ -99,9 +99,17 @@ public class KDTree
         for (int i = lo; i < hi; i++)
         {
             if (GetAxis(arr[i].Position, axis) < pivot)
-                (arr[i], arr[store++]) = (arr[store], arr[i]);
+            {
+                // 【修复 Bug 11】废弃危险的元组自增交换，改用经典的安全交换
+                Node temp = arr[i];
+                arr[i] = arr[store];
+                arr[store] = temp;
+                store++;
+            }
         }
-        (arr[store], arr[hi]) = (arr[hi], arr[store]);
+        Node temp2 = arr[store];
+        arr[store] = arr[hi];
+        arr[hi] = temp2;
         return store;
     }
 }

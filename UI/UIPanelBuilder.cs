@@ -1,12 +1,12 @@
 using UnityEngine;
 using UnityEngine.UI;
-
+using TMPro;
 /// <summary>
 /// UI面板构建工具类 —— 纯静态方法，从 MasterUIManager 中提取
 /// 用于在 Canvas 下动态生成设置面板的各种 UI 控件
 /// </summary>
 public static class UIPanelBuilder
-{
+{    public static TMP_FontAsset SharedFont;
     public static GameObject CreateTitle(GameObject parent, string text)
     {
         GameObject go = new GameObject("Title");

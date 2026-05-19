@@ -26,7 +26,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
     public bool obstacleDetected = false;
     public int currentLaneId = -1;
     public bool isYielding = false;
-    private float yieldRightOffset = 6f;
+
 
     private LineRenderer trajectoryLine;
     private Vector3[] trajectoryPoints = new Vector3[20];
@@ -88,13 +88,18 @@ public partial class SimpleAutoDrive : MonoBehaviour
 
     void Update()
     {
-        if (!carController.autoMode && !carController.wasdOverride && currentState != DriveState.RemoteControlled) return;
         if (avoidCooldown > 0f) avoidCooldown -= Time.deltaTime;
 
+        // 【修复 Bug 9】将传感器和可视化代码提到 return 之前。
+        // 确保即使玩家在手动驾驶，依然能看到雷达扫描和预测轨迹！
         UpdateSensorData();
-        UpdateStuckDetection();
         UpdateTrajectoryLine();
         DrawLidarRays();
+
+        // 只有状态机和防卡死检测会被拦截
+        if (!carController.autoMode && !carController.wasdOverride && currentState != DriveState.RemoteControlled) return;
+
+        UpdateStuckDetection();
 
         switch (currentState)
         {

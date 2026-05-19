@@ -15,7 +15,8 @@ public class CatmullRomSpline
         ControlPoints = new List<Vector3>();
         foreach (var p in controlPoints)
         {
-            ControlPoints.Add(new Vector3(p.x, 0, p.z));
+            // ✅ 修复：保留真实的 Y 轴高度，不再强制归零！
+            ControlPoints.Add(p);
         }
         _useCentripetal = useCentripetal;
         BakeCurve();

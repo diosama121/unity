@@ -47,18 +47,12 @@ public partial class SimpleCarController : MonoBehaviour
 
     public bool wasdOverride = false;
 
-    void Awake()
-    {
-        allColliders = GetComponentsInChildren<Collider>();
-        if (isNPC)
-        {
-            foreach (var col in allColliders) col.enabled = false;
-        }
-        else
-        {
-            foreach (var col in allColliders) col.enabled = true;
-        }
-    }
+  void Awake()
+{
+    allColliders = GetComponentsInChildren<Collider>();
+    // ✅ 修复：初始化时，调用一次 ChangeRole 确保状态绝对同步
+    ChangeRole(isNPC);
+}
 
     void Start()
     {
@@ -99,7 +93,7 @@ public partial class SimpleCarController : MonoBehaviour
 
     void FixedUpdate()
     {
-        if (isNPC || rb == null) return;
+        if (isNPC || rb == null || rb.isKinematic) return;
 
         RaycastHit hit;
         bool isGrounded = Physics.Raycast(transform.position + Vector3.up * 0.3f, Vector3.down, out hit, 2.0f);
@@ -164,7 +158,35 @@ public partial class SimpleCarController : MonoBehaviour
             }
         }
     }
+// 动态切换车辆身份（玩家/NPC）
+    public void ChangeRole(bool toNPC)
+    {
+        isNPC = toNPC;
+        if (allColliders == null) allColliders = GetComponentsInChildren<Collider>();
+        if (rb == null) rb = GetComponent<Rigidbody>();
 
+        foreach (var col in allColliders) { if (col != null) col.enabled = !isNPC; }
+
+        if (rb != null)
+        {
+            if (isNPC)
+            {
+                rb.isKinematic = true;
+                wasdOverride = false;
+                autoMode = true; // NPC 必须是自动驾驶
+            }
+            else
+            {
+                rb.isKinematic = false;
+                rb.mass = 1500f; rb.drag = 0.5f; rb.angularDrag = 8f;
+                rb.interpolation = RigidbodyInterpolation.Interpolate;
+                rb.constraints = RigidbodyConstraints.None;
+                
+                autoMode = false; // 【关键修复】变成玩家时，强制关闭自动驾驶，交还 WASD 控制权
+                targetSpeed = currentSpeed;
+            }
+        }
+    }
     void HandleManualControl()
     {
         if (wasdOverride)
@@ -258,8 +280,21 @@ public partial class SimpleCarController : MonoBehaviour
 
     public void ResetPosition()
     {
-        transform.position = originalPosition;
-        targetSpeed = 0f;
-        currentSpeed = 0f;
+        // 智能复位：找最近的路网节点，并抬高 1 米防止卡在地里
+        if (WorldModel.Instance != null)
+        {
+            var nearest = WorldModel.Instance.GetNearestNode(transform.position);
+            if (nearest != null)
+            {
+                Vector3 safePos = nearest.WorldPos;
+                safePos.y = WorldModel.Instance.GetUnifiedHeight(safePos.x, safePos.z) + 1.0f;
+                transform.position = safePos;
+                transform.rotation = Quaternion.identity; // 摆正车身
+            }
+        }
+        else transform.position = originalPosition + Vector3.up * 1f;
+
+        if (rb != null) { rb.velocity = Vector3.zero; rb.angularVelocity = Vector3.zero; }
+        targetSpeed = 0f; currentSpeed = 0f;
     }
 }

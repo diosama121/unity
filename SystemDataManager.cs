@@ -25,13 +25,19 @@ public class SystemDataManager : MonoBehaviour
 
     void Start()
     {
-        csvPath = Application.dataPath + "/VehicleTelemetry_V2.0.csv";
-        jsonPath = Application.dataPath + "/RoadMapData_V2.0.json";
+        // ✅ 修复：使用 Application.persistentDataPath 替代 Application.dataPath
+        // 避免权限问题，支持全平台
+        csvPath = System.IO.Path.Combine(Application.persistentDataPath, 
+            "VehicleTelemetry_V2.0_" + System.DateTime.Now.ToString("yyyyMMdd") + ".csv");
+        jsonPath = System.IO.Path.Combine(Application.persistentDataPath, 
+            "RoadMapData_V2.0.json");
         
         csvData.Clear();
         csvData.AppendLine("Timestamp,PosX,PosZ,Speed(km_h),AI_State,Obstacle_Detected,NodeID,NodeType");
         
         if (roadGen == null) roadGen = FindObjectOfType<RoadNetworkGenerator>();
+        
+        Debug.Log("📁 数据导出路径已设置为安全路径：" + Application.persistentDataPath);
     }
 
     void Update()

@@ -167,12 +167,29 @@ public class PathPlanner : MonoBehaviour
                     if (!closedSet.TryGetValue(node.ParentId, out node) &&
                         !openSet.TryGetValue(node.ParentId, out node))
                     {
-                        Debug.LogError("[PathPlanner] 路径重建失败：找不到父节点");
-                        return null;
+                        Debug.LogError($"[PathPlanner] 路径重建断裂！节点 {node.NodeId} 找不到父节点 {node.ParentId}。");
+                        // 【修复 Bug 3】不要直接 return null，跳出循环，把已找回的半截合法路径返回
+                        break;
                     }
                 }
                 path.Add(node.NodeId);
                 path.Reverse();
+                
+                if (path.Count < 2)
+                {
+                    // 【修复】起终点过近（同一节点），兜底：复制一份伪目标保证调用方不死
+                    if (path.Count == 1)
+                    {
+                        Debug.LogWarning($"[PathPlanner] 起终点过近，使用兜底单节点路径");
+                        path.Add(path[0]);
+                    }
+                    else
+                    {
+                        Debug.LogWarning("[PathPlanner] 路径长度不足，返回 null");
+                        return null;
+                    }
+                }
+                
                 return path;
             }
 

@@ -113,15 +113,19 @@ public class WorldModel : MonoBehaviour
     }
 
     foreach (var node in _graph.Values)
-    {
-        if (node.NeighborIds.Count < 3) continue;
+        {
+            if (node.NeighborIds.Count < 3) continue;
 
-        List<int> sorted = node.NeighborIds
-            .OrderBy(nbId => Mathf.Atan2(
-                _graph[nbId].WorldPos.z - node.WorldPos.z,
-                _graph[nbId].WorldPos.x - node.WorldPos.x))
-            .ToList();
-        node.PolarSortedNeighbors = sorted;
+            List<int> sorted = node.NeighborIds
+                .OrderBy(nbId => {
+                    RoadNode nbNode = _graph.GetValueOrDefault(nbId);
+                    if (nbNode == null) return 0f;
+                    return Mathf.Atan2(
+                        nbNode.WorldPos.z - node.WorldPos.z,
+                        nbNode.WorldPos.x - node.WorldPos.x);
+                })
+                .ToList();
+            node.PolarSortedNeighbors = sorted;
 
         node.AngleToNextNeighbor = new Dictionary<int, float>();
         int count = sorted.Count;
@@ -132,18 +136,23 @@ public class WorldModel : MonoBehaviour
             int nbA = sorted[i];
             int nbB = sorted[(i + 1) % count];
 
-            float d = Vector3.Distance(node.WorldPos, _graph[nbA].WorldPos);
+            RoadNode nodeA = _graph.GetValueOrDefault(nbA);
+            RoadNode nodeB = _graph.GetValueOrDefault(nbB);
+            
+            if (nodeA == null || nodeB == null) continue;
+            
+            float d = Vector3.Distance(node.WorldPos, nodeA.WorldPos);
             if (d > maxDist) maxDist = d;
 
             Vector3 dirA = new Vector3(
-                _graph[nbA].WorldPos.x - node.WorldPos.x,
+                nodeA.WorldPos.x - node.WorldPos.x,
                 0f,
-                _graph[nbA].WorldPos.z - node.WorldPos.z).normalized;
+                nodeA.WorldPos.z - node.WorldPos.z).normalized;
 
             Vector3 dirB = new Vector3(
-                _graph[nbB].WorldPos.x - node.WorldPos.x,
+                nodeB.WorldPos.x - node.WorldPos.x,
                 0f,
-                _graph[nbB].WorldPos.z - node.WorldPos.z).normalized;
+                nodeB.WorldPos.z - node.WorldPos.z).normalized;
 
             float theta = Mathf.Acos(Mathf.Clamp(Vector3.Dot(dirA, dirB), -1f, 1f));
             node.AngleToNextNeighbor[nbA] = theta;
