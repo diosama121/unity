@@ -60,7 +60,9 @@ public class MasterUIManager : MonoBehaviour
     private static readonly Vector2 refResolution = new Vector2(1920, 1080);
 
     private bool isMinimalMode = false;
-    private bool autoRegenTerrain = false;
+    private bool bakeTerrainUnderRoads = true;
+
+    private Slider timeSlider;
 
     private GameObject minimapRawImage;
     private GameObject torOverlay;
@@ -105,10 +107,19 @@ public class MasterUIManager : MonoBehaviour
         {
             ToggleMinimalMode();
         }
-if (Input.GetKeyDown(KeyCode.R) && carController != null)
+if (Input.GetKeyDown(KeyCode.R))
             {
-                carController.ResetPosition();
-                if (thoughtStreamText != null) AppendThoughtLine("已将主车位置重置到安全路面");
+                SimpleCarController[] allCars = FindObjectsOfType<SimpleCarController>();
+                int resetCount = 0;
+                foreach (var c in allCars)
+                {
+                    if (c != null)
+                    {
+                        c.ResetPosition();
+                        resetCount++;
+                    }
+                }
+                if (thoughtStreamText != null) AppendThoughtLine($"R键：已将 {resetCount} 辆车重置到安全路面");
             }
 
         if (RuntimeInputManager.Instance == null) return;
@@ -154,6 +165,25 @@ if (Input.GetKeyDown(KeyCode.R) && carController != null)
             {
                 autoDrive.currentState = SimpleAutoDrive.DriveState.Idle;
                 if (thoughtStreamText != null) AppendThoughtLine("手动触发：导航状态重置");
+            }
+
+            if (Input.GetKeyDown(KeyCode.Equals) || Input.GetKeyDown(KeyCode.KeypadPlus))
+            {
+                float[] scales = { 0f, 1f, 2f, 5f };
+                int cur = Mathf.Approximately(Time.timeScale, 0f) ? 0 : (Mathf.Approximately(Time.timeScale, 2f) ? 2 : (Mathf.Approximately(Time.timeScale, 5f) ? 3 : 1));
+                int next = Mathf.Min(cur + 1, 3);
+                Time.timeScale = scales[next];
+                if (timeSlider != null) timeSlider.SetValueWithoutNotify(next);
+                SyncDropdownValue("TimeMode", next);
+            }
+            if (Input.GetKeyDown(KeyCode.Minus) || Input.GetKeyDown(KeyCode.KeypadMinus))
+            {
+                float[] scales = { 0f, 1f, 2f, 5f };
+                int cur = Mathf.Approximately(Time.timeScale, 0f) ? 0 : (Mathf.Approximately(Time.timeScale, 2f) ? 2 : (Mathf.Approximately(Time.timeScale, 5f) ? 3 : 1));
+                int prev = Mathf.Max(cur - 1, 0);
+                Time.timeScale = scales[prev];
+                if (timeSlider != null) timeSlider.SetValueWithoutNotify(prev);
+                SyncDropdownValue("TimeMode", prev);
             }
 
             // [Space] 原有刹车逻辑
@@ -360,14 +390,6 @@ if (Input.GetKeyDown(KeyCode.R) && carController != null)
 
     #region Toggle & Shortcuts
 
-    void TryAutoRegenTerrain()
-    {
-        if (!autoRegenTerrain) return;
-        if (roadGen != null) roadGen.Generate();
-        if (roadBuilder != null) roadBuilder.BuildRoads();
-        Debug.Log("[MasterUIManager] 自动重生成地形已触发");
-    }
-
     void ToggleMinimalMode()
     {
         isMinimalMode = !isMinimalMode;
@@ -500,7 +522,7 @@ if (Input.GetKeyDown(KeyCode.R) && carController != null)
         GameObject artLabelGO = new GameObject("Label");
         artLabelGO.transform.SetParent(autoRegenToggleRow.transform, false);
         TextMeshProUGUI artLabel = artLabelGO.AddComponent<TextMeshProUGUI>();
-        artLabel.text = "自动重生成";
+        artLabel.text = "烘焙路面";
         artLabel.font = font;
         artLabel.fontSize = 12;
         artLabel.enableAutoSizing = true;
@@ -508,14 +530,14 @@ if (Input.GetKeyDown(KeyCode.R) && carController != null)
         artLabel.fontSizeMax = 12;
         artLabel.color = Color.white;
         artLabel.alignment = TextAlignmentOptions.MidlineLeft;
-        artLabelGO.AddComponent<LayoutElement>().minWidth = 80;
+        artLabelGO.AddComponent<LayoutElement>().minWidth = 65;
 
         GameObject artToggleGO = new GameObject("Toggle");
         artToggleGO.transform.SetParent(autoRegenToggleRow.transform, false);
         artToggleGO.AddComponent<LayoutElement>().minWidth = 30;
         artToggleGO.AddComponent<LayoutElement>().minHeight = 22;
         Toggle autoRegenToggle = artToggleGO.AddComponent<Toggle>();
-        autoRegenToggle.isOn = false;
+        autoRegenToggle.isOn = bakeTerrainUnderRoads;
 
         GameObject artBgGO = new GameObject("Background");
         artBgGO.transform.SetParent(artToggleGO.transform, false);
@@ -537,8 +559,9 @@ if (Input.GetKeyDown(KeyCode.R) && carController != null)
         autoRegenToggle.graphic = artCheckImg;
 
         autoRegenToggle.onValueChanged.AddListener((on) => {
-            autoRegenTerrain = on;
-            AppendThoughtLine(on ? "自动重生成地形：开启" : "自动重生成地形：关闭");
+            bakeTerrainUnderRoads = on;
+            if (roadBuilder != null) roadBuilder.bakeTerrainUnderRoads = on;
+            AppendThoughtLine(on ? "烘焙路面：开启（路生成时将挖掉路面下地形）" : "烘焙路面：关闭（保留完整地形）");
         });
 
         // 【新增】：生成交通按钮
@@ -568,17 +591,87 @@ if (Input.GetKeyDown(KeyCode.R) && carController != null)
 
         GameObject timeLabelGO = new GameObject("TimeLabel");
         timeLabelGO.transform.SetParent(topBar.transform, false);
-        timeLabelGO.AddComponent<LayoutElement>().minWidth = 80;
-        TextMeshProUGUI timeLabel = timeLabelGO.AddComponent<TextMeshProUGUI>();
-        timeLabel.text = "Time x1";
-        timeLabel.font = font;
-        timeLabel.fontSize = 12;
-        timeLabel.enableAutoSizing = true;
-        timeLabel.fontSizeMin = 7;
-        timeLabel.fontSizeMax = 12;
-        timeLabel.color = new Color(0.3f, 0.8f, 1f);
-        timeLabel.alignment = TextAlignmentOptions.Center;
-        timeLabelGO.name = "TimeLabel";
+        timeLabelGO.AddComponent<LayoutElement>().minWidth = 160;
+        HorizontalLayoutGroup tlHLG = timeLabelGO.AddComponent<HorizontalLayoutGroup>();
+        tlHLG.spacing = 4;
+        tlHLG.childAlignment = TextAnchor.MiddleCenter;
+        tlHLG.childControlWidth = true;
+        tlHLG.childControlHeight = true;
+        tlHLG.childForceExpandWidth = false;
+        tlHLG.childForceExpandHeight = true;
+
+        GameObject timeValGO = new GameObject("TimeVal");
+        timeValGO.transform.SetParent(timeLabelGO.transform, false);
+        timeValGO.AddComponent<LayoutElement>().minWidth = 55;
+        TextMeshProUGUI timeVal = timeValGO.AddComponent<TextMeshProUGUI>();
+        timeVal.text = "x1";
+        timeVal.font = font;
+        timeVal.fontSize = 12;
+        timeVal.enableAutoSizing = true;
+        timeVal.fontSizeMin = 8;
+        timeVal.fontSizeMax = 12;
+        timeVal.color = new Color(0.3f, 0.8f, 1f);
+        timeVal.alignment = TextAlignmentOptions.Center;
+
+        GameObject sliderGO = new GameObject("TimeSlider");
+        sliderGO.transform.SetParent(timeLabelGO.transform, false);
+        sliderGO.AddComponent<LayoutElement>().minWidth = 90;
+        sliderGO.AddComponent<LayoutElement>().minHeight = 22;
+        timeSlider = sliderGO.AddComponent<Slider>();
+        timeSlider.minValue = 0;
+        timeSlider.maxValue = 3;
+        timeSlider.wholeNumbers = true;
+        timeSlider.value = 1;
+
+        GameObject sliderBgGO = new GameObject("Background", typeof(RectTransform));
+        sliderBgGO.transform.SetParent(sliderGO.transform, false);
+        Image sliderBgImg = sliderBgGO.AddComponent<Image>();
+        sliderBgImg.color = new Color(0.2f, 0.2f, 0.28f);
+        RectTransform bgRT = sliderBgGO.GetComponent<RectTransform>();
+        bgRT.anchorMin = Vector2.zero; bgRT.anchorMax = Vector2.one;
+        bgRT.sizeDelta = new Vector2(0, -8);
+        bgRT.offsetMin = new Vector2(0, 4); bgRT.offsetMax = new Vector2(0, -4);
+
+        GameObject fillAreaGO = new GameObject("Fill Area", typeof(RectTransform));
+        fillAreaGO.transform.SetParent(sliderGO.transform, false);
+        RectTransform faRT = fillAreaGO.GetComponent<RectTransform>();
+        faRT.anchorMin = Vector2.zero; faRT.anchorMax = Vector2.one;
+        faRT.sizeDelta = new Vector2(0, -8);
+        faRT.offsetMin = new Vector2(0, 4); faRT.offsetMax = new Vector2(0, -4);
+
+        GameObject fillGO = new GameObject("Fill", typeof(RectTransform));
+        fillGO.transform.SetParent(fillAreaGO.transform, false);
+        Image fillImg = fillGO.AddComponent<Image>();
+        fillImg.color = new Color(0.3f, 0.7f, 1f, 0.8f);
+        RectTransform fillRT = fillGO.GetComponent<RectTransform>();
+        fillRT.anchorMin = Vector2.zero; fillRT.anchorMax = Vector2.one;
+        fillRT.sizeDelta = Vector2.zero;
+        timeSlider.fillRect = fillRT;
+        timeSlider.targetGraphic = sliderBgImg;
+
+        GameObject handleAreaGO = new GameObject("Handle Slide Area", typeof(RectTransform));
+        handleAreaGO.transform.SetParent(sliderGO.transform, false);
+        RectTransform haRT = handleAreaGO.GetComponent<RectTransform>();
+        haRT.anchorMin = Vector2.zero; haRT.anchorMax = Vector2.one;
+        haRT.sizeDelta = Vector2.zero;
+
+        GameObject handleGO = new GameObject("Handle", typeof(RectTransform));
+        handleGO.transform.SetParent(handleAreaGO.transform, false);
+        Image handleImg = handleGO.AddComponent<Image>();
+        handleImg.color = new Color(0.3f, 0.8f, 1f);
+        RectTransform handleRT = handleGO.GetComponent<RectTransform>();
+        handleRT.anchorMin = new Vector2(0.5f, 0.5f);
+        handleRT.anchorMax = new Vector2(0.5f, 0.5f);
+        handleRT.sizeDelta = new Vector2(14, 18);
+        timeSlider.handleRect = handleRT;
+
+        float[] scales = { 0f, 1f, 2f, 5f };
+        timeSlider.onValueChanged.AddListener((v) => {
+            int idx = Mathf.RoundToInt(v);
+            Time.timeScale = scales[idx];
+            timeVal.text = "x" + scales[idx];
+            SyncDropdownValue("TimeMode", idx);
+        });
     }
 
     void CreateNavButton(GameObject parent, string name, string label, TMP_FontAsset font, UnityEngine.Events.UnityAction callback)
@@ -717,9 +810,10 @@ if (Input.GetKeyDown(KeyCode.R) && carController != null)
         goBtnObj.GetComponent<Button>().onClick.AddListener(() => {
             if (autoDrive != null && float.TryParse(xInput.text, out float tx) && float.TryParse(zInput.text, out float tz))
             {
-                carController.ChangeRole(false); // 确保是主车
-                carController.autoMode = true;   // 强制开启自动驾驶
-                autoDrive.SetDestination(new Vector3(tx, 0, tz)); // 下发目标坐标
+                carController.ChangeRole(false);
+                carController.autoMode = true;
+                float ty = WorldModel.Instance != null ? WorldModel.Instance.GetUnifiedHeight(tx, tz) : 0f;
+                autoDrive.SetDestination(new Vector3(tx, ty, tz));
                 AppendThoughtLine($"主车自动驾驶激活，目标坐标: ({tx}, {tz})");
             }
         });
@@ -1824,12 +1918,12 @@ if (Input.GetKeyDown(KeyCode.R) && carController != null)
         BindInputFieldEvent("UVScale", (v) => { if (roadBuilder != null && float.TryParse(v, out float f)) roadBuilder.uvScale = f; });
         BindInputFieldEvent("TangentLen", (v) => { if (roadBuilder != null && float.TryParse(v, out float f)) roadBuilder.tangentLength = f; });
 
-        BindInputFieldEvent("BldHeight", (v) => { if (roadBuilder != null && float.TryParse(v, out float f)) { roadBuilder.buildingHeight = f; TryAutoRegenTerrain(); } });
-        BindInputFieldEvent("Sidewalk", (v) => { if (roadBuilder != null && float.TryParse(v, out float f)) { roadBuilder.sidewalkWidth = f; TryAutoRegenTerrain(); } });
+        BindInputFieldEvent("BldHeight", (v) => { if (roadBuilder != null && float.TryParse(v, out float f)) roadBuilder.buildingHeight = f; });
+        BindInputFieldEvent("Sidewalk", (v) => { if (roadBuilder != null && float.TryParse(v, out float f)) roadBuilder.sidewalkWidth = f; });
         BindInputFieldEvent("TLChance", (v) => { if (trafficLightManager != null && float.TryParse(v, out float f)) trafficLightManager.placementChance = f; });
 
-        BindInputFieldEvent("CountrysideHeightScale", (v) => { if (roadGen != null && float.TryParse(v, out float f)) { roadGen.countrysideHeightScale = f; TryAutoRegenTerrain(); } });
-        BindInputFieldEvent("NoiseScale", (v) => { if (roadGen != null && float.TryParse(v, out float f)) { /* noiseFrequency 设置 */ TryAutoRegenTerrain(); } });
+        BindInputFieldEvent("CountrysideHeightScale", (v) => { if (roadGen != null && float.TryParse(v, out float f)) roadGen.countrysideHeightScale = f; });
+        BindInputFieldEvent("NoiseScale", (v) => { if (roadGen != null && float.TryParse(v, out float f)) { /* noiseFrequency 设置 */ } });
 
         BindInputFieldEvent("NPCCount", (v) => { if (trafficManager != null && int.TryParse(v, out int i)) trafficManager.npcCount = i; });
         BindInputFieldEvent("NPCMaxSpeed", (v) =>
@@ -1865,12 +1959,12 @@ if (Input.GetKeyDown(KeyCode.R) && carController != null)
             }
         });
 
-        BindToggleEvent("GenCity", (on) => { if (roadBuilder != null) { roadBuilder.generateCity = on; TryAutoRegenTerrain(); } });
+        BindToggleEvent("GenCity", (on) => { if (roadBuilder != null) roadBuilder.generateCity = on; });
         BindToggleEvent("TrafficLights", (on) =>
         {
             if (trafficLightManager != null) trafficLightManager.enabled = on;
         });
-        BindToggleEvent("CountryUniform", (on) => { if (roadBuilder != null) { roadBuilder.useCountrysideUniformMaterials = on; TryAutoRegenTerrain(); } });
+        BindToggleEvent("CountryUniform", (on) => { if (roadBuilder != null) roadBuilder.useCountrysideUniformMaterials = on; });
         BindToggleEvent("SplineGizmos", (on) => { if (roadBuilder != null) roadBuilder.showSplineGizmos = on; });
         BindToggleEvent("ROS2Bridge", (on) =>
         {
@@ -2058,6 +2152,16 @@ if (Input.GetKeyDown(KeyCode.R) && carController != null)
         if (carController == null) carController = FindObjectOfType<SimpleCarController>();
         if (autoDrive == null) autoDrive = FindObjectOfType<SimpleAutoDrive>();
 
+        if (cameraController != null && cameraController.target != null)
+        {
+            SimpleCarController camCar = cameraController.target.GetComponent<SimpleCarController>();
+            if (camCar != null && camCar != carController)
+            {
+                carController = camCar;
+                autoDrive = camCar.GetComponent<SimpleAutoDrive>();
+            }
+        }
+
         SetHUDValue("HUDSpeed", carController != null ? carController.currentSpeed.ToString("F1") + " m/s" : "N/A");
         SetHUDValue("HUDSteering", carController != null ? carController.currentSteeringAngle.ToString("F1") + " deg" : "N/A");
         SetHUDValue("HUDAutoMode", carController != null ? (carController.autoMode ? "是" : "否") : "N/A");
@@ -2088,11 +2192,18 @@ if (Input.GetKeyDown(KeyCode.R) && carController != null)
         string ts = "x" + Time.timeScale.ToString("F0");
         SetHUDValue("HUDTimeScale", ts);
 
-        Transform timeLabel = topBar != null ? topBar.transform.Find("TimeLabel") : null;
+        Transform timeLabel = topBar != null ? topBar.transform.Find("TimeLabel/TimeVal") : null;
         if (timeLabel != null)
         {
             TextMeshProUGUI tl = timeLabel.GetComponent<TextMeshProUGUI>();
-            if (tl != null) tl.text = "Time " + ts;
+            if (tl != null) tl.text = ts;
+        }
+        if (timeSlider != null)
+        {
+            float[] scales = { 0f, 1f, 2f, 5f };
+            for (int i = 0; i < scales.Length; i++)
+                if (Mathf.Approximately(Time.timeScale, scales[i]))
+                    timeSlider.SetValueWithoutNotify(i);
         }
 
         if (cameraController != null && dropdowns.TryGetValue("CamMode", out Dropdown camDD) && camDD != null)

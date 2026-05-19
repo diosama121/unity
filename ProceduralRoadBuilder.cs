@@ -48,6 +48,9 @@ public class ProceduralRoadBuilder : MonoBehaviour
     public Material sidewalkMaterial;
     public float sidewalkHeight = 0.2f;
 
+    [Header("=== 路面烘焙 ===")]
+    public bool bakeTerrainUnderRoads = true;
+
     [Header("=== 调试可视化 ===")]
     public bool showSplineGizmos = false;
 
@@ -172,7 +175,7 @@ public class ProceduralRoadBuilder : MonoBehaviour
         RoadMeshCombiner.CombineRoadMeshes(meshRoot.transform);
 
         var terrainGrid = TerrainGridSystem.Instance;
-        if (terrainGrid != null)
+        if (terrainGrid != null && bakeTerrainUnderRoads)
         {
             if (roadGen != null && !roadGen.isCountryside)
             {

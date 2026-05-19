@@ -26,7 +26,6 @@ public class TrafficManager : MonoBehaviour
     private PathPlanner pathPlanner;
 
     private bool _hasSpawned = false;
-    [SerializeField] private GameObject npcVehiclePrefab;
 
     public void ResetSpawnState() { _hasSpawned = false; }
 
@@ -72,15 +71,14 @@ public class TrafficManager : MonoBehaviour
     {
         if (_hasSpawned) { Debug.Log("TrafficManager: NPC已生成，跳过重复调用"); return; }
 
-        // 【修复点】：彻底销毁旧车
         ClearAllNPCs();
 
         roadGen = FindObjectOfType<RoadNetworkGenerator>();
         pathPlanner = FindObjectOfType<PathPlanner>();
 
-        if (npcVehiclePrefab == null) return;
-        if (roadGen == null || roadGen.nodes == null || roadGen.nodes.Count < 2) return;
-        if (pathPlanner == null) return;
+        if (normalNpcPrefabs == null || normalNpcPrefabs.Length == 0) { Debug.LogError("[TrafficManager] normalNpcPrefabs 数组为空！请在 Inspector 拖入 NPC 车辆预制体。"); return; }
+        if (roadGen == null || roadGen.nodes == null || roadGen.nodes.Count < 2) { Debug.LogWarning("[TrafficManager] 路网数据不可用，无法生成 NPC。"); return; }
+        if (pathPlanner == null) { Debug.LogWarning("[TrafficManager] PathPlanner 未找到，无法生成 NPC。"); return; }
 
         List<RoadNetworkGenerator.WaypointNode> shuffledNodes = new List<RoadNetworkGenerator.WaypointNode>(roadGen.nodes);
         ShuffleList(shuffledNodes);
@@ -93,7 +91,8 @@ public class TrafficManager : MonoBehaviour
             if (targetNode == null) continue;
 
             // 先随便在这个节点实例化
-            GameObject npcObj = Instantiate(npcVehiclePrefab, startNode.position, Quaternion.identity);
+            GameObject chosenPrefab = normalNpcPrefabs[Random.Range(0, normalNpcPrefabs.Length)];
+            GameObject npcObj = Instantiate(chosenPrefab, startNode.position, Quaternion.identity);
             npcObj.name = $"NPC_Vehicle_{spawnedCount}";
 
             SimpleCarController controller = npcObj.GetComponent<SimpleCarController>();
@@ -128,11 +127,13 @@ public class TrafficManager : MonoBehaviour
                 }
                 else
                 {
-                    Destroy(npcObj); // 规划失败立刻销毁
+                    Debug.LogWarning($"[TrafficManager] NPC {spawnedCount} 路径规划失败，节点 {startNode.id} -> {targetNode.id}，已销毁实例。");
+                    Destroy(npcObj);
                 }
             }
         }
-        _hasSpawned = true;
+        _hasSpawned = spawnedCount > 0;
+        if (!_hasSpawned) Debug.LogWarning("[TrafficManager] 未成功生成任何 NPC。");
     }
 
     public GameObject SpawnEmergencyVehicle(Vector3 nearPosition)

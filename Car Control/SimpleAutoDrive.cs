@@ -275,6 +275,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
             {
                 currentSpline = newSpline;
                 currentT = 0f;
+                currentState = DriveState.Following;
                 return;
             }
         }
