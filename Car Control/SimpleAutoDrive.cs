@@ -5,6 +5,11 @@ public partial class SimpleAutoDrive : MonoBehaviour
 {
     [Header("组件引用")]
     public PathPlanner pathPlanner;
+    public SemanticPathPlanner semanticPlanner;
+
+    [Header("CTE 边界安全锁")]
+    public float vehicleWidth = 2f;
+    public float cteSafetyMargin = 0.5f;
 
     [Header("控制参数")]
     public float targetSpeed = 15f;
@@ -63,6 +68,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
     {
         carController = GetComponent<SimpleCarController>();
         if (pathPlanner == null) pathPlanner = FindObjectOfType<PathPlanner>();
+        if (semanticPlanner == null) semanticPlanner = FindObjectOfType<SemanticPathPlanner>();
         _uiManager = FindObjectOfType<MasterUIManager>();
         carController.autoMode = true;
         lastPosition = transform.position;
@@ -246,22 +252,57 @@ public partial class SimpleAutoDrive : MonoBehaviour
 
     void RequestNewRandomPath()
     {
-        if (WorldModel.Instance != null && pathPlanner != null)
+        if (WorldModel.Instance != null)
         {
-            for (int i = 0; i < 10; i++)
+            CatmullRomSpline newSpline = null;
+            int targetId = -1;
+
+            if (semanticPlanner != null)
             {
-                int randTargetId = Random.Range(0, WorldModel.Instance.NodeCount);
-                RoadNode targetNode = WorldModel.Instance.GetNode(randTargetId);
-                if (targetNode != null && targetNode.NeighborIds != null && targetNode.NeighborIds.Count > 1)
+                for (int i = 0; i < 10; i++)
                 {
-                    if (Vector3.Distance(transform.position, targetNode.WorldPos) < 20f) continue;
-                    CatmullRomSpline newSpline = pathPlanner.PlanPathSpline(transform.position, targetNode.WorldPos);
-                    if (newSpline != null && newSpline.TotalLength > 0)
+                    int randTargetId = Random.Range(0, WorldModel.Instance.NodeCount);
+                    RoadNode targetNode = WorldModel.Instance.GetNode(randTargetId);
+                    if (targetNode != null && targetNode.NeighborIds != null && targetNode.NeighborIds.Count > 1)
                     {
-                        SetSplinePath(newSpline, targetNode.Id);
-                        return;
+                        if (Vector3.Distance(transform.position, targetNode.WorldPos) < 20f) continue;
+                        List<int> heuristicPath = semanticPlanner.FindHeuristicPath(transform.position, targetNode.WorldPos, transform.forward);
+                        if (heuristicPath != null && heuristicPath.Count >= 2)
+                        {
+                            newSpline = semanticPlanner.GenerateAdaptiveSpline(heuristicPath);
+                            if (newSpline != null && newSpline.TotalLength > 0)
+                            {
+                                targetId = randTargetId;
+                                break;
+                            }
+                        }
                     }
                 }
+            }
+
+            if (newSpline == null && pathPlanner != null)
+            {
+                for (int i = 0; i < 10; i++)
+                {
+                    int randTargetId = Random.Range(0, WorldModel.Instance.NodeCount);
+                    RoadNode targetNode = WorldModel.Instance.GetNode(randTargetId);
+                    if (targetNode != null && targetNode.NeighborIds != null && targetNode.NeighborIds.Count > 1)
+                    {
+                        if (Vector3.Distance(transform.position, targetNode.WorldPos) < 20f) continue;
+                        newSpline = pathPlanner.PlanPathSpline(transform.position, targetNode.WorldPos);
+                        if (newSpline != null && newSpline.TotalLength > 0)
+                        {
+                            targetId = randTargetId;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (newSpline != null)
+            {
+                SetSplinePath(newSpline, targetId);
+                return;
             }
         }
         currentState = DriveState.Idle;
