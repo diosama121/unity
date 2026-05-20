@@ -43,6 +43,10 @@ private bool cachedTrafficAhead = false;
     public float blindSpotRayRange = 12f;
     public float boundaryRayHeight = 0.5f;
 
+    [Header("传感器设置")]
+    [Tooltip("雷达向车头方向偏移的距离，一般轿车中心到车头大概 2 到 2.5 米")]
+    public float sensorForwardOffset = 2.5f;
+
     [Header("制动与物理")]
     public float maxBrakeDecel = 10f;
     public float aebBrakeDecel = 12f;
@@ -168,6 +172,8 @@ private bool cachedTrafficAhead = false;
 
         if (pendingBrakeOverride)
             carController.SetAutoBrake(pendingBrakeDecel);
+        else
+            carController.SetAutoBrake(0f);
 
         if (pendingThrottle != 0f || pendingSteer != 0f)
             carController.SetAutoControl(pendingThrottle, pendingSteer);
@@ -276,6 +282,9 @@ private bool cachedTrafficAhead = false;
             pendingSteer = 0f;
             return;
         }
+
+        autoDrive.targetSpeed = cruiseSpeedBase;
+        pendingBrakeOverride = false;
 
         float distToStop = GetDistanceToStopLine();
 
@@ -500,14 +509,17 @@ private bool cachedTrafficAhead = false;
 
     private bool DetectCrashPropagation()
     {
-        Vector3 origin = transform.position + Vector3.up * boundaryRayHeight;
-        if (!Physics.SphereCast(origin, 1.5f, transform.forward, out RaycastHit first, frontTrafficRange, obstacleMask, QueryTriggerInteraction.Ignore))
-            return false;
-
-        SimpleCarController lead = first.collider.GetComponentInParent<SimpleCarController>();
-        if (lead == null) return false;
-
-        return Mathf.Abs(lead.currentSpeed) < 1.5f && first.distance < 20f;
+        Vector3 origin = transform.position + transform.forward * sensorForwardOffset + Vector3.up * boundaryRayHeight;
+        RaycastHit[] hits = Physics.SphereCastAll(origin, 1.5f, transform.forward, frontTrafficRange, obstacleMask, QueryTriggerInteraction.Ignore);
+        foreach (var hit in hits)
+        {
+            var lead = hit.collider.GetComponentInParent<SimpleCarController>();
+            if (lead != null && lead != carController)
+            {
+                if (Mathf.Abs(lead.currentSpeed) < 1.5f && hit.distance < 20f) return true;
+            }
+        }
+        return false;
     }
 
     private bool ShouldStopForSignal(out float brakeDecel)
@@ -600,17 +612,29 @@ private bool cachedTrafficAhead = false;
 
     private float GetFrontObstacleDistance(float maxRange)
     {
-        Vector3 origin = transform.position + Vector3.up * boundaryRayHeight;
-        return Physics.SphereCast(origin, 1.4f, transform.forward, out RaycastHit hit, maxRange, obstacleMask, QueryTriggerInteraction.Ignore)
-            ? hit.distance
-            : maxRange;
+        Vector3 origin = transform.position + transform.forward * sensorForwardOffset + Vector3.up * boundaryRayHeight;
+        RaycastHit[] hits = Physics.SphereCastAll(origin, 1.4f, transform.forward, maxRange, obstacleMask, QueryTriggerInteraction.Ignore);
+        float minDist = maxRange;
+        foreach (var hit in hits)
+        {
+            var otherCar = hit.collider.GetComponentInParent<SimpleCarController>();
+            if (otherCar == carController) continue;
+
+            if (hit.distance < minDist) minDist = hit.distance;
+        }
+        return minDist;
     }
 
     private bool HasBlockingVehicleAhead(float range)
     {
-        Vector3 origin = transform.position + Vector3.up * boundaryRayHeight;
-        return Physics.SphereCast(origin, 1.5f, transform.forward, out RaycastHit hit, range, obstacleMask, QueryTriggerInteraction.Ignore)
-               && hit.collider.GetComponentInParent<SimpleCarController>() != null;
+        Vector3 origin = transform.position + transform.forward * sensorForwardOffset + Vector3.up * boundaryRayHeight;
+        RaycastHit[] hits = Physics.SphereCastAll(origin, 1.5f, transform.forward, range, obstacleMask, QueryTriggerInteraction.Ignore);
+        foreach (var hit in hits)
+        {
+            var otherCar = hit.collider.GetComponentInParent<SimpleCarController>();
+            if (otherCar != null && otherCar != carController) return true;
+        }
+        return false;
     }
 
     private bool IsLeftLaneClear()

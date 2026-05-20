@@ -219,10 +219,10 @@ public partial class SimpleCarController : MonoBehaviour
 
     void HandleAutoDrive()
     {
-        if (autoBrakingDecel > 0.01f && currentSpeed > 0.1f)
+        if (autoBrakingDecel > 0.01f)
         {
             float effectiveDecel = Mathf.Max(autoBrakingDecel, brakeDeceleration * 0.3f);
-            targetSpeed = Mathf.Max(0f, currentSpeed - effectiveDecel * Time.deltaTime);
+            targetSpeed = Mathf.MoveTowards(targetSpeed, 0f, effectiveDecel * Time.deltaTime);
         }
         else
         {

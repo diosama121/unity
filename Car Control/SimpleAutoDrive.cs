@@ -16,6 +16,10 @@ public partial class SimpleAutoDrive : MonoBehaviour
 
     public float rightLaneOffset = 3.5f;
 
+    [Header("传感器设置")]
+    [Tooltip("雷达向车头方向偏移的距离，一般轿车中心到车头大概 2 到 2.5 米")]
+    public float sensorForwardOffset = 2.5f;
+
     public enum DriveState { Idle, Following, Avoiding, Stopping, Waiting, RemoteControlled }
 
     [Header("状态机")]
@@ -118,11 +122,10 @@ public partial class SimpleAutoDrive : MonoBehaviour
     {
         obstacleDetected = false;
 
-        RaycastHit hit;
-        float steerFactor = Mathf.Abs(carController.currentSteeringAngle) / 35f;
-        float dynamicRadarDist = Mathf.Max(3.5f, safeDistance * (1f - steerFactor));
+        Vector3 frontOrigin = transform.position + transform.forward * sensorForwardOffset + Vector3.up * 0.5f;
 
-        if (Physics.SphereCast(transform.position + Vector3.up * 0.5f, 1.5f, transform.forward, out hit, dynamicRadarDist))
+        RaycastHit[] hits = Physics.SphereCastAll(frontOrigin, 1.5f, transform.forward, safeDistance);
+        foreach (var hit in hits)
         {
             var otherCar = hit.collider.GetComponentInParent<SimpleCarController>();
             if (otherCar != null && otherCar != this.carController)
@@ -133,18 +136,23 @@ public partial class SimpleAutoDrive : MonoBehaviour
                     if (_uiManager != null && !carController.isNPC) _uiManager.ShowTORWarning(1.5f);
                     if (!carController.isNPC) AppendThought("CRITICAL: Obstacle " + hit.distance.ToString("F1") + "m ahead! TOR triggered");
                 }
+                break;
             }
         }
 
         isYielding = false;
-      if (carController.vehiclePriority == VehiclePriority.Normal && currentState == DriveState.Following)
+        if (carController.vehiclePriority == VehiclePriority.Normal && currentState == DriveState.Following)
         {
-            if (Physics.SphereCast(transform.position + Vector3.up * 0.5f, 2f, -transform.forward, out hit, safeDistance * 2f))
+            Vector3 backOrigin = transform.position - transform.forward * sensorForwardOffset + Vector3.up * 0.5f;
+
+            RaycastHit[] backHits = Physics.SphereCastAll(backOrigin, 2f, -transform.forward, safeDistance * 2f);
+            foreach (var backHit in backHits)
             {
-                var behindCar = hit.collider.GetComponentInParent<SimpleCarController>();
+                var behindCar = backHit.collider.GetComponentInParent<SimpleCarController>();
                 if (behindCar != null && behindCar != this.carController && behindCar.vehiclePriority == VehiclePriority.Emergency)
                 {
                     isYielding = true;
+                    break;
                 }
             }
         }
@@ -179,6 +187,8 @@ public partial class SimpleAutoDrive : MonoBehaviour
 
     void UpdateStuckDetection()
     {
+        return;
+
         if (currentState != DriveState.Following)
         {
             stuckTimer = 0f; stuckCheckTimer = 0f; startupDelay = 0f; lastPosition = transform.position; return;
