@@ -127,8 +127,8 @@ private bool cachedTrafficAhead = false;
     }
 
     pendingBrakeOverride = false;
-    pendingThrottle = 0f;
     pendingSteer = 0f;
+    pendingThrottle = 0f;
     if (currentState == DriveState.FatalCrashed) return;
 
     if (CheckBoundaryFatal())
