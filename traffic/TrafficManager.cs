@@ -84,56 +84,70 @@ public class TrafficManager : MonoBehaviour
         ShuffleList(shuffledNodes);
 
         int spawnedCount = 0;
-        for (int i = 0; i < shuffledNodes.Count && spawnedCount < npcCount; i++)
+        int attempts = 0;
+        int maxAttempts = npcCount * 5;
+        HashSet<int> usedStartIds = new HashSet<int>();
+
+        while (spawnedCount < npcCount && attempts < maxAttempts)
         {
-            var startNode = shuffledNodes[i];
-            var targetNode = GetFarNode(startNode);
-            if (targetNode == null) continue;
-
-            // 先随便在这个节点实例化
-            GameObject chosenPrefab = normalNpcPrefabs[Random.Range(0, normalNpcPrefabs.Length)];
-            GameObject npcObj = Instantiate(chosenPrefab, startNode.position, Quaternion.identity);
-            npcObj.name = $"NPC_Vehicle_{spawnedCount}";
-
-            SimpleCarController controller = npcObj.GetComponent<SimpleCarController>();
-            if (controller == null) controller = npcObj.GetComponentInChildren<SimpleCarController>();
-            // 【修复点】：确保强制设置为NPC
-            if (controller != null) controller.ChangeRole(true); 
-
-            SimpleAutoDrive autoDrive = npcObj.GetComponent<SimpleAutoDrive>();
-            if (autoDrive == null) autoDrive = npcObj.GetComponentInChildren<SimpleAutoDrive>();
-            if (autoDrive != null)
+            attempts++;
+            try
             {
-                CatmullRomSpline spline = pathPlanner.PlanPathSpline(startNode.position, targetNode.position);
-                if (spline != null && spline.TotalLength > 0)
+                var startNode = shuffledNodes[Random.Range(0, shuffledNodes.Count)];
+                if (usedStartIds.Contains(startNode.id)) continue;
+                usedStartIds.Add(startNode.id);
+
+                var targetNode = GetFarNode(startNode);
+                if (targetNode == null) continue;
+
+                GameObject chosenPrefab = normalNpcPrefabs[Random.Range(0, normalNpcPrefabs.Length)];
+                GameObject npcObj = Instantiate(chosenPrefab, startNode.position, Quaternion.identity);
+                npcObj.name = $"NPC_Vehicle_{spawnedCount}";
+
+                SimpleCarController controller = npcObj.GetComponent<SimpleCarController>();
+                if (controller == null) controller = npcObj.GetComponentInChildren<SimpleCarController>();
+                if (controller != null) controller.ChangeRole(true);
+
+                SimpleAutoDrive autoDrive = npcObj.GetComponent<SimpleAutoDrive>();
+                if (autoDrive == null) autoDrive = npcObj.GetComponentInChildren<SimpleAutoDrive>();
+                if (autoDrive != null)
                 {
-                    // 【修复点核心】：将出生位置强行纠正到样条曲线的绝对起点（路线上）
-                    Vector3 exactStartPos = spline.GetPoint(0f);
-                    if (WorldModel.Instance != null)
+                    CatmullRomSpline spline = pathPlanner.PlanPathSpline(startNode.position, targetNode.position);
+                    if (spline != null && spline.TotalLength > 0)
                     {
-                        exactStartPos.y = WorldModel.Instance.GetUnifiedHeight(exactStartPos.x, exactStartPos.z);
-                    }
-                    npcObj.transform.position = exactStartPos; // 精确吸附
+                        Vector3 exactStartPos = spline.GetPoint(0f);
+                        if (WorldModel.Instance != null)
+                            exactStartPos.y = WorldModel.Instance.GetUnifiedHeight(exactStartPos.x, exactStartPos.z);
+                        npcObj.transform.position = exactStartPos;
 
-                    Vector3 startTangent = (spline.GetPoint(0.01f) - spline.GetPoint(0f)).normalized;
-                    if (startTangent != Vector3.zero)
+                        Vector3 startTangent = (spline.GetPoint(0.01f) - spline.GetPoint(0f)).normalized;
+                        if (startTangent != Vector3.zero)
+                            npcObj.transform.rotation = Quaternion.LookRotation(startTangent);
+
+                        autoDrive.SetSplinePath(spline, targetNode.id);
+                        npcVehicles.Add(autoDrive);
+                        spawnedCount++;
+                    }
+                    else
                     {
-                        npcObj.transform.rotation = Quaternion.LookRotation(startTangent);
+                        Debug.LogWarning($"[TrafficManager] NPC {spawnedCount} 路径规划失败，节点 {startNode.id} -> {targetNode.id}，已销毁实例。");
+                        Destroy(npcObj);
                     }
-
-                    autoDrive.SetSplinePath(spline, targetNode.id);
-                    npcVehicles.Add(autoDrive);
-                    spawnedCount++;
                 }
                 else
                 {
-                    Debug.LogWarning($"[TrafficManager] NPC {spawnedCount} 路径规划失败，节点 {startNode.id} -> {targetNode.id}，已销毁实例。");
                     Destroy(npcObj);
                 }
             }
+            catch (System.Exception ex)
+            {
+                Debug.LogError($"[TrafficManager] 生成车辆异常! 当前已生成: {spawnedCount}/{npcCount}, 尝试次数: {attempts} | 异常: {ex.Message}\n{ex.StackTrace}");
+            }
         }
+
         _hasSpawned = spawnedCount > 0;
         if (!_hasSpawned) Debug.LogWarning("[TrafficManager] 未成功生成任何 NPC。");
+        else Debug.Log($"[TrafficManager] NPC生成完成: {spawnedCount}/{npcCount}");
     }
 
     public GameObject SpawnEmergencyVehicle(Vector3 nearPosition)

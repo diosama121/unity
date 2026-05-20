@@ -6,6 +6,7 @@ using UnityEngine;
 /// </summary>
 public partial class SimpleAutoDrive : MonoBehaviour
 {
+
     void HandleFollowingState()
     {
         if (obstacleDetected && avoidCooldown <= 0f)
@@ -44,21 +45,35 @@ public partial class SimpleAutoDrive : MonoBehaviour
         if (isReversing)
         {
             reverseTimer += Time.deltaTime;
-            carController.SetAutoControl(-0.4f, escapeSteering);
+
+            float revSteering = escapeSteering;
+            if (currentLaneId >= 0 && WorldModel.Instance != null && WorldModel.Instance.GlobalLanes.TryGetValue(currentLaneId, out Lane revLane))
+            {
+                float laneT = revLane.CenterSpline.GetClosestT(transform.position, 0.5f);
+                float reverseLookDist = 4.0f + reverseTimer * 2.0f;
+                float currentLen = revLane.CenterSpline.GetLengthAtT(laneT);
+                float reverseLen = Mathf.Max(0f, currentLen - reverseLookDist);
+                float reverseLookT = revLane.CenterSpline.GetTFromLength(reverseLen);
+                Vector3 reverseLookPoint = revLane.CenterSpline.GetPoint(reverseLookT);
+                reverseLookPoint.y = transform.position.y;
+                Vector3 localTarget = transform.InverseTransformPoint(reverseLookPoint);
+                float angle = Mathf.Atan2(localTarget.x, -localTarget.z) * Mathf.Rad2Deg;
+                revSteering = Mathf.Clamp(angle / 45f, -1f, 1f);
+            }
+
+            carController.SetAutoControl(-0.4f, revSteering);
             if (reverseTimer >= 1.2f + reverseCount * 0.5f)
             {
                 reverseCount++; isReversing = false; reverseTimer = 0f;
-                avoidCooldown = 1.5f; startupDelay = 0.8f;
+                avoidCooldown = 2.5f; startupDelay = 1.5f;
                 carController.SetAutoControl(0f, 0f);
-                
-                currentT = Mathf.Max(0, currentT - 0.05f); 
-                
-                if (reverseCount >= 3)
+
+                if (currentSpline != null && currentSpline.TotalLength > 0)
                 {
-                    reverseCount = 0;
-                    currentT = 1f; 
+                    currentT = currentSpline.GetClosestT(transform.position, currentT);
+                    currentT = Mathf.Max(0, currentT - 0.12f);
                 }
-                RerouteToDestination();
+
                 currentState = DriveState.Following;
             }
             return;
@@ -123,7 +138,8 @@ public partial class SimpleAutoDrive : MonoBehaviour
             laneSearchTimer += Time.deltaTime;
             if (laneSearchTimer > 0.2f)
             {
-                currentLaneId = WorldModel.Instance.FindNearestLane(transform.position);
+                if (nearestIntersectionNodeId < 0)
+                    currentLaneId = WorldModel.Instance.FindNearestLane(transform.position);
                 laneSearchTimer = 0f;
             }
         }
@@ -137,93 +153,74 @@ public partial class SimpleAutoDrive : MonoBehaviour
     void FollowPath()
     {
         if (currentSpline == null || currentSpline.TotalLength < 0.1f) return;
+        if (float.IsNaN(currentT)) currentT = 0f;
 
         float actualSpeed = Mathf.Abs(carController.GetSpeed());
-        if (actualSpeed > 0.1f && currentSpline.TotalLength > 0)
+
+        if (currentSpline.TotalLength > 0)
         {
-            currentT += (actualSpeed * Time.deltaTime) / currentSpline.TotalLength;
+            currentT = currentSpline.GetClosestT(transform.position, currentT);
+            if (float.IsNaN(currentT)) currentT = 0f;
             currentT = Mathf.Clamp01(currentT);
         }
 
-        Vector3 posOnSpline = currentSpline.GetPoint(currentT);
-        Vector3 lateralTarget = posOnSpline;
-        bool hasLaneAnchor = false;
+        float lookAheadMeters = 6.0f + (actualSpeed * 0.2f);
+        Vector3 lookAheadPos = Vector3.zero;
 
-        float targetLookAheadT = Mathf.Min(currentT + lookAheadT, 1f);
-        Vector3 lookAheadPos = currentSpline.GetPoint(targetLookAheadT);
-
+        bool usedLane = false;
         if (WorldModel.Instance != null)
         {
-            laneSearchTimer += Time.deltaTime;
-            if (laneSearchTimer > 0.2f)
+            currentLaneId = WorldModel.Instance.FindNearestLane(transform.position);
+            if (currentLaneId >= 0 && WorldModel.Instance.GlobalLanes.TryGetValue(currentLaneId, out Lane lane)
+                && lane.CenterSpline != null && lane.CenterSpline.TotalLength > 1f)
             {
-                currentLaneId = WorldModel.Instance.FindNearestLane(transform.position);
-                laneSearchTimer = 0f;
-            }
-
-            if (currentLaneId >= 0 && WorldModel.Instance.GlobalLanes.TryGetValue(currentLaneId, out Lane lane))
-            {
-                float bestLaneT = 0f;
-                float minDistSqr = float.MaxValue;
-                int searchSteps = 20;
-
-                for (int i = 0; i <= searchSteps; i++)
+                float laneT = lane.CenterSpline.GetClosestT(transform.position, 0.5f);
+                Vector3 lanePt = lane.CenterSpline.GetPoint(laneT);
+                if ((lanePt - transform.position).sqrMagnitude < 225f)
                 {
-                    float t = i / (float)searchSteps;
-                    Vector3 pt = lane.CenterSpline.GetPoint(t);
-                    float sqrD = (pt.x - posOnSpline.x) * (pt.x - posOnSpline.x) + (pt.z - posOnSpline.z) * (pt.z - posOnSpline.z);
-                    if (sqrD < minDistSqr)
-                    {
-                        minDistSqr = sqrD;
-                        bestLaneT = t;
-                    }
-                }
-
-                if (minDistSqr < 36f)
-                {
-                    float checkT = (bestLaneT < 0.95f) ? Mathf.Min(bestLaneT + 0.05f, 1f) : Mathf.Max(bestLaneT - 0.05f, 0f);
-                    Vector3 laneDir = lane.CenterSpline.GetPoint(checkT) - lane.CenterSpline.GetPoint(bestLaneT);
-                    // 替换 CarControlUtility.SafeNormalize 为原生安全归一化
-                    Vector3 laneDirection = laneDir.sqrMagnitude > 0.0001f ? laneDir.normalized : transform.forward;
-                    if (Vector3.Dot(transform.forward, laneDirection) > 0f)
-                    {
-                        Vector3 lanePoint = lane.CenterSpline.GetPoint(bestLaneT);
-                        lateralTarget.x = lanePoint.x;
-                        lateralTarget.z = lanePoint.z;
-                        float laneLookT = Mathf.Clamp01(bestLaneT + (lookAheadT * 2f));
-                        Vector3 laneLook = lane.CenterSpline.GetPoint(laneLookT);
-                        lookAheadPos.x = laneLook.x;
-                        lookAheadPos.z = laneLook.z;
-                        hasLaneAnchor = true;
-                    }
+                    float laneLen = lane.CenterSpline.GetLengthAtT(laneT);
+                    float lookLen = Mathf.Min(laneLen + lookAheadMeters, lane.CenterSpline.TotalLength);
+                    lookAheadPos = lane.CenterSpline.GetPoint(lane.CenterSpline.GetTFromLength(lookLen));
+                    usedLane = true;
                 }
             }
         }
 
-        if (!hasLaneAnchor)
+        if (!usedLane)
         {
-            float nextT = (currentT < 0.999f) ? Mathf.Min(currentT + 0.001f, 1f) : Mathf.Max(currentT - 0.001f, 0f);
-            Vector3 tangentRaw = currentSpline.GetPoint(nextT) - posOnSpline;
-            // 替换 CarControlUtility.SafeNormalize 为原生安全归一化
-            Vector3 tangent = tangentRaw.sqrMagnitude > 0.0001f ? tangentRaw.normalized : transform.forward;
-            Vector3 rightVector = Vector3.Cross(Vector3.up, tangent).normalized;
+            float curLen = currentSpline.GetLengthAtT(currentT);
+            float targLen = Mathf.Min(curLen + lookAheadMeters, currentSpline.TotalLength);
+            lookAheadPos = currentSpline.GetPoint(currentSpline.GetTFromLength(targLen));
+        }
 
-            lateralTarget = posOnSpline + rightVector * rightLaneOffset;
-            lookAheadPos = lookAheadPos + rightVector * rightLaneOffset;
+        float distToSpline = (currentSpline.GetPoint(currentT) - transform.position).magnitude;
+        if (distToSpline > 30f && WorldModel.Instance != null)
+        {
+            int rescueId = WorldModel.Instance.FindNearestLane(transform.position);
+            if (rescueId >= 0 && WorldModel.Instance.GlobalLanes.TryGetValue(rescueId, out Lane rl)
+                && rl.CenterSpline != null && rl.CenterSpline.TotalLength > 1f)
+            {
+                float rt = rl.CenterSpline.GetClosestT(transform.position, 0.5f);
+                Vector3 rp = rl.CenterSpline.GetPoint(rt);
+                if ((rp - transform.position).magnitude < 50f)
+                {
+                    float rLookLen = Mathf.Min(rl.CenterSpline.GetLengthAtT(rt) + 8f, rl.CenterSpline.TotalLength);
+                    lookAheadPos = rl.CenterSpline.GetPoint(rl.CenterSpline.GetTFromLength(rLookLen));
+                }
+            }
         }
 
         lookAheadPos.y = transform.position.y;
         Vector3 localTarget = transform.InverseTransformPoint(lookAheadPos);
 
         float angle = Mathf.Atan2(localTarget.x, localTarget.z) * Mathf.Rad2Deg;
+        if (float.IsNaN(angle)) angle = 0f;
         float steering = Mathf.Clamp(angle / 45f, -1f, 1f);
 
         float speedFactor = 1f;
         if (Mathf.Abs(angle) > 25f) speedFactor = 0.4f;
-
         if (currentIntersectionState == IntersectionState.RedLight) speedFactor = 0f;
 
-        // 替换 CarControlUtility.SafeDivide 为原生安全除法
         float throttle = carController.maxSpeed > 0.001f ? (targetSpeed * speedFactor) / carController.maxSpeed : 0f;
         carController.SetAutoControl(throttle, steering);
         carController.SetAutoBrake(0f);

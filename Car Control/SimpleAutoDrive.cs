@@ -7,7 +7,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
     public PathPlanner pathPlanner;
 
     [Header("控制参数")]
-    public float targetSpeed = 15f;
+    public float targetSpeed = 12f;
     public float safeDistance = 8f;
     public float lookAheadT = 0.02f;
     public bool dynamicLookAhead = true;
@@ -40,6 +40,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
     private int reverseCount = 0;
     private SimpleCarController carController;
     private MasterUIManager _uiManager;
+    private RoadNetworkGenerator roadGen;
     
     private CatmullRomSpline currentSpline;
     private Vector3 finalDestination = Vector3.zero;
@@ -63,6 +64,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
         carController = GetComponent<SimpleCarController>();
         if (pathPlanner == null) pathPlanner = FindObjectOfType<PathPlanner>();
         _uiManager = FindObjectOfType<MasterUIManager>();
+        roadGen = FindObjectOfType<RoadNetworkGenerator>();
         carController.autoMode = true;
         lastPosition = transform.position;
         laneSearchTimer = Random.Range(0f, 0.2f);
@@ -117,7 +119,10 @@ public partial class SimpleAutoDrive : MonoBehaviour
         obstacleDetected = false;
 
         RaycastHit hit;
-        if (Physics.SphereCast(transform.position + Vector3.up * 0.5f, 1.5f, transform.forward, out hit, safeDistance))
+        float steerFactor = Mathf.Abs(carController.currentSteeringAngle) / 35f;
+        float dynamicRadarDist = Mathf.Max(3.5f, safeDistance * (1f - steerFactor));
+
+        if (Physics.SphereCast(transform.position + Vector3.up * 0.5f, 1.5f, transform.forward, out hit, dynamicRadarDist))
         {
             var otherCar = hit.collider.GetComponentInParent<SimpleCarController>();
             if (otherCar != null && otherCar != this.carController)
@@ -196,9 +201,23 @@ public partial class SimpleAutoDrive : MonoBehaviour
             stuckTimer += stuckCheckInterval;
             if (stuckTimer > 4f)
             {
+                if (Physics.SphereCast(transform.position + Vector3.up * 0.5f, 1.5f, -transform.forward, out RaycastHit backHit, 5f))
+                {
+                    stuckTimer = 3f;
+                    return;
+                }
+
                 stuckTimer = 0f; isReversing = true; reverseTimer = 0f;
                 
-                if (currentSpline != null)
+                if (currentLaneId >= 0 && WorldModel.Instance != null && WorldModel.Instance.GlobalLanes.TryGetValue(currentLaneId, out Lane lane))
+                {
+                    float t = lane.CenterSpline.GetClosestT(transform.position, 0.5f);
+                    float nextT = Mathf.Min(t + 0.05f, 1f);
+                    Vector3 laneTangent = (lane.CenterSpline.GetPoint(nextT) - lane.CenterSpline.GetPoint(t)).normalized;
+                    Vector3 localLaneDir = transform.InverseTransformDirection(laneTangent);
+                    escapeSteering = Mathf.Clamp(-localLaneDir.x * 2f, -1f, 1f);
+                }
+                else if (currentSpline != null)
                 {
                     float sampleT = (currentT < 0.99f) ? Mathf.Min(currentT + 0.01f, 1f) : currentT;
                     Vector3 pA = (currentT > 0.01f) ? currentSpline.GetPoint(currentT - 0.01f) : currentSpline.GetPoint(0f);
@@ -302,9 +321,25 @@ public partial class SimpleAutoDrive : MonoBehaviour
     {
         if (trajectoryLine == null || trajectoryPoints == null) return;
 
+        Vector3 origin = transform.position + Vector3.up * 0.3f;
+
+        if (isReversing)
+        {
+            float revLookDist = 6f;
+            for (int i = 0; i < trajectoryPoints.Length; i++)
+            {
+                float t = i / (float)(trajectoryPoints.Length - 1);
+                float dist = t * revLookDist;
+                trajectoryPoints[i] = origin - transform.forward * dist;
+            }
+            trajectoryLine.startColor = new Color(1f, 0.15f, 0.05f, 0.85f);
+            trajectoryLine.endColor = new Color(1f, 0.15f, 0.05f, 0.05f);
+            trajectoryLine.SetPositions(trajectoryPoints);
+            return;
+        }
+
         float actualSpeed = Mathf.Abs(carController.GetSpeed());
         float lookDist = Mathf.Clamp(actualSpeed * 0.8f, 5f, 15f);
-        Vector3 origin = transform.position + Vector3.up * 0.3f;
         float steerAngle = carController.currentSteeringAngle;
 
         for (int i = 0; i < trajectoryPoints.Length; i++)
@@ -397,5 +432,29 @@ public partial class SimpleAutoDrive : MonoBehaviour
         if (speed < 2f || distToStop > 10f) return;
         if (carController.isNPC) return;
         if (_uiManager != null) _uiManager.ShowTORWarning(2.5f);
+    }
+
+    public void ResetStateMachine()
+    {
+        isReversing = false;
+        reverseTimer = 0f;
+        avoidCooldown = 0f;
+        startupDelay = 0f;
+        stuckTimer = 0.3f;
+        stuckCheckTimer = 0f;
+        hasStopTarget = false;
+        reverseCount = 0;
+        currentDestinationNodeId = -1;
+
+        if (currentSpline != null && currentSpline.TotalLength > 0)
+        {
+            currentT = currentSpline.GetClosestT(transform.position, 0f);
+            currentT = Mathf.Clamp01(currentT);
+            currentState = DriveState.Following;
+        }
+        else
+        {
+            currentState = DriveState.Idle;
+        }
     }
 }

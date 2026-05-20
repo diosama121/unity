@@ -20,6 +20,46 @@ public class PathPlanner : MonoBehaviour
         }
     }
 
+    private class PriorityQueue<T>
+    {
+        private List<(T item, float priority)> elements = new List<(T, float)>();
+        public int Count => elements.Count;
+
+        public void Enqueue(T item, float priority)
+        {
+            elements.Add((item, priority));
+            int ci = elements.Count - 1;
+            while (ci > 0)
+            {
+                int pi = (ci - 1) / 2;
+                if (elements[ci].priority >= elements[pi].priority) break;
+                var tmp = elements[ci]; elements[ci] = elements[pi]; elements[pi] = tmp;
+                ci = pi;
+            }
+        }
+
+        public T Dequeue()
+        {
+            int li = elements.Count - 1;
+            T frontItem = elements[0].item;
+            elements[0] = elements[li];
+            elements.RemoveAt(li);
+            --li;
+            int pi = 0;
+            while (true)
+            {
+                int ci = pi * 2 + 1;
+                if (ci > li) break;
+                int rc = ci + 1;
+                if (rc <= li && elements[rc].priority < elements[ci].priority) ci = rc;
+                if (elements[pi].priority <= elements[ci].priority) break;
+                var tmp = elements[pi]; elements[pi] = elements[ci]; elements[ci] = tmp;
+                pi = ci;
+            }
+            return frontItem;
+        }
+    }
+
     private WorldModel _worldModel => WorldModel.Instance;
 
     public List<int> FindDiscretePath(Vector3 startPos, Vector3 targetPos)
@@ -122,100 +162,71 @@ public class PathPlanner : MonoBehaviour
 
     private List<int> RunAStar(int startId, int targetId)
     {
-        Dictionary<int, PathNode> openSet = new Dictionary<int, PathNode>();
-        Dictionary<int, PathNode> closedSet = new Dictionary<int, PathNode>();
+        var openQueue = new PriorityQueue<int>();
+        var closedSet = new HashSet<int>();
+        var nodeRecords = new Dictionary<int, PathNode>();
 
-        PathNode startNode = new PathNode(startId);
-        startNode.GCost = 0;
-        startNode.HCost = HeuristicCost(startId, targetId);
-        openSet.Add(startId, startNode);
+        PathNode startNode = new PathNode(startId) { GCost = 0, HCost = HeuristicCost(startId, targetId) };
+        nodeRecords[startId] = startNode;
+        openQueue.Enqueue(startId, startNode.FCost);
 
-        PathNode cachedBest = null;
-        int cachedBestId = -1;
-
-        while (openSet.Count > 0)
+        while (openQueue.Count > 0)
         {
-            PathNode currentNode;
-            if (cachedBest != null && openSet.ContainsKey(cachedBestId))
-            {
-                currentNode = cachedBest;
-            }
-            else
-            {
-                currentNode = null;
-                foreach (var kvp in openSet)
-                {
-                    if (currentNode == null || kvp.Value.FCost < currentNode.FCost)
-                    {
-                        currentNode = kvp.Value;
-                        cachedBestId = kvp.Key;
-                    }
-                }
-                cachedBest = currentNode;
-            }
+            int currentId = openQueue.Dequeue();
 
-            openSet.Remove(currentNode.NodeId);
-            cachedBest = null;
+            if (closedSet.Contains(currentId)) continue;
 
-            if (currentNode.NodeId == targetId)
+            if (currentId == targetId)
             {
                 List<int> path = new List<int>();
-                PathNode node = currentNode;
-                while (node.ParentId != -1)
+                int curr = currentId;
+                while (curr != -1)
                 {
-                    path.Add(node.NodeId);
-                    if (!closedSet.TryGetValue(node.ParentId, out node) &&
-                        !openSet.TryGetValue(node.ParentId, out node))
+                    path.Add(curr);
+                    if (!nodeRecords.TryGetValue(curr, out PathNode record))
                     {
-                        Debug.LogError($"[PathPlanner] 路径重建断裂！节点 {node.NodeId} 找不到父节点 {node.ParentId}。");
-                        // 【修复 Bug 3】不要直接 return null，跳出循环，把已找回的半截合法路径返回
+                        Debug.LogError($"[PathPlanner] 路径回溯中断！丢失节点: {curr}");
                         break;
                     }
+                    curr = record.ParentId;
                 }
-                path.Add(node.NodeId);
                 path.Reverse();
-                
-                if (path.Count < 2)
+
+                if (path.Count == 1)
                 {
-                    // 【修复】起终点过近（同一节点），兜底：复制一份伪目标保证调用方不死
-                    if (path.Count == 1)
-                    {
-                        Debug.LogWarning($"[PathPlanner] 起终点过近，使用兜底单节点路径");
-                        path.Add(path[0]);
-                    }
-                    else
-                    {
-                        Debug.LogWarning("[PathPlanner] 路径长度不足，返回 null");
-                        return null;
-                    }
+                    Debug.LogWarning("[PathPlanner] 起终点过近，使用兜底单节点路径");
+                    path.Add(path[0]);
                 }
-                
                 return path;
             }
 
-            closedSet.Add(currentNode.NodeId, currentNode);
+            closedSet.Add(currentId);
+            PathNode currentNode = nodeRecords[currentId];
 
-            RoadNode currentRoadNode = _worldModel.GetNode(currentNode.NodeId);
+            RoadNode currentRoadNode = _worldModel.GetNode(currentId);
+            if (currentRoadNode == null || currentRoadNode.NeighborIds == null) continue;
+
             foreach (int neighborId in currentRoadNode.NeighborIds)
             {
-                if (closedSet.ContainsKey(neighborId)) continue;
+                if (closedSet.Contains(neighborId)) continue;
 
-                float edgeCost = _worldModel.GetEdgeCost(currentNode.NodeId, neighborId);
+                float edgeCost = _worldModel.GetEdgeCost(currentId, neighborId);
                 if (edgeCost >= float.MaxValue) continue;
 
                 float tentativeG = currentNode.GCost + edgeCost;
 
-                if (!openSet.TryGetValue(neighborId, out PathNode neighborNode))
+                if (!nodeRecords.TryGetValue(neighborId, out PathNode neighborNode))
                 {
                     neighborNode = new PathNode(neighborId);
                     neighborNode.HCost = HeuristicCost(neighborId, targetId);
-                    openSet.Add(neighborId, neighborNode);
+                    nodeRecords[neighborId] = neighborNode;
                 }
 
                 if (tentativeG < neighborNode.GCost)
                 {
-                    neighborNode.ParentId = currentNode.NodeId;
+                    neighborNode.ParentId = currentId;
                     neighborNode.GCost = tentativeG;
+                    openQueue.Enqueue(neighborId, neighborNode.FCost);
                 }
             }
         }

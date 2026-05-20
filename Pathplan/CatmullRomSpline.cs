@@ -165,4 +165,56 @@ public class CatmullRomSpline
         
         return globalT;
     }
+
+    public float GetClosestT(Vector3 worldPos, float hintT = 0f)
+    {
+        if (ControlPoints.Count < 2) return 0f;
+
+        float bestT = hintT;
+        float bestDistSqr = (GetPoint(hintT) - worldPos).sqrMagnitude;
+        int totalSamples = (ControlPoints.Count - 1) * SAMPLES_PER_SEGMENT;
+
+        int coarseSteps = Mathf.Min(totalSamples, 40);
+        for (int i = 0; i <= coarseSteps; i++)
+        {
+            float t = i / (float)coarseSteps;
+            float dSqr = (GetPoint(t) - worldPos).sqrMagnitude;
+            if (dSqr < bestDistSqr)
+            {
+                bestDistSqr = dSqr;
+                bestT = t;
+            }
+        }
+
+        float window = 3f / coarseSteps;
+        float tMin = Mathf.Max(0f, bestT - window);
+        float tMax = Mathf.Min(1f, bestT + window);
+        int fineSteps = 30;
+        for (int i = 0; i <= fineSteps; i++)
+        {
+            float t = Mathf.Lerp(tMin, tMax, i / (float)fineSteps);
+            float dSqr = (GetPoint(t) - worldPos).sqrMagnitude;
+            if (dSqr < bestDistSqr)
+            {
+                bestDistSqr = dSqr;
+                bestT = t;
+            }
+        }
+
+        return bestT;
+    }
+
+    public float GetLengthAtT(float t)
+    {
+        if (_cumulativeLengths == null || _cumulativeLengths.Count == 0) return 0f;
+        if (t <= 0f) return 0f;
+        if (t >= 1f) return TotalLength;
+
+        float floatIndex = t * (_cumulativeLengths.Count - 1);
+        int idx = Mathf.FloorToInt(floatIndex);
+        if (idx >= _cumulativeLengths.Count - 1) return TotalLength;
+
+        float frac = floatIndex - idx;
+        return Mathf.Lerp(_cumulativeLengths[idx], _cumulativeLengths[idx + 1], frac);
+    }
 }

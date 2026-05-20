@@ -127,6 +127,8 @@ private bool cachedTrafficAhead = false;
     }
 
     pendingBrakeOverride = false;
+    pendingThrottle = 0f;
+    pendingSteer = 0f;
     if (currentState == DriveState.FatalCrashed) return;
 
     if (CheckBoundaryFatal())
@@ -669,7 +671,11 @@ private bool cachedTrafficAhead = false;
     {
         CatmullRomSpline spline = GetActiveSpline();
         if (spline == null || spline.TotalLength < 0.5f) return 0f;
-        Vector3 toCar = transform.position - spline.GetPoint(Mathf.Clamp01(autoDrive.currentT));
+
+        float actualClosestT = spline.GetClosestT(transform.position, 0.5f);
+        Vector3 closestPoint = spline.GetPoint(actualClosestT);
+
+        Vector3 toCar = transform.position - closestPoint;
         toCar.y = 0f;
         return toCar.magnitude;
     }
