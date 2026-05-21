@@ -62,6 +62,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
     private int lastNodeId = -1;
     private float rerouteCooldown = 0f;
     private Vector3 lastLaneCheckPos = Vector3.one * -9999f;
+    private float _diagTimer = 0f;
 
     void Start()
     {

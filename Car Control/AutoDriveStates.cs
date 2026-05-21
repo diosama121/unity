@@ -38,13 +38,22 @@ public partial class SimpleAutoDrive : MonoBehaviour
         // --- 冷却计时 ---
         rerouteCooldown -= Time.deltaTime;
 
-        // --- 1. 投影速度计算 ---
+        // --- 诊断：每3秒打印一次跟随状态 ---
+        {
+            float diagInterval = 3f;
+            _diagTimer += Time.deltaTime;
+            if (_diagTimer >= diagInterval)
+            {
+                _diagTimer = 0f;
+                Debug.Log($"[AutoDrive] {name} | Following | state={currentState} intx={currentIntersectionState} T={currentT:F3} speed={carController.GetSpeed():F1} tgtSpeed={targetSpeed:F1} splineLen={currentSpline.TotalLength:F1}");
+            }
+        }
+
+        // --- 1. 投影速度计算（只用于转向，不用于T推进）---
         float sampleNextT   = Mathf.Clamp01(currentT + 0.05f);
         Vector3 splineTangent = (currentSpline.GetPoint(sampleNextT) -
                                  currentSpline.GetPoint(currentT)).normalized;
         float currentSpeed  = carController.GetSpeed();
-        float forwardSpeed  = currentSpeed * Vector3.Dot(transform.forward, splineTangent);
-        float advanceSpeed  = forwardSpeed;
         float throttle      = 0f;
         float steer         = 0f;
 
@@ -53,14 +62,11 @@ public partial class SimpleAutoDrive : MonoBehaviour
         {
             throttle     = -0.5f;
             steer        = 0f;
-            advanceSpeed = 0f;
         }
         else
         {
             if (targetSpeed > 0.1f)
                 throttle = Mathf.Clamp((targetSpeed - currentSpeed) / 5f, 0f, 1f);
-            if (Mathf.Abs(advanceSpeed) < 0.5f)
-                advanceSpeed = Mathf.Sign(advanceSpeed) * 0.5f;
 
             float lookAheadDist = dynamicLookAhead
                 ? Mathf.Clamp(Mathf.Abs(currentSpeed) * 0.5f, 3f, 12f)
@@ -71,16 +77,12 @@ public partial class SimpleAutoDrive : MonoBehaviour
             steer = Mathf.Clamp(localPt.x / 4f, -1f, 1f);
         }
 
-        // --- 3. T 值推进 ---
-        currentT += (advanceSpeed / currentSpline.TotalLength) * Time.deltaTime;
-        currentT  = Mathf.Clamp01(currentT);
-
-        // --- 4. 橡皮筋校准 ---
+        // --- 3. T 值推进: 直接投影（不依赖速度，不Lerp防止滞后累积） ---
         float realT = currentSpline.GetClosestT(transform.position, currentT);
-        currentT    = Mathf.Lerp(currentT, realT, Time.deltaTime * 2f);
-        currentT    = Mathf.Clamp01(currentT);
+        // 禁止倒退，留0.02缓冲
+        currentT = Mathf.Clamp01(Mathf.Max(realT - 0.02f, currentT));
 
-        // --- 5. 底盘控制 ---
+        // --- 4. 底盘控制 ---
         carController.SetAutoControl(throttle, steer);
 
         // --- 6. 车道 ID 刷新（距离门槛） ---
@@ -90,7 +92,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
             currentLaneId    = WorldModel.Instance.FindNearestLane(transform.position);
         }
 
-        // --- 7. T>=0.95 提前接力 ---
+        // --- 6. T>=0.95 提前接力 ---
         if (currentT >= 0.95f && !isFetchingNextPath && rerouteCooldown <= 0f)
         {
             rerouteCooldown  = 1f;
@@ -145,6 +147,16 @@ public partial class SimpleAutoDrive : MonoBehaviour
 
     void HandleStoppingState()
     {
+        // 诊断：每3秒打印停车状态
+        {
+            _diagTimer += Time.deltaTime;
+            if (_diagTimer >= 3f)
+            {
+                _diagTimer = 0f;
+                Debug.Log($"[AutoDrive] {name} | STOPPING | intx={currentIntersectionState} hasStop={hasStopTarget} nodeId={nearestIntersectionNodeId} dist={Vector3.Distance(transform.position, stopTargetPosition):F2}");
+            }
+        }
+
         if (currentIntersectionState == IntersectionState.GreenLight || currentIntersectionState == IntersectionState.Uncontrolled)
         {
             hasStopTarget = false;

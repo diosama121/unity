@@ -134,10 +134,8 @@ private bool cachedTrafficAhead = false;
     // --- 【补丁：使用缓存数据进行交规判定】 ---
     if (cachedPedestrianDetected)
         ChangeState(DriveState.EmergencyAvoid);
-    else if (DetectApproachingIntersection() || cachedAmbulanceDetected) // 接近路口暂不缓存，因为依赖距离
+    else if (DetectApproachingIntersection() || cachedAmbulanceDetected)
         ChangeState(DriveState.Intersection);
-    else if (DetectDeadlockOrStaticObstacle())
-        ChangeState(DriveState.DeadlockEscape);
     else if (cachedTrafficAhead || DetectMergeLane())
         ChangeState(DriveState.PlatoonMerge);
     else

@@ -169,7 +169,7 @@ public class CatmullRomSpline
     public float GetClosestT(Vector3 position, float hintT)
     {
         const int SAMPLES  = 100;
-        const int HALF_WIN = 5;
+        const int HALF_WIN = 20;
 
         int hintIndex = Mathf.Clamp((int)(hintT * SAMPLES), HALF_WIN, SAMPLES - HALF_WIN);
 
