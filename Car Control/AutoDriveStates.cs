@@ -9,12 +9,16 @@ public partial class SimpleAutoDrive : MonoBehaviour
 
     void HandleFollowingState()
     {
+        if (currentSpline == null || currentSpline.TotalLength <= 0) return;
+
+        // === 保留：障碍物检测 ===
         if (obstacleDetected && avoidCooldown <= 0f)
         {
             currentState = DriveState.Avoiding;
             return;
         }
 
+        // === 保留：红绿灯停车 ===
         if (currentIntersectionState == IntersectionState.RedLight || currentIntersectionState == IntersectionState.YellowLight)
         {
             int stopNodeId = (nearestIntersectionNodeId >= 0) ? nearestIntersectionNodeId : currentDestinationNodeId;
@@ -31,13 +35,68 @@ public partial class SimpleAutoDrive : MonoBehaviour
             return;
         }
 
-        if (currentT >= 1.0f)
+        // --- 冷却计时 ---
+        rerouteCooldown -= Time.deltaTime;
+
+        // --- 1. 投影速度计算 ---
+        float sampleNextT   = Mathf.Clamp01(currentT + 0.05f);
+        Vector3 splineTangent = (currentSpline.GetPoint(sampleNextT) -
+                                 currentSpline.GetPoint(currentT)).normalized;
+        float currentSpeed  = carController.GetSpeed();
+        float forwardSpeed  = currentSpeed * Vector3.Dot(transform.forward, splineTangent);
+        float advanceSpeed  = forwardSpeed;
+        float throttle      = 0f;
+        float steer         = 0f;
+
+        // --- 2. 倒车 / 前进分支 ---
+        if (targetSpeed < -0.1f)
         {
-            RequestNewRandomPath();
-            return;
+            throttle     = -0.5f;
+            steer        = 0f;
+            advanceSpeed = 0f;
+        }
+        else
+        {
+            if (targetSpeed > 0.1f)
+                throttle = Mathf.Clamp((targetSpeed - currentSpeed) / 5f, 0f, 1f);
+            if (Mathf.Abs(advanceSpeed) < 0.5f)
+                advanceSpeed = 0f;
+
+            float lookAheadDist = dynamicLookAhead
+                ? Mathf.Clamp(Mathf.Abs(currentSpeed) * 0.5f, 3f, 12f)
+                : 5f;
+            float lookT     = Mathf.Clamp01(currentT + lookAheadDist / currentSpline.TotalLength);
+            Vector3 targetPt = currentSpline.GetPoint(lookT);
+            Vector3 localPt  = transform.InverseTransformPoint(targetPt);
+            steer = Mathf.Clamp(localPt.x / 4f, -1f, 1f);
         }
 
-        FollowPath();
+        // --- 3. T 值推进 ---
+        currentT += (advanceSpeed / currentSpline.TotalLength) * Time.deltaTime;
+        currentT  = Mathf.Clamp01(currentT);
+
+        // --- 4. 橡皮筋校准 ---
+        float realT = currentSpline.GetClosestT(transform.position, currentT);
+        currentT    = Mathf.Lerp(currentT, realT, Time.deltaTime * 0.5f);
+        currentT    = Mathf.Clamp01(currentT);
+
+        // --- 5. 底盘控制 ---
+        carController.SetAutoControl(throttle, steer);
+
+        // --- 6. 车道 ID 刷新（距离门槛） ---
+        if (Vector3.Distance(lastLaneCheckPos, transform.position) > 5f || currentT > 0.8f)
+        {
+            lastLaneCheckPos = transform.position;
+            currentLaneId    = WorldModel.Instance.FindNearestLane(transform.position);
+        }
+
+        // --- 7. T>=0.95 提前接力 ---
+        if (currentT >= 0.95f && !isFetchingNextPath && rerouteCooldown <= 0f)
+        {
+            rerouteCooldown  = 1f;
+            isFetchingNextPath = true;
+            RequestNewRandomPath();
+        }
     }
 
     void HandleAvoidingState()
@@ -65,7 +124,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
             if (reverseTimer >= 1.2f + reverseCount * 0.5f)
             {
                 reverseCount++; isReversing = false; reverseTimer = 0f;
-                avoidCooldown = 2.5f; startupDelay = 1.5f;
+                avoidCooldown = 2.5f;
                 carController.SetAutoControl(0f, 0f);
 
                 if (currentSpline != null && currentSpline.TotalLength > 0)
@@ -89,7 +148,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
         if (currentIntersectionState == IntersectionState.GreenLight || currentIntersectionState == IntersectionState.Uncontrolled)
         {
             hasStopTarget = false;
-            stuckTimer = 0f; stuckCheckTimer = 0f; lastPosition = transform.position; startupDelay = 2f;
+            lastPosition = transform.position;
             carController.SetAutoControl(0f, 0f); // 重置制动
             carController.SetAutoBrake(0f);
             currentState = DriveState.Following;

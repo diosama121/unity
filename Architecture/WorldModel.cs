@@ -62,10 +62,15 @@ public class WorldModel : MonoBehaviour
         roadGenerator.Generate();
 
         Bounds worldBounds = CalculateWorldBounds();
-        
-        terrainGrid.Initialize(worldBounds);
 
         IngestAndPrecomputeGraph(roadGenerator);
+
+        terrainGrid.Initialize(worldBounds);
+
+        foreach (var node in _graph.Values)
+        {
+            node.WorldPos = new Vector3(node.WorldPos.x, GetUnifiedHeight(node.WorldPos.x, node.WorldPos.z) + 0.1f, node.WorldPos.z);
+        }
 
         GenerateAndRegisterLanes();
 
@@ -276,7 +281,7 @@ public class WorldModel : MonoBehaviour
                 approachDir.y = 0f;
                 if (approachDir.sqrMagnitude < 0.001f) continue;
 
-                float safeStopDistance = Mathf.Clamp(node.IntersectionRadius, 6f, 15f) + 2f;
+                float safeStopDistance = node.IntersectionRadius + 5.0f;
                 Vector3 stopPos = junctionPos - approachDir.normalized * safeStopDistance;
                 stopPos.y = GetUnifiedHeight(stopPos.x, stopPos.z) + 0.1f;
 

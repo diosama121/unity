@@ -166,41 +166,22 @@ public class CatmullRomSpline
         return globalT;
     }
 
-    public float GetClosestT(Vector3 worldPos, float hintT = 0f)
+    public float GetClosestT(Vector3 position, float hintT)
     {
-        if (ControlPoints.Count < 2) return 0f;
+        const int SAMPLES  = 100;
+        const int HALF_WIN = 5;
 
+        int hintIndex = Mathf.Clamp((int)(hintT * SAMPLES), HALF_WIN, SAMPLES - HALF_WIN);
+
+        float minD  = float.MaxValue;
         float bestT = hintT;
-        float bestDistSqr = (GetPoint(hintT) - worldPos).sqrMagnitude;
-        int totalSamples = (ControlPoints.Count - 1) * SAMPLES_PER_SEGMENT;
 
-        int coarseSteps = Mathf.Min(totalSamples, 40);
-        for (int i = 0; i <= coarseSteps; i++)
+        for (int i = hintIndex - HALF_WIN; i <= hintIndex + HALF_WIN; i++)
         {
-            float t = i / (float)coarseSteps;
-            float dSqr = (GetPoint(t) - worldPos).sqrMagnitude;
-            if (dSqr < bestDistSqr)
-            {
-                bestDistSqr = dSqr;
-                bestT = t;
-            }
+            float t = Mathf.Clamp01((float)i / SAMPLES);
+            float d = Vector3.Distance(position, GetPoint(t));
+            if (d < minD) { minD = d; bestT = t; }
         }
-
-        float window = 3f / coarseSteps;
-        float tMin = Mathf.Max(0f, bestT - window);
-        float tMax = Mathf.Min(1f, bestT + window);
-        int fineSteps = 30;
-        for (int i = 0; i <= fineSteps; i++)
-        {
-            float t = Mathf.Lerp(tMin, tMax, i / (float)fineSteps);
-            float dSqr = (GetPoint(t) - worldPos).sqrMagnitude;
-            if (dSqr < bestDistSqr)
-            {
-                bestDistSqr = dSqr;
-                bestT = t;
-            }
-        }
-
         return bestT;
     }
 

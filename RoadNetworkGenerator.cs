@@ -212,19 +212,37 @@ public class RoadNetworkGenerator : MonoBehaviour
             nodes[i].neighbors = nodes[i].neighbors.Distinct().ToList();
         }
 
-        nodes.RemoveAll(n => n == null);
+        List<WaypointNode> newNodes = new List<WaypointNode>();
+        Dictionary<int, int> oldToNewId = new Dictionary<int, int>();
+
         for (int i = 0; i < nodes.Count; i++)
         {
-            nodes[i].id = i;
-            for (int j = nodes[i].neighbors.Count - 1; j >= 0; j--)
+            if (nodes[i] != null)
             {
-                if (nodes[i].neighbors[j] >= nodes.Count)
-                    nodes[i].neighbors.RemoveAt(j);
+                oldToNewId[i] = newNodes.Count;
+                newNodes.Add(nodes[i]);
             }
         }
 
+        foreach (var node in newNodes)
+        {
+            node.id = oldToNewId[node.id];
+            List<int> validNeighbors = new List<int>();
+
+            foreach (int oldNbId in node.neighbors)
+            {
+                if (oldToNewId.TryGetValue(oldNbId, out int newNbId) && newNbId != node.id)
+                {
+                    validNeighbors.Add(newNbId);
+                }
+            }
+            node.neighbors = validNeighbors.Distinct().ToList();
+        }
+
+        nodes = newNodes;
+
         if (mergeCount > 0)
-            Debug.Log($"[RoadNetworkGenerator] 🔗 节点聚类熔断: 合并了 {mergeCount} 个过密节点");
+            Debug.Log($"[RoadNetworkGenerator] 🔗 节点聚类熔断: 合并了 {mergeCount} 个过密节点，拓扑已安全重建");
     }
 
     private void AddEdge(int a, int b)

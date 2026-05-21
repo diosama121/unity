@@ -152,17 +152,26 @@ public class EnvironmentMeshBuilder : MonoBehaviour
         buildingRoot.transform.SetParent(transform, false);
 
         ClipperOffset co = new ClipperOffset();
+        Paths64 rawIslands = new Paths64();
         foreach (var path in roadUnion)
         {
             double area = Clipper.Area(path);
             if (area >= 0) continue;
             Path64 island = new Path64(path);
+            rawIslands.Add(new Path64(island));
             island.Reverse();
             co.AddPath(island, JoinType.Miter, EndType.Polygon);
         }
 
         Paths64 shrunkIslands = new Paths64();
-        co.Execute(-1.5 * 1000.0, shrunkIslands);
+        try
+        {
+            co.Execute(-1.5 * 1000.0, shrunkIslands);
+        }
+        catch (System.Exception)
+        {
+            shrunkIslands = rawIslands;
+        }
 
         // Cube降级方案：当buildingMaterial为null时，使用Cube代替挤出网格
         bool useCubeFallback = (paramsSource.buildingMaterial == null);

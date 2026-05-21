@@ -50,18 +50,18 @@ public partial class SimpleAutoDrive : MonoBehaviour
     private Vector3 finalDestination = Vector3.zero;
 
     private float avoidCooldown = 0f;
-    private float startupDelay = 0f;
     private bool isReversing = false;
     private float reverseTimer = 0f;
 
-    private float stuckTimer = 0.3f;
     private Vector3 lastPosition = Vector3.zero;
-    private float stuckCheckInterval = 0.5f;
-    private float stuckCheckTimer = 0f;
     private float escapeSteering = 0f;
 
     private float brakeMaxDecel = 8f;
     private float laneSearchTimer = 0f;
+    private bool isFetchingNextPath = false;
+    private int lastNodeId = -1;
+    private float rerouteCooldown = 0f;
+    private Vector3 lastLaneCheckPos = Vector3.one * -9999f;
 
     void Start()
     {
@@ -188,60 +188,6 @@ public partial class SimpleAutoDrive : MonoBehaviour
     void UpdateStuckDetection()
     {
         return;
-
-        if (currentState != DriveState.Following)
-        {
-            stuckTimer = 0f; stuckCheckTimer = 0f; startupDelay = 0f; lastPosition = transform.position; return;
-        }
-        if (startupDelay > 0f)
-        {
-            startupDelay -= Time.deltaTime;
-            stuckTimer = 0f; stuckCheckTimer = 0f; lastPosition = transform.position; return;
-        }
-
-        stuckCheckTimer += Time.deltaTime;
-        if (stuckCheckTimer < stuckCheckInterval) return;
-        stuckCheckTimer = 0f;
-
-        float moved = Vector3.Distance(transform.position, lastPosition);
-        lastPosition = transform.position;
-
-        if (moved < 0.3f)
-        {
-            stuckTimer += stuckCheckInterval;
-            if (stuckTimer > 4f)
-            {
-                if (Physics.SphereCast(transform.position + Vector3.up * 0.5f, 1.5f, -transform.forward, out RaycastHit backHit, 5f))
-                {
-                    stuckTimer = 3f;
-                    return;
-                }
-
-                stuckTimer = 0f; isReversing = true; reverseTimer = 0f;
-                
-                if (currentLaneId >= 0 && WorldModel.Instance != null && WorldModel.Instance.GlobalLanes.TryGetValue(currentLaneId, out Lane lane))
-                {
-                    float t = lane.CenterSpline.GetClosestT(transform.position, 0.5f);
-                    float nextT = Mathf.Min(t + 0.05f, 1f);
-                    Vector3 laneTangent = (lane.CenterSpline.GetPoint(nextT) - lane.CenterSpline.GetPoint(t)).normalized;
-                    Vector3 localLaneDir = transform.InverseTransformDirection(laneTangent);
-                    escapeSteering = Mathf.Clamp(-localLaneDir.x * 2f, -1f, 1f);
-                }
-                else if (currentSpline != null)
-                {
-                    float sampleT = (currentT < 0.99f) ? Mathf.Min(currentT + 0.01f, 1f) : currentT;
-                    Vector3 pA = (currentT > 0.01f) ? currentSpline.GetPoint(currentT - 0.01f) : currentSpline.GetPoint(0f);
-                    Vector3 pB = currentSpline.GetPoint(sampleT);
-                    Vector3 tangent = (pB - pA).normalized;
-                    Vector3 localTangent = transform.InverseTransformDirection(tangent);
-                    escapeSteering = localTangent.x > 0 ? 1f : -1f;
-                }
-                else escapeSteering = 0f;
-
-                currentState = DriveState.Avoiding;
-            }
-        }
-        else stuckTimer = 0f;
     }
 
     void HandleIdleState()
@@ -256,28 +202,70 @@ public partial class SimpleAutoDrive : MonoBehaviour
 
     void RequestNewRandomPath()
     {
-        if (WorldModel.Instance != null && pathPlanner != null)
+        if (WorldModel.Instance == null || pathPlanner == null)
         {
-            for (int i = 0; i < 10; i++)
+            isFetchingNextPath = false;
+            return;
+        }
+
+        for (int i = 0; i < 15; i++)
+        {
+            int      randId     = Random.Range(0, WorldModel.Instance.NodeCount);
+            RoadNode targetNode = WorldModel.Instance.GetNode(randId);
+
+            if (targetNode == null || targetNode.NeighborIds == null
+                || targetNode.NeighborIds.Count <= 1) continue;
+
+            if (Vector3.Distance(transform.position, targetNode.WorldPos) < 20f) continue;
+
+            Vector3 dirToTarget = (targetNode.WorldPos - transform.position).normalized;
+            if (Vector3.Dot(transform.forward, dirToTarget) < 0.3f) continue;
+
+            CatmullRomSpline newSpline =
+                pathPlanner.PlanPathSpline(transform.position, targetNode.WorldPos, transform.forward);
+            if (newSpline == null || newSpline.TotalLength <= 0) continue;
+
+            Vector3 newStartTangent = (newSpline.GetPoint(0.05f) - newSpline.GetPoint(0f)).normalized;
+            if (Vector3.Dot(transform.forward, newStartTangent) < 0.7f) continue;
+
+            SetSplinePath(newSpline, targetNode.Id);
+            isFetchingNextPath = false;
+            return;
+        }
+
+        RoadNode nearest = WorldModel.Instance.GetNearestNode(transform.position);
+        if (nearest?.NeighborIds != null)
+        {
+            foreach (int nbId in nearest.NeighborIds)
             {
-                int randTargetId = Random.Range(0, WorldModel.Instance.NodeCount);
-                RoadNode targetNode = WorldModel.Instance.GetNode(randTargetId);
-                if (targetNode != null && targetNode.NeighborIds != null && targetNode.NeighborIds.Count > 1)
+                if (nbId == lastNodeId) continue;
+
+                RoadNode nbNode = WorldModel.Instance.GetNode(nbId);
+                Vector3  dir    = (nbNode.WorldPos - transform.position).normalized;
+                if (Vector3.Dot(transform.forward, dir) <= 0.1f) continue;
+
+                CatmullRomSpline fallback =
+                    pathPlanner.PlanPathSpline(transform.position, nbNode.WorldPos, transform.forward);
+                if (fallback != null && fallback.TotalLength > 0)
                 {
-                    if (Vector3.Distance(transform.position, targetNode.WorldPos) < 20f) continue;
-                    CatmullRomSpline newSpline = pathPlanner.PlanPathSpline(transform.position, targetNode.WorldPos);
-                    if (newSpline != null && newSpline.TotalLength > 0)
-                    {
-                        SetSplinePath(newSpline, targetNode.Id);
-                        return;
-                    }
+                    SetSplinePath(fallback, nbNode.Id);
+                    isFetchingNextPath = false;
+                    return;
                 }
             }
         }
-        currentState = DriveState.Idle;
-        currentSpline = null;
-        carController.SetAutoControl(0f, 0f);
-        Debug.LogWarning($"[AutoDrive] Vehicle {gameObject.name} cannot find valid path, entering idle.");
+
+        if (currentSpline == null || currentSpline.TotalLength <= 0)
+        {
+            carController.SetAutoControl(0f, 0f);
+            targetSpeed  = 0f;
+            currentState = DriveState.Idle;
+        }
+        else
+        {
+            targetSpeed = 2f;
+        }
+        isFetchingNextPath = false;
     }
 
     public void ResetNavigation()
@@ -287,10 +275,15 @@ public partial class SimpleAutoDrive : MonoBehaviour
 
     public void SetSplinePath(CatmullRomSpline spline, int destinationNodeId)
     {
-        this.currentSpline = spline;
-        this.currentDestinationNodeId = destinationNodeId; 
-        this.currentT = 0f;
-        this.currentState = DriveState.Following;
+        lastNodeId              = currentDestinationNodeId;
+        currentDestinationNodeId = destinationNodeId;
+        currentSpline           = spline;
+
+        currentT     = spline.TotalLength > 0
+            ? currentSpline.GetClosestT(transform.position, 0f)
+            : 0f;
+
+        currentState = DriveState.Following;
     }
 
     void RerouteToDestination()
@@ -299,7 +292,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
 
         if (finalDestination != Vector3.zero)
         {
-            CatmullRomSpline newSpline = pathPlanner.PlanPathSpline(transform.position, finalDestination);
+            CatmullRomSpline newSpline = pathPlanner.PlanPathSpline(transform.position, finalDestination, transform.forward);
             if (newSpline != null && newSpline.TotalLength > 0)
             {
                 currentSpline = newSpline;
@@ -449,9 +442,6 @@ public partial class SimpleAutoDrive : MonoBehaviour
         isReversing = false;
         reverseTimer = 0f;
         avoidCooldown = 0f;
-        startupDelay = 0f;
-        stuckTimer = 0.3f;
-        stuckCheckTimer = 0f;
         hasStopTarget = false;
         reverseCount = 0;
         currentDestinationNodeId = -1;

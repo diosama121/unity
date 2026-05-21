@@ -62,9 +62,9 @@ public class PathPlanner : MonoBehaviour
 
     private WorldModel _worldModel => WorldModel.Instance;
 
-    public List<int> FindDiscretePath(Vector3 startPos, Vector3 targetPos)
+    public List<int> FindDiscretePath(Vector3 startPos, Vector3 targetPos, Vector3? startForward = null)
     {
-        RoadNode startNode = _worldModel.GetNearestNode(startPos);
+        RoadNode startNode = GetLogicalStartNode(startPos, startForward);
         RoadNode targetNode = _worldModel.GetNearestNode(targetPos);
 
         if (startNode == null || targetNode == null)
@@ -74,6 +74,31 @@ public class PathPlanner : MonoBehaviour
         }
 
         return RunAStar(startNode.Id, targetNode.Id);
+    }
+
+    private RoadNode GetLogicalStartNode(Vector3 startPos, Vector3? forward)
+    {
+        if (forward.HasValue)
+        {
+            int laneId = _worldModel.FindNearestLane(startPos);
+            if (laneId >= 0 && _worldModel.GlobalLanes.TryGetValue(laneId, out Lane lane))
+            {
+                int nodeAId = lane.RoadId / 10000;
+                int nodeBId = lane.RoadId % 10000;
+                RoadNode nodeA = _worldModel.GetNode(nodeAId);
+                RoadNode nodeB = _worldModel.GetNode(nodeBId);
+
+                if (nodeA != null && nodeB != null)
+                {
+                    Vector3 dirAToB = (nodeB.WorldPos - nodeA.WorldPos).normalized;
+                    if (Vector3.Dot(dirAToB, forward.Value) >= 0)
+                        return nodeB;
+                    else
+                        return nodeA;
+                }
+            }
+        }
+        return _worldModel.GetNearestNode(startPos);
     }
 
     public List<Vector3> FindSmoothPath(Vector3 startPos, Vector3 targetPos)
@@ -110,54 +135,49 @@ public class PathPlanner : MonoBehaviour
         return smoothPath;
     }
 
-    public CatmullRomSpline PlanPathSpline(Vector3 startPos, Vector3 targetPos)
+    public CatmullRomSpline PlanPathSpline(Vector3 startPos, Vector3 targetPos, Vector3? startForward = null)
     {
-        List<int> discretePath = FindDiscretePath(startPos, targetPos);
+        List<int> discretePath = FindDiscretePath(startPos, targetPos, startForward);
         if (discretePath == null || discretePath.Count < 2) return null;
 
         List<Vector3> controlPoints = new List<Vector3>();
 
+        controlPoints.Add(startPos);
+
+        if (startForward.HasValue)
+            controlPoints.Add(startPos + startForward.Value * 3f);
+
         for (int i = 0; i < discretePath.Count - 1; i++)
         {
-            int currId = discretePath[i];
-            int nextId = discretePath[i + 1];
-
-            string edgeKey = Mathf.Min(currId, nextId) + "_" + Mathf.Max(currId, nextId);
-
-            if (_worldModel.GlobalSplineCache.TryGetValue(edgeKey, out var cachedSpline))
-            {
-                bool reverse = (currId > nextId);
-
-                for (int j = 0; j < cachedSpline.Count; j++)
-                {
-                    int idx = reverse ? (cachedSpline.Count - 1 - j) : j;
-                    Vector3 pt = cachedSpline[idx].Pos;
-
-                    if (controlPoints.Count > 0 && Vector3.Distance(controlPoints[controlPoints.Count - 1], pt) < 0.1f)
-                        continue;
-
-                    controlPoints.Add(pt);
-                }
-            }
-            else
-            {
-                RoadNode node = _worldModel.GetNode(currId);
-                if (node != null && (controlPoints.Count == 0 || Vector3.Distance(controlPoints[controlPoints.Count - 1], node.WorldPos) > 0.1f))
-                {
-                    controlPoints.Add(node.WorldPos);
-                }
-            }
+            controlPoints.AddRange(GetCachedPoints(discretePath[i], discretePath[i + 1]));
         }
-
-        RoadNode lastNode = _worldModel.GetNode(discretePath[discretePath.Count - 1]);
-        if (lastNode != null && (controlPoints.Count == 0 || Vector3.Distance(controlPoints[controlPoints.Count - 1], lastNode.WorldPos) > 0.1f))
-        {
-            controlPoints.Add(lastNode.WorldPos);
-        }
-
-        if (controlPoints.Count < 2) return null;
 
         return new CatmullRomSpline(controlPoints, useCentripetal: false);
+    }
+
+    private List<Vector3> GetCachedPoints(int currId, int nextId)
+    {
+        List<Vector3> result = new List<Vector3>();
+
+        string edgeKey = Mathf.Min(currId, nextId) + "_" + Mathf.Max(currId, nextId);
+
+        if (_worldModel.GlobalSplineCache.TryGetValue(edgeKey, out var cachedSpline))
+        {
+            bool reverse = (currId > nextId);
+            for (int j = 0; j < cachedSpline.Count; j++)
+            {
+                int idx = reverse ? (cachedSpline.Count - 1 - j) : j;
+                result.Add(cachedSpline[idx].Pos);
+            }
+        }
+        else
+        {
+            RoadNode node = _worldModel.GetNode(nextId);
+            if (node != null)
+                result.Add(node.WorldPos);
+        }
+
+        return result;
     }
 
     private List<int> RunAStar(int startId, int targetId)

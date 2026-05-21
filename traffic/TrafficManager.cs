@@ -87,6 +87,7 @@ public class TrafficManager : MonoBehaviour
         int attempts = 0;
         int maxAttempts = npcCount * 5;
         HashSet<int> usedStartIds = new HashSet<int>();
+        int failTargetNull = 0, failAutoDriveNull = 0, failSpline = 0, failNoLane = 0, failUsedStart = 0;
 
         while (spawnedCount < npcCount && attempts < maxAttempts)
         {
@@ -94,11 +95,11 @@ public class TrafficManager : MonoBehaviour
             try
             {
                 var startNode = shuffledNodes[Random.Range(0, shuffledNodes.Count)];
-                if (usedStartIds.Contains(startNode.id)) continue;
+                if (usedStartIds.Contains(startNode.id)) { failUsedStart++; continue; }
                 usedStartIds.Add(startNode.id);
 
                 var targetNode = GetFarNode(startNode);
-                if (targetNode == null) continue;
+                if (targetNode == null) { failTargetNull++; continue; }
 
                 GameObject chosenPrefab = normalNpcPrefabs[Random.Range(0, normalNpcPrefabs.Length)];
                 GameObject npcObj = Instantiate(chosenPrefab, startNode.position, Quaternion.identity);
@@ -124,6 +125,10 @@ public class TrafficManager : MonoBehaviour
                         if (startTangent != Vector3.zero)
                             npcObj.transform.rotation = Quaternion.LookRotation(startTangent);
 
+                        int initLaneId = WorldModel.Instance.FindNearestLane(exactStartPos);
+                        if (initLaneId < 0) { Destroy(npcObj); failNoLane++; continue; }
+                        autoDrive.currentLaneId = initLaneId;
+
                         autoDrive.SetSplinePath(spline, targetNode.id);
                         npcVehicles.Add(autoDrive);
                         spawnedCount++;
@@ -132,11 +137,13 @@ public class TrafficManager : MonoBehaviour
                     {
                         Debug.LogWarning($"[TrafficManager] NPC {spawnedCount} 路径规划失败，节点 {startNode.id} -> {targetNode.id}，已销毁实例。");
                         Destroy(npcObj);
+                        failSpline++;
                     }
                 }
                 else
                 {
                     Destroy(npcObj);
+                    failAutoDriveNull++;
                 }
             }
             catch (System.Exception ex)
@@ -146,7 +153,7 @@ public class TrafficManager : MonoBehaviour
         }
 
         _hasSpawned = spawnedCount > 0;
-        if (!_hasSpawned) Debug.LogWarning("[TrafficManager] 未成功生成任何 NPC。");
+        if (!_hasSpawned) Debug.LogWarning($"[TrafficManager] 未成功生成任何 NPC。诊断: 总尝试={attempts}, usedStart={failUsedStart}, targetNull={failTargetNull}, autoDriveNull={failAutoDriveNull}, splineFail={failSpline}, noLane={failNoLane}");
         else Debug.Log($"[TrafficManager] NPC生成完成: {spawnedCount}/{npcCount}");
     }
 

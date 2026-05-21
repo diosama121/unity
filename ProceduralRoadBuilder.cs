@@ -57,6 +57,7 @@ public class ProceduralRoadBuilder : MonoBehaviour
     private RoadNetworkGenerator roadGen;
     public RoadNetworkGenerator RoadGen => roadGen;
     private GameObject meshRoot;
+    private Material _cachedFallbackMat;
 
     void Awake() => roadGen = GetComponent<RoadNetworkGenerator>();
 
@@ -425,12 +426,16 @@ public class ProceduralRoadBuilder : MonoBehaviour
     private Material[] BuildMaterialArray(Material fallback)
     {
         Material[] mats = new Material[6];
-        Material defaultMat = new Material(Shader.Find("Standard"));
-        Material safeFallback = fallback ? fallback : defaultMat;
+
+        if (_cachedFallbackMat == null)
+            _cachedFallbackMat = new Material(Shader.Find("Standard"));
+
+        Material safeFallback = fallback ? fallback : _cachedFallbackMat;
+
         if (useCountrysideUniformMaterials) {
-            mats[0] = countrysideRoadMaterial ? countrysideRoadMaterial : defaultMat;
+            mats[0] = countrysideRoadMaterial ? countrysideRoadMaterial : _cachedFallbackMat;
             mats[1] = mats[0]; mats[2] = mats[0];
-            mats[3] = countrysideJunctionMaterial ? countrysideJunctionMaterial : defaultMat;
+            mats[3] = countrysideJunctionMaterial ? countrysideJunctionMaterial : _cachedFallbackMat;
             mats[4] = mats[3]; mats[5] = mats[3];
         } else {
             mats[0] = horizontalRoadMaterial ? horizontalRoadMaterial : safeFallback;

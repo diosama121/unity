@@ -7,7 +7,6 @@ using UnityEngine;
 /// </summary>
 public enum DriveState
 {
-    FatalCrashed,
     EmergencyAvoid,
     Intersection,
     DeadlockEscape,
@@ -28,7 +27,6 @@ private float radarTimer = 0f;
 private bool cachedPedestrianDetected = false;
 private bool cachedAmbulanceDetected = false;
 private bool cachedTrafficAhead = false;
- private bool isReversingEscape = false;
     [Header("速度基准")]
     public float cruiseSpeedBase = 15f;
     public float minCruiseSpeed = 2f;
@@ -51,7 +49,7 @@ private bool cachedTrafficAhead = false;
     public float maxBrakeDecel = 10f;
     public float aebBrakeDecel = 12f;
     public float yellowLightReactionTime = 1f;
-    public float fatalBoundaryMargin = 0.4f;
+    
 
     [Header("死锁脱困")]
     public float deadlockSpeedThreshold = 0.8f;
@@ -77,7 +75,6 @@ private bool cachedTrafficAhead = false;
     private float deadlockTimer;
     private float stopToGoTimer;
     private float reverseEscapeTimer;
-    private float overtakeBezierU;
 
     private Vector3 lastPosition;
     private FieldInfo splineField;
@@ -91,7 +88,6 @@ private bool cachedTrafficAhead = false;
     private bool pendingBrakeOverride;
     private float pendingBrakeDecel;
     private float pendingSteer;
-    private float pendingThrottle;
 
     void Start()
     {
@@ -132,15 +128,6 @@ private bool cachedTrafficAhead = false;
 
     pendingBrakeOverride = false;
     pendingSteer = 0f;
-    pendingThrottle = 0f;
-    if (currentState == DriveState.FatalCrashed) return;
-
-    if (CheckBoundaryFatal())
-    {
-        currentState = DriveState.FatalCrashed;
-        ExecuteFatalCrash();
-        return;
-    }
 
     TickTimers();
 
@@ -161,22 +148,10 @@ private bool cachedTrafficAhead = false;
     void LateUpdate()
     {
         if (autoDrive == null || carController == null) return;
-        if (currentState == DriveState.FatalCrashed)
-        {
-            ExecuteFatalCrash();
-            return;
-        }
+        if (!carController.autoMode) return;
 
-        if (!carController.autoMode && autoDrive.currentState != SimpleAutoDrive.DriveState.RemoteControlled)
-            return;
-
-        if (pendingBrakeOverride)
-            carController.SetAutoBrake(pendingBrakeDecel);
-        else
-            carController.SetAutoBrake(0f);
-
-        if (pendingThrottle != 0f || pendingSteer != 0f)
-            carController.SetAutoControl(pendingThrottle, pendingSteer);
+        if (pendingBrakeOverride) carController.SetAutoBrake(pendingBrakeDecel);
+        else                      carController.SetAutoBrake(0f);
     }
 
     private void ChangeState(DriveState newState)
@@ -186,9 +161,7 @@ private bool cachedTrafficAhead = false;
 
         if (newState != DriveState.DeadlockEscape)
         {
-            isReversingEscape = false;
             reverseEscapeTimer = 0f;
-            overtakeBezierU = 0f;
         }
 
         if (newState != DriveState.PlatoonMerge)
@@ -234,14 +207,7 @@ private bool cachedTrafficAhead = false;
         }
     }
 
-    private void ExecuteFatalCrash()
-    {
-        autoDrive.targetSpeed = 0f;
-        pendingBrakeOverride = true;
-        pendingBrakeDecel = maxBrakeDecel * 2f;
-        pendingThrottle = 0f;
-        pendingSteer = 0f;
-    }
+    
 
     private void ExecuteEmergencyBraking()
     {
@@ -265,7 +231,6 @@ private bool cachedTrafficAhead = false;
 
         pendingBrakeOverride = true;
         pendingBrakeDecel = decel;
-        pendingThrottle = 0f;
         pendingSteer = 0f;
     }
 
@@ -278,7 +243,6 @@ private bool cachedTrafficAhead = false;
             autoDrive.targetSpeed = 0f;
             pendingBrakeOverride = true;
             pendingBrakeDecel = maxBrakeDecel;
-            pendingThrottle = 0f;
             pendingSteer = 0f;
             return;
         }
@@ -295,7 +259,6 @@ private bool cachedTrafficAhead = false;
 
             pendingBrakeOverride = true;
             pendingBrakeDecel = brakeDecel;
-            pendingThrottle = 0f;
             pendingSteer = Mathf.Clamp(
                 carController.currentSteeringAngle / Mathf.Max(carController.maxSteeringAngle, 1f),
                 -1f, 1f);
@@ -321,42 +284,17 @@ private bool cachedTrafficAhead = false;
 
     private void ExecuteDeadlockEscape()
     {
-        autoDrive.targetSpeed = Mathf.Min(autoDrive.targetSpeed, cruiseSpeedBase * 0.25f);
+        reverseEscapeTimer  += Time.deltaTime;
 
-        if (deadlockTimer < deadlockTimeToTrigger * 0.6f)
-            return;
-
-        if (IsLeftLaneClear())
-        {
-            isReversingEscape = false;
-            reverseEscapeTimer = 0f;
-
-            overtakeBezierU = Mathf.Clamp01(overtakeBezierU + Time.deltaTime * 0.35f);
-            Vector3 bezierTarget = SampleOvertakeBezier(overtakeBezierU);
-            Vector3 local = transform.InverseTransformPoint(bezierTarget);
-            float steer = Mathf.Clamp(local.x * 1.5f, -1f, 1f); 
-
-            // 替换 CarControlUtility.SafeDivide 为手动安全除法
-            float throttle = (carController.maxSpeed == 0f) ? 0f : (autoDrive.targetSpeed / carController.maxSpeed);
-            pendingThrottle = Mathf.Clamp01(throttle);
-            pendingSteer = steer;
-            pendingBrakeOverride = false;
-            return;
-        }
-
-        isReversingEscape = true;
-        reverseEscapeTimer += Time.deltaTime;
-        autoDrive.targetSpeed = cruiseSpeedBase * 0.1f;
-        pendingThrottle = reverseThrottle;
-        pendingSteer = 0f;
-        pendingBrakeOverride = false;
+        autoDrive.targetSpeed  = -5f;
+        pendingBrakeOverride   = false;
 
         if (reverseEscapeTimer >= reverseDuration)
         {
-            isReversingEscape = false;
-            reverseEscapeTimer = 0f;
-            overtakeBezierU = 0f;
-            deadlockTimer = 0f;
+            reverseEscapeTimer  = 0f;
+            deadlockTimer       = 0f;
+
+            currentState = DriveState.DynamicCruising;
         }
     }
 
@@ -407,29 +345,7 @@ private bool cachedTrafficAhead = false;
 
     // ===================== 探测层 =====================
 
-    private bool CheckBoundaryFatal()
-    {
-        Vector3 origin = transform.position + Vector3.up * boundaryRayHeight;
-        Vector3[] dirs = { transform.forward, transform.right, -transform.right };
-
-        foreach (Vector3 dir in dirs)
-        {
-            if (Physics.Raycast(origin, dir, out RaycastHit hit, 1.2f, obstacleMask, QueryTriggerInteraction.Ignore))
-            {
-                if (hit.collider.GetComponentInParent<SimpleCarController>() != null) continue;
-                if (hit.normal.y > 0.6f) continue;
-                if (hit.distance < fatalBoundaryMargin) return true;
-            }
-        }
-
-        float cte = EstimateCrossTrackError();
-        float maxAllowedDeviation = GetRoadHalfWidth() - vehicleWidthMargin() + fatalBoundaryMargin;
-        
-        if (Mathf.Abs(cte) > maxAllowedDeviation)
-            return true;
-
-        return false;
-    }
+    
 
     private bool DetectPedestrianOrCrosswalk()
     {
