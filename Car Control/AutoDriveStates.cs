@@ -60,7 +60,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
             if (targetSpeed > 0.1f)
                 throttle = Mathf.Clamp((targetSpeed - currentSpeed) / 5f, 0f, 1f);
             if (Mathf.Abs(advanceSpeed) < 0.5f)
-                advanceSpeed = 0f;
+                advanceSpeed = Mathf.Sign(advanceSpeed) * 0.5f;
 
             float lookAheadDist = dynamicLookAhead
                 ? Mathf.Clamp(Mathf.Abs(currentSpeed) * 0.5f, 3f, 12f)
@@ -77,7 +77,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
 
         // --- 4. 橡皮筋校准 ---
         float realT = currentSpline.GetClosestT(transform.position, currentT);
-        currentT    = Mathf.Lerp(currentT, realT, Time.deltaTime * 0.5f);
+        currentT    = Mathf.Lerp(currentT, realT, Time.deltaTime * 2f);
         currentT    = Mathf.Clamp01(currentT);
 
         // --- 5. 底盘控制 ---

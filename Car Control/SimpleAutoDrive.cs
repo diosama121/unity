@@ -407,9 +407,10 @@ public partial class SimpleAutoDrive : MonoBehaviour
     {
         if (currentSpline != null && currentT < 1f)
         {
+            float lookAheadDist = Mathf.Clamp(Mathf.Abs(carController.GetSpeed()) * 0.5f, 3f, 12f);
+            float lookT = Mathf.Clamp01(currentT + lookAheadDist / currentSpline.TotalLength);
             Gizmos.color = Color.yellow;
-            Vector3 drawPoint = currentSpline.GetPoint(currentT);
-            Gizmos.DrawWireSphere(drawPoint, 2f);
+            Gizmos.DrawWireSphere(currentSpline.GetPoint(lookT), 2f);
         }
         Gizmos.color = Color.red;
         Gizmos.DrawWireSphere(transform.position, safeDistance);
