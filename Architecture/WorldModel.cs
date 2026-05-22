@@ -14,7 +14,7 @@ public partial class RoadNode
     public Vector3 Normal;        // 横向法线（Mesh 宽度的伸展基准）
     public NodeType Type;
     public List<int> NeighborIds;
-    public IntersectionState State; 
+    public IntersectionState State;
 }
 
 public class WorldModel : MonoBehaviour
@@ -100,32 +100,33 @@ public class WorldModel : MonoBehaviour
     }
 
     private void IngestAndPrecomputeGraph(RoadNetworkGenerator source)
-{
-    _graph.Clear();
-
-    const float NODE_GROUND_OFFSET = 0.1f;
-
-    foreach (var raw in source.nodes)
     {
-        float baseY = GetUnifiedHeight(raw.position.x, raw.position.z);
-        float finalY = baseY + NODE_GROUND_OFFSET;
+        _graph.Clear();
 
-        _graph[raw.id] = new RoadNode
+        const float NODE_GROUND_OFFSET = 0.1f;
+
+        foreach (var raw in source.nodes)
         {
-            Id = raw.id,
-            WorldPos = new Vector3(raw.position.x, finalY, raw.position.z),
-            Type = ClassifyNode(raw.neighbors.Count),
-            NeighborIds = new List<int>(raw.neighbors),
-            State = IntersectionState.Uncontrolled
-        };
-    }
+            float baseY = GetUnifiedHeight(raw.position.x, raw.position.z);
+            float finalY = baseY + NODE_GROUND_OFFSET;
 
-    foreach (var node in _graph.Values)
+            _graph[raw.id] = new RoadNode
+            {
+                Id = raw.id,
+                WorldPos = new Vector3(raw.position.x, finalY, raw.position.z),
+                Type = ClassifyNode(raw.neighbors.Count),
+                NeighborIds = new List<int>(raw.neighbors),
+                State = IntersectionState.Uncontrolled
+            };
+        }
+
+        foreach (var node in _graph.Values)
         {
             if (node.NeighborIds.Count < 3) continue;
 
             List<int> sorted = node.NeighborIds
-                .OrderBy(nbId => {
+                .OrderBy(nbId =>
+                {
                     RoadNode nbNode = _graph.GetValueOrDefault(nbId);
                     if (nbNode == null) return 0f;
                     return Mathf.Atan2(
@@ -135,55 +136,55 @@ public class WorldModel : MonoBehaviour
                 .ToList();
             node.PolarSortedNeighbors = sorted;
 
-        node.AngleToNextNeighbor = new Dictionary<int, float>();
-        int count = sorted.Count;
+            node.AngleToNextNeighbor = new Dictionary<int, float>();
+            int count = sorted.Count;
 
-        float maxDist = 0f;
-        for (int i = 0; i < count; i++)
-        {
-            int nbA = sorted[i];
-            int nbB = sorted[(i + 1) % count];
+            float maxDist = 0f;
+            for (int i = 0; i < count; i++)
+            {
+                int nbA = sorted[i];
+                int nbB = sorted[(i + 1) % count];
 
-            RoadNode nodeA = _graph.GetValueOrDefault(nbA);
-            RoadNode nodeB = _graph.GetValueOrDefault(nbB);
-            
-            if (nodeA == null || nodeB == null) continue;
-            
-            float d = Vector3.Distance(node.WorldPos, nodeA.WorldPos);
-            if (d > maxDist) maxDist = d;
+                RoadNode nodeA = _graph.GetValueOrDefault(nbA);
+                RoadNode nodeB = _graph.GetValueOrDefault(nbB);
 
-            Vector3 dirA = new Vector3(
-                nodeA.WorldPos.x - node.WorldPos.x,
-                0f,
-                nodeA.WorldPos.z - node.WorldPos.z).normalized;
+                if (nodeA == null || nodeB == null) continue;
 
-            Vector3 dirB = new Vector3(
-                nodeB.WorldPos.x - node.WorldPos.x,
-                0f,
-                nodeB.WorldPos.z - node.WorldPos.z).normalized;
+                float d = Vector3.Distance(node.WorldPos, nodeA.WorldPos);
+                if (d > maxDist) maxDist = d;
 
-            float theta = Mathf.Acos(Mathf.Clamp(Vector3.Dot(dirA, dirB), -1f, 1f));
-            node.AngleToNextNeighbor[nbA] = theta;
+                Vector3 dirA = new Vector3(
+                    nodeA.WorldPos.x - node.WorldPos.x,
+                    0f,
+                    nodeA.WorldPos.z - node.WorldPos.z).normalized;
+
+                Vector3 dirB = new Vector3(
+                    nodeB.WorldPos.x - node.WorldPos.x,
+                    0f,
+                    nodeB.WorldPos.z - node.WorldPos.z).normalized;
+
+                float theta = Mathf.Acos(Mathf.Clamp(Vector3.Dot(dirA, dirB), -1f, 1f));
+                node.AngleToNextNeighbor[nbA] = theta;
+            }
+
+            node.IntersectionRadius = Mathf.Clamp(maxDist, 6f, 20f);
+
+            node.Kind = node.NeighborIds.Count switch
+            {
+                3 => IntersectionKind.T_Junction,
+                4 => IntersectionKind.Crossroad,
+                _ => IntersectionKind.MultiWay
+            };
         }
 
-        node.IntersectionRadius = Mathf.Clamp(maxDist, 6f, 20f);
-
-        node.Kind = node.NeighborIds.Count switch
+        foreach (var node in _graph.Values)
         {
-            3 => IntersectionKind.T_Junction,
-            4 => IntersectionKind.Crossroad,
-            _ => IntersectionKind.MultiWay
-        };
-    }
+            node.Tangent = CalculateNodeTangent(node);
+            node.Normal = Vector3.Cross(node.Tangent, Vector3.up).normalized;
+        }
 
-    foreach (var node in _graph.Values)
-    {
-        node.Tangent = CalculateNodeTangent(node);
-        node.Normal = Vector3.Cross(node.Tangent, Vector3.up).normalized;
+        _spatialIndex = new KDTree(_graph.Values);
     }
-
-    _spatialIndex = new KDTree(_graph.Values);
-}
 
     private void GenerateAndRegisterLanes()
     {
@@ -191,6 +192,7 @@ public class WorldModel : MonoBehaviour
         GlobalConnectors.Clear();
         _nextLaneId = 0;
 
+        // 【核心修复1】：删除 isCountryside 限制，让乡村也能生成数学车道！
         if (roadGenerator == null) return;
 
         HashSet<string> processedEdges = new HashSet<string>();
@@ -377,9 +379,9 @@ public class WorldModel : MonoBehaviour
 
     public float GetNodeFixedHeight(int id) => _graph.ContainsKey(id) ? _graph[id].WorldPos.y : 0f;
 
-    public void SetIntersectionState(int id, IntersectionState s) 
-    { 
-        if (_graph.ContainsKey(id)) _graph[id].State = s; 
+    public void SetIntersectionState(int id, IntersectionState s)
+    {
+        if (_graph.ContainsKey(id)) _graph[id].State = s;
         PhaseStates[id] = s;
     }
 
@@ -407,7 +409,7 @@ public class WorldModel : MonoBehaviour
     }
 
     public void RebuildSpatialIndex() { _spatialIndex = new KDTree(_graph.Values); }
-    
+
     public (Vector3 worldPos, Vector3 tangent) GetNodeData(int nodeId)
     {
         if (_graph.TryGetValue(nodeId, out RoadNode node))
@@ -415,7 +417,7 @@ public class WorldModel : MonoBehaviour
         Debug.LogError($"[WorldModel] 节点 {nodeId} 不存在");
         return (Vector3.zero, Vector3.forward);
     }
-    
+
     public float GetUnifiedHeight(float x, float z)
     {
         if (terrainGrid != null)
@@ -520,41 +522,48 @@ public class WorldModel : MonoBehaviour
 
     private void GenerateConnectors()
     {
-        if (GlobalConnectors == null) GlobalConnectors = new Dictionary<int, LaneConnector>();
         GlobalConnectors.Clear();
         _nextConnectorId = 0;
+
+        float roadWidth = (roadBuilder != null) ? roadBuilder.roadWidth : 6f;
+        float junctionSnapRadius = roadWidth * 1.8f;
 
         foreach (var kvp in _graph)
         {
             RoadNode node = kvp.Value;
-            // 只有邻居 >= 3 才是标准路口
-            if (node.NeighborIds == null || node.NeighborIds.Count < 3) continue;
+            if (node.NeighborIds == null) continue;
 
             List<Lane> entryLanes = new List<Lane>();
-            List<Lane> exitLanes = new List<Lane>();
+            List<Lane> exitLanes  = new List<Lane>();
+            Vector3 junctionPos = node.WorldPos;
+            Vector2 jXZ = new Vector2(junctionPos.x, junctionPos.z);
 
-            // 1. 收集进出车道：利用首尾点与 Node.WorldPos 的距离判定（2米容差）
+            // 1. 端点法收集进出车道（Vector2 XZ距离，忽略高度差）
             foreach (var laneKvp in GlobalLanes)
             {
                 Lane lane = laneKvp.Value;
-                if (lane.CenterSpline == null || lane.CenterSpline.TotalLength < 0.1f) continue;
-
-                Vector3 startPos = lane.CenterSpline.GetPoint(0f);
-                Vector3 endPos = lane.CenterSpline.GetPoint(1f);
-
-                if (Vector3.Distance(endPos, node.WorldPos) < 2.0f) entryLanes.Add(lane);
-                if (Vector3.Distance(startPos, node.WorldPos) < 2.0f) exitLanes.Add(lane);
+                if (lane.CenterSpline == null) continue;
+                Vector3 start = lane.CenterSpline.GetPoint(0f);
+                Vector3 end   = lane.CenterSpline.GetPoint(1f);
+                float dStart = Vector2.Distance(new Vector2(start.x, start.z), jXZ);
+                float dEnd   = Vector2.Distance(new Vector2(end.x, end.z), jXZ);
+                if (dEnd   < junctionSnapRadius) entryLanes.Add(lane);
+                if (dStart < junctionSnapRadius) exitLanes.Add(lane);
             }
 
-            // 2. 笛卡尔配对生成 Connector
+            entryLanes = entryLanes.Distinct().ToList();
+            exitLanes  = exitLanes.Distinct().ToList();
+
+            // 2. 同方向配对（排除同路段以避免原地掉头，留到后面死路兜底时单独处理）
             foreach (Lane entry in entryLanes)
             {
-                if (entry.NextConnectorIds == null) entry.NextConnectorIds = new List<int>();
+                if (entry.NextConnectorIds == null)
+                    entry.NextConnectorIds = new List<int>();
 
                 foreach (Lane exit in exitLanes)
                 {
-                    // 排除原地掉头（同一路段）
                     if (entry.RoadId == exit.RoadId) continue;
+                    if (entry.Direction != exit.Direction) continue;
 
                     LaneConnector connector = BuildConnector(entry, exit, node);
                     if (connector != null)
@@ -563,10 +572,21 @@ public class WorldModel : MonoBehaviour
                         entry.NextConnectorIds.Add(connector.ConnectorId);
                     }
                 }
+
+                // 3. 死路兜底：掉头连接器
+                if (entry.NextConnectorIds.Count == 0)
+                {
+                    LaneConnector uTurn = BuildUTurnConnector(entry, node);
+                    if (uTurn != null)
+                    {
+                        GlobalConnectors[uTurn.ConnectorId] = uTurn;
+                        entry.NextConnectorIds.Add(uTurn.ConnectorId);
+                    }
+                }
             }
         }
 
-        Debug.Log($"[WorldModel] 成功生成 {_nextConnectorId} 条路口连接线(Connectors).");
+        Debug.Log($"[WorldModel] 成功生成 {_nextConnectorId} 条路口连接线 (路宽={roadWidth}, 判定半径={junctionSnapRadius:F1})");
     }
 
     private LaneConnector BuildConnector(Lane entry, Lane exit, RoadNode node)
@@ -578,11 +598,11 @@ public class WorldModel : MonoBehaviour
         Vector3 p1 = entry.CenterSpline.GetPoint(1f);
         Vector3 p3 = exit.CenterSpline.GetPoint(0f);
 
-        // 取微小偏移量算切线方向（基于车道长度比例，避免固定6m在小路口失效）
-        Vector3 p0 = entry.CenterSpline.GetPoint(Mathf.Max(0f, 1f - 2f / entryLen));
-        Vector3 p4 = exit.CenterSpline.GetPoint(Mathf.Min(1f, 2f / exitLen));
-        Vector3 entryDir = (p1 - p0).normalized;
-        Vector3 exitDir = (p3 - p4).normalized; // 注意：exitDir 是从 p3 指向 p4（出口方向）
+        // 【修复切线稳定性】：safeLen 避免微小长度导致切线爆炸
+        float entrySafeLen = Mathf.Max(entryLen, 0.1f);
+        float exitSafeLen  = Mathf.Max(exitLen, 0.1f);
+        Vector3 entryDir = (p1 - entry.CenterSpline.GetPoint(1f - 2f / entrySafeLen)).normalized;
+        Vector3 exitDir  = (exit.CenterSpline.GetPoint(2f / exitSafeLen) - p3).normalized;
 
         float signedAngle = Vector3.SignedAngle(entryDir, exitDir, Vector3.up);
 
@@ -610,6 +630,39 @@ public class WorldModel : MonoBehaviour
         connector.ToLaneId = exit.LaneId;
         connector.TurnCurve = spline;
         connector.TurnType = tType;
+
+        return connector;
+    }
+
+    private LaneConnector BuildUTurnConnector(Lane lane, RoadNode node)
+    {
+        float len = lane.CenterSpline.TotalLength;
+        Vector3 p1 = lane.CenterSpline.GetPoint(1f);   // 终点（驶入路口的点）
+        Vector3 p2 = lane.CenterSpline.GetPoint(0f);   // 起点（掉头后要回到的点）
+
+        // 取切线：入口方向（指向终点）和出口方向（从起点出发）
+        Vector3 entryDir = (p1 - lane.CenterSpline.GetPoint(Mathf.Max(0f, 1f - 2f / len))).normalized;
+        Vector3 exitDir = (lane.CenterSpline.GetPoint(Mathf.Min(1f, 2f / len)) - p2).normalized;
+
+        // 掉头需要一个大弧线，控制点向外拉远
+        float dist = Vector3.Distance(p1, p2);
+        float mag = dist * 0.8f;
+
+        Vector3 mid1 = SplineMath.EvaluateHermite(0.33f, p1, entryDir * mag, p2, exitDir * mag);
+        Vector3 mid2 = SplineMath.EvaluateHermite(0.66f, p1, entryDir * mag, p2, exitDir * mag);
+
+        List<Vector3> pts = new List<Vector3> { p1, mid1, mid2, p2 };
+        CatmullRomSpline spline = new CatmullRomSpline(pts, false);
+
+        LaneConnector connector = new LaneConnector
+        {
+            ConnectorId = _nextConnectorId++,
+            JunctionId = node.Id,
+            FromLaneId = lane.LaneId,
+            ToLaneId = lane.LaneId,          // 自己连自己，形成掉头
+            TurnCurve = spline,
+            TurnType = TurnType.UTurn
+        };
 
         return connector;
     }

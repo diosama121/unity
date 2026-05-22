@@ -104,20 +104,20 @@ public class TrafficLightManager : MonoBehaviour
     {
         roadGen = GetComponent<RoadNetworkGenerator>();
 
-        // 无论什么模式，第一时间清空地图上所有的红绿灯，解决城市切乡村的遗留问题
-        ClearTrafficLights();
-
         if (roadGen == null || roadGen.nodes == null || roadGen.nodes.Count == 0)
         {
             Debug.LogError("TrafficLightManager: 未找到路网数据！");
             return;
         }
 
-        // 如果是乡村模式，不再生成新的灯柱，直接退出
+        // 清理旧交通灯
+        ClearTrafficLights();
+
+        // 【必须在这里加上这句拦截】：如果是乡村模式，清空完就直接退出，绝对不要往下生成！
         if (roadGen.isCountryside)
         {
             if (showDebugLog)
-                Debug.Log("🌳 乡村模式：跳过交通灯生成，且已清理遗留灯柱");
+                Debug.Log("🌳 乡村模式：已自动清理所有红绿灯，跳过生成");
             return;
         }
 

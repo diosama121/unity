@@ -305,4 +305,125 @@ public class PathPlanner : MonoBehaviour
             ? Vector3.Distance(from.WorldPos, to.WorldPos)
             : float.MaxValue;
     }
+
+    // ==========================================
+    // A* 边序列路径规划（车道图）
+    // 节点 = LaneId，边 = Connector 连接
+    // 返回: +ve = LaneId, -ve = -ConnectorId 交替序列
+    // ==========================================
+    private class EdgePathNode
+    {
+        public int LaneId;
+        public int ParentLaneId;
+        public int ViaConnectorId;   // 从 ParentLaneId 到达本 LaneId 所经过的 ConnectorId
+        public float GCost;
+        public float HCost;
+        public float FCost => GCost + HCost;
+
+        public EdgePathNode(int laneId)
+        {
+            LaneId = laneId;
+            ParentLaneId = -1;
+            ViaConnectorId = -1;
+            GCost = float.MaxValue;
+            HCost = 0;
+        }
+    }
+
+    public List<int> PlanEdgePath(int startLaneId, int endLaneId)
+    {
+        if (_worldModel == null)
+        {
+            Debug.LogWarning("[PathPlanner] WorldModel 不可用");
+            return null;
+        }
+
+        if (!_worldModel.GlobalLanes.ContainsKey(startLaneId) || !_worldModel.GlobalLanes.ContainsKey(endLaneId))
+        {
+            Debug.LogWarning($"[PathPlanner] 车道ID无效: start={startLaneId}, end={endLaneId}");
+            return null;
+        }
+
+        var openQueue = new PriorityQueue<int>();
+        var closedSet = new HashSet<int>();
+        var nodeRecords = new Dictionary<int, EdgePathNode>();
+
+        EdgePathNode startNode = new EdgePathNode(startLaneId) { GCost = 0, HCost = LaneHeuristic(startLaneId, endLaneId) };
+        nodeRecords[startLaneId] = startNode;
+        openQueue.Enqueue(startLaneId, startNode.FCost);
+
+        while (openQueue.Count > 0)
+        {
+            int currentId = openQueue.Dequeue();
+            if (closedSet.Contains(currentId)) continue;
+
+            if (currentId == endLaneId)
+            {
+                // 回溯构建路径: LaneId → -ConnectorId → LaneId → ...
+                var result = new List<int>();
+                int curr = currentId;
+                while (curr != -1)
+                {
+                    if (!nodeRecords.TryGetValue(curr, out EdgePathNode record)) break;
+                    result.Add(curr); // LaneId (正)
+                    if (record.ViaConnectorId >= 0)
+                        result.Add(-(record.ViaConnectorId + 1)); // ConnectorId 编码为负 (偏移1以区分 -0)
+                    curr = record.ParentLaneId;
+                }
+                result.Reverse();
+                return result;
+            }
+
+            closedSet.Add(currentId);
+            EdgePathNode currentNode = nodeRecords[currentId];
+
+            if (!_worldModel.GlobalLanes.TryGetValue(currentId, out Lane currentLane)) continue;
+            if (currentLane.NextConnectorIds == null || currentLane.NextConnectorIds.Count == 0) continue;
+
+            float currentLaneLen = (currentLane.CenterSpline != null) ? currentLane.CenterSpline.TotalLength : 0f;
+
+            foreach (int connId in currentLane.NextConnectorIds)
+            {
+                if (!_worldModel.GlobalConnectors.TryGetValue(connId, out LaneConnector connector)) continue;
+                int nextLaneId = connector.ToLaneId;
+                if (closedSet.Contains(nextLaneId)) continue;
+                if (!_worldModel.GlobalLanes.ContainsKey(nextLaneId)) continue;
+
+                float connLen = (connector.TurnCurve != null) ? connector.TurnCurve.TotalLength : 0f;
+                float edgeCost = currentLaneLen + connLen;
+                if (edgeCost >= float.MaxValue) continue;
+
+                float tentativeG = currentNode.GCost + edgeCost;
+
+                if (!nodeRecords.TryGetValue(nextLaneId, out EdgePathNode neighborNode))
+                {
+                    neighborNode = new EdgePathNode(nextLaneId);
+                    neighborNode.HCost = LaneHeuristic(nextLaneId, endLaneId);
+                    nodeRecords[nextLaneId] = neighborNode;
+                }
+
+                if (tentativeG < neighborNode.GCost)
+                {
+                    neighborNode.ParentLaneId = currentId;
+                    neighborNode.ViaConnectorId = connId;
+                    neighborNode.GCost = tentativeG;
+                    openQueue.Enqueue(nextLaneId, neighborNode.FCost);
+                }
+            }
+        }
+
+        // 路径不存在，静默返回 null（由调用方统一处理无路径情况）
+        return null;
+    }
+
+    private float LaneHeuristic(int laneIdA, int laneIdB)
+    {
+        Lane laneA = _worldModel.GlobalLanes.GetValueOrDefault(laneIdA);
+        Lane laneB = _worldModel.GlobalLanes.GetValueOrDefault(laneIdB);
+        if (laneA?.CenterSpline == null || laneB?.CenterSpline == null) return float.MaxValue;
+
+        Vector3 midA = laneA.CenterSpline.GetPoint(0.5f);
+        Vector3 midB = laneB.CenterSpline.GetPoint(0.5f);
+        return Vector3.Distance(midA, midB);
+    }
 }

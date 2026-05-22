@@ -1,10 +1,11 @@
 using UnityEngine;
+using System.Collections.Generic;
 
 [RequireComponent(typeof(SimpleCarController))]
 public partial class SimpleAutoDrive : MonoBehaviour
 {
     // ==========================================
-    // 状态枚举
+    // 旧枚举保留（外部代码兼容）
     // ==========================================
     public enum DriveState { Cruising, Transit, Stopping, Reversing, Crashed }
 
@@ -12,26 +13,77 @@ public partial class SimpleAutoDrive : MonoBehaviour
     public PathPlanner pathPlanner;
 
     [Header("控制参数")]
-    public float targetSpeed      = 12f;
-    public float safeDistance     = 8f;
-    public bool  dynamicLookAhead = true;
-    public float lookAheadMin     = 3f;
-    public float lookAheadMax     = 12f;
+    public float targetSpeed        = 8f;
+    public float safeDistance       = 4f;
+    public float emergencyBrakeDist = 3.5f;
+    public float safeFollowSpeed    = 10f;
+    public bool  dynamicLookAhead   = true;
+    public float lookAheadMin       = 3f;
+    public float lookAheadMax       = 12f;
 
     [Header("传感器设置")]
-    public float sensorForwardOffset = 2.5f;
+    public float sensorForwardOffset = 4f;
+    public LayerMask obstacleLayers;     // Vehicle + Pedestrian
+    public LayerMask pedestrianLayer;    // Pedestrian only
 
     [Header("状态机")]
-    public DriveState currentState = DriveState.Cruising;
-    public bool isPlayerControlled = false;
-
+    public bool isPlayerControlled = false; 
+    public LongitudinalState longState = LongitudinalState.FreeDrive;
+ public bool reverseComplete = false;
     [Header("调试信息")]
-    public float currentT           = 0f;
-    public bool  obstacleDetected   = false;
-    public int   currentLaneId      = -1;
-    public int   currentConnectorId = -1;
-    public bool  isYielding         = false;
-    public IntersectionState currentIntersectionState = IntersectionState.Uncontrolled;
+    public float currentT = 0f;
+
+    // ========== 旧字段兼容（外部读写映射） ==========
+    public CatmullRomSpline currentSpline
+    {
+        get => currentCurve;
+        set { currentCurve = value; currentEdgeLength = (value != null) ? value.TotalLength : 0f; }
+    }
+    public int currentLaneId
+    {
+        get
+        {
+            if (currentEdgeIndex < pathEdgeIds.Count)
+            {
+                int id = pathEdgeIds[currentEdgeIndex];
+                return (id > 0) ? id : -1;
+            }
+            return (worldModel != null) ? worldModel.FindNearestLane(transform.position) : -1;
+        }
+        set
+        {
+            if (value > 0 && pathEdgeIds.Count == 0)
+                pathEdgeIds.Add(value);
+        }
+    }
+    public bool isYielding       => longState == LongitudinalState.Yield;
+    public bool obstacleDetected => frontDistance < safeDistance;
+
+    public DriveState currentState
+    {
+        get => longState switch
+        {
+            LongitudinalState.FreeDrive  => DriveState.Cruising,
+            LongitudinalState.FollowCar  => DriveState.Cruising,
+            LongitudinalState.Yield      => DriveState.Cruising,
+            LongitudinalState.Brake      => DriveState.Stopping,
+            LongitudinalState.Stopped    => DriveState.Stopping,
+            LongitudinalState.Reverse    => DriveState.Reversing,
+            _ => DriveState.Cruising
+        };
+        set
+        {
+            longState = value switch
+            {
+                DriveState.Cruising  => LongitudinalState.FreeDrive,
+                DriveState.Transit   => LongitudinalState.FreeDrive,
+                DriveState.Stopping  => LongitudinalState.Stopped,
+                DriveState.Reversing => LongitudinalState.Reverse,
+                DriveState.Crashed   => LongitudinalState.Stopped,
+                _ => LongitudinalState.FreeDrive
+            };
+        }
+    }
 
     // --- 内部引用 ---
     private SimpleCarController carController;
@@ -39,29 +91,32 @@ public partial class SimpleAutoDrive : MonoBehaviour
     private LineRenderer        trajectoryLine;
     private Vector3[]           trajectoryPoints = new Vector3[20];
 
-    // --- 路径跟随 ---
-    public CatmullRomSpline currentSpline;
-    private int   currentDestinationNodeId = -1;
-    private int   lastNodeId               = -1;
-    private float rerouteCooldown          = 0f;
-    private bool  isFetchingNextPath       = false;
-    private float currentVirtualSpeed       = 0f;
-    private Vector3 lastLaneCheckPos       = Vector3.one * -9999f;
+    // ========== 路径（图边序列） ==========
+    [HideInInspector] public List<int> pathEdgeIds = new List<int>(); // +ve = LaneId, -ve = -ConnectorId
+    private int currentEdgeIndex = 0;
 
-    // --- 红绿灯停车 ---
-    private int     nearestIntersectionNodeId = -1;
-    private Vector3 stopTargetPosition        = Vector3.zero;
-    private bool    hasStopTarget             = false;
+    // ========== 曲线运动 ==========
+    private CatmullRomSpline currentCurve;
+    private float currentEdgeLength;
+    public float currentSpeed;               // m/s, 正=前进, 负=倒车
 
-    // --- 倒车脱困 ---
-    private float avoidCooldown  = 0f;
-    private bool  isReversing    = false;
-    private float reverseTimer   = 0f;
-    private int   reverseCount   = 0;
-    private float escapeSteering = 0f;
+    // ========== 加速度参数 ==========
+    public float maxAcceleration    = 10f;
+    public float maxDeceleration    = 15f;    // 紧急制动
+    public float normalDeceleration = 5f;     // 普通减速
 
-    // --- 诊断 ---
-    private float _diagTimer = 0f;
+    // ========== 传感器 ==========
+    private float frontDistance;
+    private float frontSpeed;
+    private bool  redLightAhead;
+    private bool  pedestrianDanger;
+    private float stoppedTimer;
+
+    // ========== 倒车 ==========
+    private float reverseTimer = 0f;
+    private const float reverseDuration = 2.5f;
+
+    private WorldModel worldModel => WorldModel.Instance;
 
     // ==========================================
     // 初始化
@@ -88,537 +143,371 @@ public partial class SimpleAutoDrive : MonoBehaviour
         for (int i = 0; i < trajectoryPoints.Length; i++)
             trajectoryPoints[i] = transform.position;
         trajectoryLine.SetPositions(trajectoryPoints);
+
+        if (pathEdgeIds.Count > 0)
+            StartPath();
+        else
+            RequestNewPath();
     }
 
     // ==========================================
-    // 主循环：感知 → 状态机 → 下发指令
+    // 每帧更新：纯曲线滑动 + 纵向状态机
     // ==========================================
     void Update()
     {
-        // 传感器和可视化始终运行（即使被玩家接管也可见）
-        UpdatePerception();
+        // 可视化始终运行
         UpdateTrajectoryLine();
         DrawLidarRays();
 
-        VehicleCommand cmd = default;
-
         if (isPlayerControlled)
         {
-            // 玩家直接输入
-            cmd.throttle  = Input.GetAxis("Vertical");
-            cmd.steering  = Input.GetAxis("Horizontal");
-            cmd.isBraking = Input.GetKey(KeyCode.Space);
-        }
-        else
-        {
-            // 1. 感知层：获取前方距离、红绿灯状态
-            UpdatePerception();
-
-            // 2. 状态机评估：决定下一个 currentState
-            EvaluateState();
-
-            // 3. 执行状态：计算并输出 Command
-            switch (currentState)
+            VehicleCommand cmd = new VehicleCommand
             {
-                case DriveState.Cruising: cmd = HandleCruising();   break;
-                case DriveState.Transit:  cmd = HandleTransit();    break;
-                case DriveState.Stopping: cmd = HandleStopping();   break;
-                case DriveState.Reversing: cmd = HandleReversing(); break;
-                case DriveState.Crashed:   cmd = HandleCrashed();   break;
-                default:
-                    cmd.throttle = 0f; cmd.steering = 0f; break;
-            }
-        }
-
-        // 4. 统一向下发送指令
-        carController.ApplyCommand(cmd);
-
-        // 5. 贴线吸附：纯数学推演位置和朝向，彻底剥离物理引擎
-        ForceSnapToSpline();
-    }
-
-    // ==========================================
-    // 感知层
-    // ==========================================
-    void UpdatePerception()
-    {
-        obstacleDetected = false;
-        Vector3 frontOrigin = transform.position + transform.forward * sensorForwardOffset + Vector3.up * 0.5f;
-
-        RaycastHit[] hits = Physics.SphereCastAll(frontOrigin, 1.5f, transform.forward, safeDistance);
-        foreach (var hit in hits)
-        {
-            var otherCar = hit.collider.GetComponentInParent<SimpleCarController>();
-            if (otherCar != null && otherCar != this.carController)
-            {
-                obstacleDetected = true;
-                if (hit.distance < safeDistance * 0.4f && Mathf.Abs(currentVirtualSpeed) > 3f)
-                {
-                    if (_uiManager != null && !carController.isNPC) _uiManager.ShowTORWarning(1.5f);
-                }
-                break;
-            }
-        }
-
-        // 让行检测
-        isYielding = false;
-        if (carController.vehiclePriority == VehiclePriority.Normal && currentState == DriveState.Cruising)
-        {
-            Vector3 backOrigin = transform.position - transform.forward * sensorForwardOffset + Vector3.up * 0.5f;
-            RaycastHit[] backHits = Physics.SphereCastAll(backOrigin, 2f, -transform.forward, safeDistance * 2f);
-            foreach (var backHit in backHits)
-            {
-                var behindCar = backHit.collider.GetComponentInParent<SimpleCarController>();
-                if (behindCar != null && behindCar != this.carController && behindCar.vehiclePriority == VehiclePriority.Emergency)
-                {
-                    isYielding = true;
-                    break;
-                }
-            }
-        }
-
-        // 红绿灯感知
-        if (WorldModel.Instance != null)
-        {
-            nearestIntersectionNodeId = -1;
-            RoadNode nearestNode = WorldModel.Instance.GetNearestNode(transform.position);
-            if (nearestNode != null && (nearestNode.Type == NodeType.Intersection || nearestNode.Type == NodeType.Merge))
-            {
-                nearestIntersectionNodeId = nearestNode.Id;
-                StopLine relevantStopLine = WorldModel.Instance.GetNearestStopLine(nearestNode.Id, transform.position);
-                if (relevantStopLine != null && Vector3.Distance(transform.position, relevantStopLine.Position) < 20f)
-                {
-                    Vector3 dirToStopLine = relevantStopLine.Position - transform.position;
-                    if (Vector3.Dot(transform.forward, dirToStopLine) > 0)
-                        currentIntersectionState = WorldModel.Instance.GetPhaseState(relevantStopLine.AssociatedPhaseId);
-                    else
-                        currentIntersectionState = IntersectionState.Uncontrolled;
-                }
-                else currentIntersectionState = IntersectionState.Uncontrolled;
-            }
-            else currentIntersectionState = IntersectionState.Uncontrolled;
-        }
-        else currentIntersectionState = IntersectionState.Uncontrolled;
-    }
-
-    // ==========================================
-    // 状态机评估
-    // ==========================================
-    void EvaluateState()
-    {
-        // 障碍物倒车脱困
-        if (obstacleDetected && avoidCooldown <= 0f && currentState == DriveState.Cruising)
-        {
-            currentState = DriveState.Reversing;
-            isReversing  = true;
-            reverseTimer = 0f;
+                throttle  = Input.GetAxis("Vertical"),
+                steering  = Input.GetAxis("Horizontal"),
+                isBraking = Input.GetKey(KeyCode.Space)
+            };
+            carController.ApplyCommand(cmd);
             return;
         }
 
-        // 红绿灯停车
-        if (currentIntersectionState == IntersectionState.RedLight || currentIntersectionState == IntersectionState.YellowLight)
-        {
-            int stopNodeId = (nearestIntersectionNodeId >= 0) ? nearestIntersectionNodeId : currentDestinationNodeId;
-            if (stopNodeId >= 0 && WorldModel.Instance != null)
-            {
-                StopLine relevantStopLine = WorldModel.Instance.GetNearestStopLine(stopNodeId, transform.position);
-                if (relevantStopLine != null)
-                {
-                    stopTargetPosition = relevantStopLine.Position;
-                    hasStopTarget      = true;
-                }
-            }
-            currentState = DriveState.Stopping;
-            return;
-        }
+        if (currentCurve == null || currentEdgeLength <= 0) return;
 
-        // 灯变绿，从 Stopping 恢复
-        if (currentState == DriveState.Stopping
-            && (currentIntersectionState == IntersectionState.GreenLight || currentIntersectionState == IntersectionState.Uncontrolled))
-        {
-            hasStopTarget = false;
-            currentState  = DriveState.Cruising;
-            return;
-        }
+        // 1. 传感器更新
+        UpdateSensors();
 
-        // 从 Reversing 恢复
-        if (currentState == DriveState.Reversing && !isReversing)
-        {
-            currentState = DriveState.Cruising;
-            return;
-        }
+        // 2. 纵向状态机计算期望速度
+        (float targetSpd, bool brakeHard) = GetLongitudinalCommand();
 
-        // 默认：巡航
-        if (currentState != DriveState.Transit && currentState != DriveState.Reversing && currentState != DriveState.Stopping && currentState != DriveState.Crashed)
-            currentState = DriveState.Cruising;
+        // 3. 平滑速度变化
+        float accel = brakeHard ? maxDeceleration
+            : (targetSpd < currentSpeed ? normalDeceleration : maxAcceleration);
+        currentSpeed = Mathf.MoveTowards(currentSpeed, targetSpd, accel * Time.deltaTime);
+
+        // 4. 沿曲线移动
+        float moveDist = currentSpeed * Time.deltaTime;
+        AdvanceOnEdge(moveDist);
+
+        // 5. 位置与朝向吸附（纯数学，彻底剥离物理引擎）
+        SnapToCurve();
+
+        // 6. 下发横向控制（沿切线自动转向）
+        Vector3 tangent = currentCurve.GetPoint(Mathf.Clamp01(currentT + 0.02f)) - transform.position;
+        Vector3 localDir = transform.InverseTransformDirection(tangent);
+        float steering = Mathf.Clamp(localDir.x / 3f, -1f, 1f);
+        carController.ApplyCommand(new VehicleCommand
+        {
+            throttle  = currentSpeed / Mathf.Max(carController.maxSpeed, 0.1f),
+            steering  = steering,
+            isBraking = (brakeHard && Mathf.Abs(currentSpeed) <= 0.1f)
+        });
     }
 
     // ==========================================
-    // 状态实现：巡航（沿线行驶）
+    // 路径管理
     // ==========================================
-    VehicleCommand HandleCruising()
+    public void SetPath(List<int> edgeIds)
     {
-        VehicleCommand cmd = default;
-
-        if (currentSpline == null || currentSpline.TotalLength <= 0)
-        {
-            return cmd; // 停住
-        }
-
-        // --- 冷却 ---
-        rerouteCooldown -= Time.deltaTime;
-
-        // --- 诊断 ---
-        _diagTimer += Time.deltaTime;
-        if (_diagTimer >= 3f)
-        {
-            _diagTimer = 0f;
-            Debug.Log($"[AutoDrive] {name} | Cruising | T={currentT:F3} speed={Mathf.Abs(currentVirtualSpeed):F1} tgtSpeed={targetSpeed:F1} splineLen={currentSpline.TotalLength:F1}");
-        }
-
-        // --- Pure Pursuit 转向（算 target T → 算 localTarget → 算 steering）---
-        float currentSpeed  = Mathf.Abs(currentVirtualSpeed);
-        float lookAheadDist = dynamicLookAhead
-            ? Mathf.Clamp(Mathf.Abs(currentSpeed) * 0.5f, 3f, 12f)
-            : 5f;
-        float lookT     = Mathf.Clamp01(currentT + lookAheadDist / currentSpline.TotalLength);
-        Vector3 targetPt = currentSpline.GetPoint(lookT);
-        Vector3 localPt  = transform.InverseTransformPoint(targetPt);
-        cmd.steering     = Mathf.Clamp(localPt.x / 4f, -1f, 1f);
-
-        // --- 油门 ---
-        cmd.throttle = targetSpeed / carController.maxSpeed;
-
-        // --- T 值推进 ---
-        float realT = currentSpline.GetClosestT(transform.position, currentT);
-        currentT = Mathf.Clamp01(Mathf.Max(realT - 0.02f, currentT));
-
-        // --- 车道刷新 ---
-        if (Vector3.Distance(lastLaneCheckPos, transform.position) > 5f || currentT > 0.8f)
-        {
-            lastLaneCheckPos = transform.position;
-            if (WorldModel.Instance != null)
-                currentLaneId = WorldModel.Instance.FindNearestLane(transform.position);
-        }
-
-        // --- 驶出车道：尝试切入路口连接器 ---
-        if (currentT >= 0.98f && currentLaneId >= 0
-            && WorldModel.Instance != null
-            && WorldModel.Instance.GlobalLanes.TryGetValue(currentLaneId, out Lane currentLane))
-        {
-            if (currentLane.NextConnectorIds != null && currentLane.NextConnectorIds.Count > 0)
-            {
-                int nextConnId = currentLane.NextConnectorIds[Random.Range(0, currentLane.NextConnectorIds.Count)];
-                if (WorldModel.Instance.GlobalConnectors.TryGetValue(nextConnId, out LaneConnector conn))
-                {
-                    currentConnectorId = conn.ConnectorId;
-                    currentSpline      = conn.TurnCurve;
-                    currentState       = DriveState.Transit;
-                    currentT           = 0f;
-                    return cmd;
-                }
-            }
-            else
-            {
-                // 死胡同，停车
-                currentState = DriveState.Stopping;
-            }
-        }
-
-        return cmd;
+        pathEdgeIds = edgeIds ?? new List<int>();
+        StartPath();
     }
 
-    // ==========================================
-    // 状态实现：路口过渡（沿 Connector 行驶）
-    // ==========================================
-    VehicleCommand HandleTransit()
+    void StartPath()
     {
-        VehicleCommand cmd = default;
-
-        if (currentSpline == null || currentSpline.TotalLength <= 0)
-        {
-            currentState = DriveState.Cruising;
-            return cmd;
-        }
-
-        // --- Pure Pursuit 转向（与 Cruising 一致）---
-        float currentSpeed  = Mathf.Abs(currentVirtualSpeed);
-        float lookAheadDist = dynamicLookAhead
-            ? Mathf.Clamp(Mathf.Abs(currentSpeed) * 0.5f, 3f, 12f)
-            : 5f;
-        float lookT     = Mathf.Clamp01(currentT + lookAheadDist / currentSpline.TotalLength);
-        Vector3 targetPt = currentSpline.GetPoint(lookT);
-        Vector3 localPt  = transform.InverseTransformPoint(targetPt);
-        cmd.steering     = Mathf.Clamp(localPt.x / 4f, -1f, 1f);
-
-        // --- 油门（路口内限速 60%）---
-        cmd.throttle = (targetSpeed / carController.maxSpeed) * 0.6f;
-
-        // --- T 值推进 ---
-        float realT = currentSpline.GetClosestT(transform.position, currentT);
-        currentT = Mathf.Clamp01(Mathf.Max(realT - 0.02f, currentT));
-
-        // --- 驶出路口：切回目标车道 ---
-        if (currentT >= 0.98f && currentConnectorId >= 0
-            && WorldModel.Instance != null
-            && WorldModel.Instance.GlobalConnectors.TryGetValue(currentConnectorId, out LaneConnector conn))
-        {
-            if (WorldModel.Instance.GlobalLanes.TryGetValue(conn.ToLaneId, out Lane exitLane))
-            {
-                currentLaneId      = exitLane.LaneId;
-                currentSpline      = exitLane.CenterSpline;
-                currentState       = DriveState.Cruising;
-                currentT           = 0f;
-                currentConnectorId = -1;
-            }
-        }
-
-        return cmd;
-    }
-
-    // ==========================================
-    // 状态实现：停车（红绿灯）
-    // ==========================================
-    VehicleCommand HandleStopping()
-    {
-        VehicleCommand cmd = new VehicleCommand { throttle = 0f, steering = 0f, isBraking = true };
-
-        // 诊断
-        _diagTimer += Time.deltaTime;
-        if (_diagTimer >= 3f)
-        {
-            _diagTimer = 0f;
-            Debug.Log($"[AutoDrive] {name} | STOPPING | intx={currentIntersectionState} hasStop={hasStopTarget} nodeId={nearestIntersectionNodeId} dist={Vector3.Distance(transform.position, stopTargetPosition):F2}");
-        }
-
-        // 灯已变绿 → 状态机会在下一帧切回 Cruising
-        if (currentIntersectionState == IntersectionState.GreenLight || currentIntersectionState == IntersectionState.Uncontrolled)
-        {
-            hasStopTarget = false;
-            return new VehicleCommand(); // 释放刹车
-        }
-
-        return cmd;
-    }
-
-    // ==========================================
-    // 状态实现：倒车脱困
-    // ==========================================
-    VehicleCommand HandleReversing()
-    {
-        VehicleCommand cmd = new VehicleCommand();
-
-        if (isReversing)
-        {
-            reverseTimer += Time.deltaTime;
-            cmd.throttle  = -0.5f;
-            cmd.steering  = escapeSteering;
-
-            if (reverseTimer >= 1.2f + reverseCount * 0.5f)
-            {
-                reverseCount++;
-                isReversing    = false;
-                reverseTimer   = 0f;
-                avoidCooldown  = 2.5f;
-
-                if (currentSpline != null && currentSpline.TotalLength > 0)
-                {
-                    currentT = currentSpline.GetClosestT(transform.position, currentT);
-                    currentT = Mathf.Max(0, currentT - 0.12f);
-                }
-
-                return new VehicleCommand(); // 停一下再切回
-            }
-            return cmd;
-        }
-
-        // 不再有障碍物 → 恢复
-        if (!obstacleDetected)
-        {
-            isReversing   = false;
-            reverseTimer  = 0f;
-            avoidCooldown = 1f;
-            return new VehicleCommand();
-        }
-
-        // 仍有障碍 → 继续倒车
-        isReversing  = true;
+        currentEdgeIndex = 0;
+        currentT = 0f;
+        currentSpeed = 0f;
+        longState = LongitudinalState.FreeDrive;
+        stoppedTimer = 0f;
         reverseTimer = 0f;
-        cmd.throttle = -0.5f;
-        return cmd;
+        LoadCurrentEdge();
+    }
+
+    void LoadCurrentEdge()
+    {
+        if (currentEdgeIndex >= pathEdgeIds.Count)
+        {
+            currentCurve = null;
+            currentEdgeLength = 0;
+            return;
+        }
+        int id = pathEdgeIds[currentEdgeIndex];
+
+        if (id > 0) // 车道
+        {
+            if (worldModel != null && worldModel.GlobalLanes.TryGetValue(id, out Lane lane))
+                currentCurve = lane.CenterSpline;
+        }
+        else // 连接器（id为负值，-(ConnectorId+1) 编码以避免 -0 歧义）
+        {
+            int connId = -id - 1;
+            if (worldModel != null && worldModel.GlobalConnectors.TryGetValue(connId, out LaneConnector conn))
+                currentCurve = conn.TurnCurve;
+        }
+        currentEdgeLength = (currentCurve != null) ? currentCurve.TotalLength : 0f;
     }
 
     // ==========================================
-    // 状态实现：碰撞停止
+    // 沿边推进与切换
     // ==========================================
-    VehicleCommand HandleCrashed()
+    void AdvanceOnEdge(float distance)
     {
-        return new VehicleCommand { isBraking = true };
+        if (currentEdgeLength <= 0) return;
+        float deltaT = distance / currentEdgeLength;
+        currentT += deltaT;
+
+        // 到达边末端，切换到下一条
+        while (currentT >= 1.0f && currentEdgeIndex < pathEdgeIds.Count - 1)
+        {
+            currentT -= 1.0f;
+            currentEdgeIndex++;
+            LoadCurrentEdge();
+            if (currentEdgeLength <= 0) { currentT = 0f; return; }
+        }
+
+        // 到达路径终点，自动规划新路径
+        if (currentEdgeIndex >= pathEdgeIds.Count - 1 && currentT >= 1.0f)
+        {
+            currentT = 1.0f;
+            currentSpeed = 0f;
+            RequestNewPath();
+        }
+
+        currentT = Mathf.Clamp01(currentT);
     }
 
-    // ==========================================
-    // 贴线吸附：纯数学切线推演，防自旋、防抖动
-    // ==========================================
-    private void ForceSnapToSpline()
+    void SnapToCurve()
     {
-        if (currentSpline == null || currentSpline.TotalLength <= 0) return;
+        if (currentCurve == null) return;
+        Vector3 pos = currentCurve.GetPoint(currentT);
+        if (worldModel != null)
+            pos.y = worldModel.GetUnifiedHeight(pos.x, pos.z) + 0.15f;
 
-        // 1. 算出精确位置
-        Vector3 exactPos = currentSpline.GetPoint(currentT);
-        if (WorldModel.Instance != null)
-            exactPos.y = WorldModel.Instance.GetUnifiedHeight(exactPos.x, exactPos.z) + 0.15f;
-
-        // 2. 【防自旋】向前方取微小偏移点计算朝向，到底了就向后方取
-        Vector3 nextPos = currentSpline.GetPoint(Mathf.Clamp01(currentT + 0.02f));
-        Vector3 tangent = (nextPos - currentSpline.GetPoint(currentT)).normalized;
+        Vector3 nextPos = currentCurve.GetPoint(Mathf.Clamp01(currentT + 0.02f));
+        Vector3 tangent = (nextPos - currentCurve.GetPoint(currentT)).normalized;
         if (tangent == Vector3.zero)
         {
-            Vector3 prevPos = currentSpline.GetPoint(Mathf.Clamp01(currentT - 0.02f));
-            tangent = (exactPos - prevPos).normalized;
+            Vector3 prevPos = currentCurve.GetPoint(Mathf.Clamp01(currentT - 0.02f));
+            tangent = (pos - prevPos).normalized;
         }
-        if (tangent == Vector3.zero) tangent = transform.forward; // 终极兜底
+        if (tangent == Vector3.zero) tangent = transform.forward;
 
-        // 3. 剥离物理引擎
         Rigidbody rb = GetComponent<Rigidbody>();
         if (rb != null)
         {
             rb.velocity = Vector3.zero;
             rb.angularVelocity = Vector3.zero;
-            rb.MovePosition(exactPos);
+            rb.MovePosition(pos);
             rb.MoveRotation(Quaternion.LookRotation(tangent));
         }
         else
         {
-            transform.position = exactPos;
-            transform.rotation = Quaternion.LookRotation(tangent);
+            transform.SetPositionAndRotation(pos, Quaternion.LookRotation(tangent));
         }
     }
 
     // ==========================================
-    // ToggleAutoDrive（兼容 MasterUIManager 旧调用）
+    // 纵向状态机
     // ==========================================
+    (float targetSpeed, bool brakeHard) GetLongitudinalCommand()
+    {
+        switch (longState)
+        {
+            case LongitudinalState.FreeDrive:
+                if (frontDistance < emergencyBrakeDist || pedestrianDanger)
+                    longState = LongitudinalState.Brake;
+                else if (frontDistance < safeDistance)
+                    longState = LongitudinalState.FollowCar;
+                return (targetSpeed, false);
+
+            case LongitudinalState.FollowCar:
+                if (frontDistance < emergencyBrakeDist)
+                    longState = LongitudinalState.Brake;
+                else if (frontDistance > safeDistance + 5f)
+                    longState = LongitudinalState.FreeDrive;
+                return (Mathf.Min(frontSpeed, safeFollowSpeed), false);
+
+            case LongitudinalState.Brake:
+                if (Mathf.Abs(currentSpeed) < 0.1f && frontDistance < 0.5f)
+                    longState = LongitudinalState.Stopped;
+                else if (!pedestrianDanger && frontDistance > safeDistance + 2f)
+                    longState = LongitudinalState.FreeDrive;
+                return (0f, true);
+
+            case LongitudinalState.Stopped:
+                stoppedTimer += Time.deltaTime;
+                if (!redLightAhead && frontDistance > safeDistance + 2f)
+                {
+                    stoppedTimer = 0f;
+                    longState = LongitudinalState.FreeDrive;
+                }
+                else if (stoppedTimer > 10f) // 堵塞超时 → 倒车脱困
+                {
+                    stoppedTimer = 0f;
+                    reverseTimer = 0f;
+                    reverseComplete = false;
+                    longState = LongitudinalState.Reverse;
+                }
+                return (0f, true);
+
+            case LongitudinalState.Reverse:
+                reverseTimer += Time.deltaTime;
+                if (reverseTimer > reverseDuration)
+                {
+                    longState = LongitudinalState.Stopped;
+                    stoppedTimer = 8f; // 倒车后短暂等待再尝试前进
+                    return (0f, false);
+                }
+                return (-2f, false);
+
+            case LongitudinalState.Yield:
+                if (frontDistance > safeDistance + 3f)
+                    longState = LongitudinalState.FreeDrive;
+                return (Mathf.Min(currentSpeed, safeFollowSpeed * 0.5f), false);
+
+            default:
+                return (0f, false);
+        }
+    }
+
+    // ==========================================
+    // 沿曲线传感器采样
+    // ==========================================
+    void UpdateSensors()
+    {
+        frontDistance    = SampleFrontDistance(30f, obstacleLayers);
+        frontSpeed       = 0f; // TODO: 通过前车引用获取真实速度
+        pedestrianDanger = SampleFrontDistance(3f, pedestrianLayer) < 3f;
+        redLightAhead    = CheckRedLight();
+    }
+
+    float SampleFrontDistance(float maxDist, LayerMask mask)
+    {
+        if (currentCurve == null || currentEdgeLength <= 0) return maxDist;
+        if (mask.value == 0) return maxDist;
+
+        float step = 0.5f;
+        for (float d = 0; d < maxDist; d += step)
+        {
+            float t = currentT + d / currentEdgeLength;
+            if (t > 1.0f) break;
+            Vector3 point = currentCurve.GetPoint(t);
+            if (Physics.CheckSphere(point, 1.0f, mask))
+                return d;
+        }
+        return maxDist;
+    }
+
+    bool CheckRedLight()
+    {
+        if (worldModel == null) return false;
+        RoadNode nearestNode = worldModel.GetNearestNode(transform.position);
+        if (nearestNode == null) return false;
+        if (nearestNode.Type != NodeType.Intersection && nearestNode.Type != NodeType.Merge) return false;
+        if (currentEdgeLength * (1f - currentT) > 15f) return false; // 离路口还远
+
+        IntersectionState state = worldModel.GetIntersectionState(nearestNode.Id);
+        return (state == IntersectionState.RedLight || state == IntersectionState.YellowLight);
+    }
+
+    // ==========================================
+    // 自动路径规划（随机远端节点 → A* 边序列）
+    // ==========================================
+    void RequestNewPath()
+    {
+        if (worldModel == null || pathPlanner == null) return;
+
+        for (int i = 0; i < 15; i++)
+        {
+            int randId = Random.Range(0, worldModel.NodeCount);
+            RoadNode targetNode = worldModel.GetNode(randId);
+            if (targetNode == null || targetNode.NeighborIds == null || targetNode.NeighborIds.Count <= 1) continue;
+            if (Vector3.Distance(transform.position, targetNode.WorldPos) < 30f) continue;
+
+            int startLaneId = worldModel.FindNearestLane(transform.position);
+            int endLaneId   = worldModel.FindNearestLane(targetNode.WorldPos);
+            if (startLaneId < 0 || endLaneId < 0) continue;
+            if (startLaneId == endLaneId) continue;
+
+            List<int> edgePath = pathPlanner.PlanEdgePath(startLaneId, endLaneId);
+            if (edgePath != null && edgePath.Count > 0)
+            {
+                SetPath(edgePath);
+                return;
+            }
+        }
+
+        // 兜底1：如果已有 currentCurve（TrafficManager 注入），直接当单边路径行驶
+        if (currentCurve != null && currentEdgeLength > 0)
+        {
+            int laneId = worldModel.FindNearestLane(transform.position);
+            if (laneId >= 0)
+            {
+                pathEdgeIds = new List<int> { laneId };
+                StartPath();
+                Debug.Log($"[SimpleAutoDrive] {name} 兜底路径：单车道 {laneId}");
+                return;
+            }
+        }
+
+        // 兜底2：减速等待下次机会
+        targetSpeed = 0f;
+        Debug.LogWarning($"[SimpleAutoDrive] {name} 无法规划任何路径，等待中...");
+    }
+
+    // ==========================================
+    // 公共接口（兼容旧调用）
+    // ==========================================
+    public void SetSplinePath(CatmullRomSpline spline, int destinationNodeId)
+    {
+        // 旧接口兼容：退化为基于边序列的路径规划
+        RequestNewPath();
+    }
+
+    public void SetDestination(Vector3 destination)
+    {
+        if (worldModel == null || pathPlanner == null) return;
+        int startLaneId = worldModel.FindNearestLane(transform.position);
+        int endLaneId   = worldModel.FindNearestLane(destination);
+        if (startLaneId < 0 || endLaneId < 0) return;
+
+        List<int> edgePath = pathPlanner.PlanEdgePath(startLaneId, endLaneId);
+        if (edgePath != null && edgePath.Count > 0)
+            SetPath(edgePath);
+    }
+
+    public void ResetNavigation() => RequestNewPath();
+
+    public void ResetStateMachine()
+    {
+        longState = LongitudinalState.FreeDrive;
+        stoppedTimer = 0f;
+        reverseTimer = 0f;
+        currentSpeed = 0f;
+        currentT = 0f;
+        currentEdgeIndex = 0;
+        LoadCurrentEdge();
+    }
+
+    public LongitudinalState GetCurrentLongState() => longState;
+    public DriveState GetCurrentState() => currentState;
+
     public void ToggleAutoDrive()
     {
         isPlayerControlled = !isPlayerControlled;
     }
 
     // ==========================================
-    // 路径管理
-    // ==========================================
-    public void SetSplinePath(CatmullRomSpline spline, int destinationNodeId)
-    {
-        lastNodeId               = currentDestinationNodeId;
-        currentDestinationNodeId = destinationNodeId;
-        currentSpline            = spline;
-        currentT                 = spline.TotalLength > 0
-            ? currentSpline.GetClosestT(transform.position, 0f)
-            : 0f;
-        currentState = DriveState.Cruising;
-    }
-
-    void RequestNewRandomPath()
-    {
-        if (WorldModel.Instance == null || pathPlanner == null)
-        {
-            isFetchingNextPath = false;
-            return;
-        }
-
-        for (int i = 0; i < 15; i++)
-        {
-            int randId           = Random.Range(0, WorldModel.Instance.NodeCount);
-            RoadNode targetNode  = WorldModel.Instance.GetNode(randId);
-            if (targetNode == null || targetNode.NeighborIds == null || targetNode.NeighborIds.Count <= 1) continue;
-            if (Vector3.Distance(transform.position, targetNode.WorldPos) < 20f) continue;
-
-            Vector3 dirToTarget = (targetNode.WorldPos - transform.position).normalized;
-            if (Vector3.Dot(transform.forward, dirToTarget) < 0.3f) continue;
-
-            CatmullRomSpline newSpline = pathPlanner.PlanPathSpline(transform.position, targetNode.WorldPos, transform.forward);
-            if (newSpline == null || newSpline.TotalLength <= 0) continue;
-
-            Vector3 newStartTangent = (newSpline.GetPoint(0.05f) - newSpline.GetPoint(0f)).normalized;
-            if (Vector3.Dot(transform.forward, newStartTangent) < 0.7f) continue;
-
-            SetSplinePath(newSpline, targetNode.Id);
-            isFetchingNextPath = false;
-            return;
-        }
-
-        // fallback: 走邻居节点
-        RoadNode nearest = WorldModel.Instance.GetNearestNode(transform.position);
-        if (nearest?.NeighborIds != null)
-        {
-            foreach (int nbId in nearest.NeighborIds)
-            {
-                if (nbId == lastNodeId) continue;
-                RoadNode nbNode = WorldModel.Instance.GetNode(nbId);
-                Vector3 dir = (nbNode.WorldPos - transform.position).normalized;
-                if (Vector3.Dot(transform.forward, dir) <= 0.1f) continue;
-
-                CatmullRomSpline fallback = pathPlanner.PlanPathSpline(transform.position, nbNode.WorldPos, transform.forward);
-                if (fallback != null && fallback.TotalLength > 0)
-                {
-                    SetSplinePath(fallback, nbNode.Id);
-                    isFetchingNextPath = false;
-                    return;
-                }
-            }
-        }
-
-        if (currentSpline == null || currentSpline.TotalLength <= 0)
-        {
-            currentState = DriveState.Cruising; // 停住等待
-            targetSpeed  = 0f;
-        }
-        else targetSpeed = 2f;
-
-        isFetchingNextPath = false;
-    }
-
-    public void SetDestination(Vector3 destination)
-    {
-        if (pathPlanner == null) return;
-        CatmullRomSpline newSpline = pathPlanner.PlanPathSpline(transform.position, destination, transform.forward);
-        if (newSpline != null && newSpline.TotalLength > 0)
-        {
-            currentSpline = newSpline;
-            currentT      = 0f;
-            currentState  = DriveState.Cruising;
-        }
-    }
-
-    public void ResetNavigation() => RequestNewRandomPath();
-
-    public void ResetStateMachine()
-    {
-        isReversing    = false;
-        reverseTimer   = 0f;
-        avoidCooldown  = 0f;
-        hasStopTarget  = false;
-        reverseCount   = 0;
-        currentDestinationNodeId = -1;
-
-        if (currentSpline != null && currentSpline.TotalLength > 0)
-        {
-            currentT     = currentSpline.GetClosestT(transform.position, 0f);
-            currentT     = Mathf.Clamp01(currentT);
-            currentState = DriveState.Cruising;
-        }
-        else currentState = DriveState.Cruising;
-    }
-
-    public DriveState GetCurrentState() => currentState;
-
-    // ==========================================
-    // 可视化
+    // 可视化：轨迹线
     // ==========================================
     void UpdateTrajectoryLine()
     {
         if (trajectoryLine == null || trajectoryPoints == null) return;
         Vector3 origin = transform.position + Vector3.up * 0.3f;
 
-        if (isReversing)
+        bool isRev = (longState == LongitudinalState.Reverse);
+
+        if (isRev)
         {
             for (int i = 0; i < trajectoryPoints.Length; i++)
             {
@@ -631,9 +520,10 @@ public partial class SimpleAutoDrive : MonoBehaviour
             return;
         }
 
-        float speed     = Mathf.Abs(Mathf.Abs(currentVirtualSpeed));
-        float lookDist  = Mathf.Clamp(speed * 0.8f, 5f, 15f);
-        float steerAng  = carController.currentSteeringAngle;
+        float speed    = Mathf.Abs(currentSpeed);
+        float lookDist = Mathf.Clamp(speed * 0.8f, 5f, 15f);
+        float steerAng = carController.currentSteeringAngle;  
+        ///重
 
         for (int i = 0; i < trajectoryPoints.Length; i++)
         {
@@ -655,12 +545,12 @@ public partial class SimpleAutoDrive : MonoBehaviour
         }
         trajectoryLine.SetPositions(trajectoryPoints);
 
-        if (currentState == DriveState.Stopping)
+        if (longState == LongitudinalState.Brake || longState == LongitudinalState.Stopped)
         {
             trajectoryLine.startColor = new Color(1f, 0.3f, 0.1f, 0.7f);
             trajectoryLine.endColor   = new Color(1f, 0.3f, 0.1f, 0.1f);
         }
-        else if (isYielding)
+        else if (longState == LongitudinalState.Yield)
         {
             trajectoryLine.startColor = new Color(0.2f, 0.6f, 1f, 0.7f);
             trajectoryLine.endColor   = new Color(0.2f, 0.6f, 1f, 0.1f);
@@ -694,17 +584,17 @@ public partial class SimpleAutoDrive : MonoBehaviour
 
     void OnDrawGizmos()
     {
-        if (currentSpline != null && currentT < 1f)
+        if (currentCurve != null && currentT < 1f)
         {
-            float lookAheadDist = Mathf.Clamp(Mathf.Abs(Mathf.Abs(currentVirtualSpeed)) * 0.5f, 3f, 12f);
-            float lookT = Mathf.Clamp01(currentT + lookAheadDist / currentSpline.TotalLength);
+            float lookAheadDist = Mathf.Clamp(Mathf.Abs(currentSpeed) * 0.5f, 3f, 12f);
+            float lookT = Mathf.Clamp01(currentT + lookAheadDist / currentEdgeLength);
             Gizmos.color = Color.yellow;
-            Gizmos.DrawWireSphere(currentSpline.GetPoint(lookT), 2f);
+            Gizmos.DrawWireSphere(currentCurve.GetPoint(lookT), 2f);
         }
         Gizmos.color = Color.red;
         Gizmos.DrawWireSphere(transform.position, safeDistance);
 
-        if (obstacleDetected)
+        if (frontDistance < safeDistance)
         {
             if (Physics.SphereCast(transform.position + Vector3.up * 0.5f, 1.5f, transform.forward, out RaycastHit hit, safeDistance))
             {

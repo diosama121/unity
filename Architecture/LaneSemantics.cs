@@ -1,8 +1,10 @@
 using UnityEngine;
 using System.Collections.Generic;
 
-public enum TurnType { Straight, LeftTurn, RightTurn }
+public enum TurnType { Straight, LeftTurn, RightTurn, UTurn }
 public enum LaneDirection { Forward, Reverse }
+// 纵向状态机（替换旧 DriveState）
+public enum LongitudinalState { FreeDrive, FollowCar, Brake, Stopped, Yield, Reverse }
 
 [System.Serializable]
 public class Lane
