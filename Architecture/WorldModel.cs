@@ -520,41 +520,51 @@ public class WorldModel : MonoBehaviour
         Debug.Log($"[WorldModel] Lane KD-Tree built: {_laneSamples.Count} samples");
     }
 
-    private void GenerateConnectors()
+   private void GenerateConnectors()
     {
         GlobalConnectors.Clear();
         _nextConnectorId = 0;
 
-        float roadWidth = (roadBuilder != null) ? roadBuilder.roadWidth : 6f;
-        float junctionSnapRadius = roadWidth * 1.8f;
-
         foreach (var kvp in _graph)
         {
             RoadNode node = kvp.Value;
-            if (node.NeighborIds == null) continue;
+            if (node.NeighborIds == null || node.NeighborIds.Count == 0) continue;
 
             List<Lane> entryLanes = new List<Lane>();
             List<Lane> exitLanes  = new List<Lane>();
-            Vector3 junctionPos = node.WorldPos;
-            Vector2 jXZ = new Vector2(junctionPos.x, junctionPos.z);
 
-            // 1. 端点法收集进出车道（Vector2 XZ距离，忽略高度差）
-            foreach (var laneKvp in GlobalLanes)
+            // 1. 基于绝对图论拓扑，精准收集当前路口的进出车道，彻底抛弃距离检测！
+            foreach (int nbId in node.NeighborIds)
             {
-                Lane lane = laneKvp.Value;
-                if (lane.CenterSpline == null) continue;
-                Vector3 start = lane.CenterSpline.GetPoint(0f);
-                Vector3 end   = lane.CenterSpline.GetPoint(1f);
-                float dStart = Vector2.Distance(new Vector2(start.x, start.z), jXZ);
-                float dEnd   = Vector2.Distance(new Vector2(end.x, end.z), jXZ);
-                if (dEnd   < junctionSnapRadius) entryLanes.Add(lane);
-                if (dStart < junctionSnapRadius) exitLanes.Add(lane);
+                int minId = Mathf.Min(node.Id, nbId);
+                int maxId = Mathf.Max(node.Id, nbId);
+                int roadId = minId * 10000 + maxId;
+
+                // 找到挂载在这条路上的所有车道
+                var lanesOnRoad = GlobalLanes.Values.Where(l => l.RoadId == roadId).ToList();
+
+                foreach (var lane in lanesOnRoad)
+                {
+                    // 在生成时：Forward 总是从 minId 节点走向 maxId 节点
+                    //           Reverse 总是从 maxId 节点走向 minId 节点
+                    bool isForward = (lane.Direction == LaneDirection.Forward);
+                    
+                    if (node.Id == maxId)
+                    {
+                        // 如果当前路口是 maxId：Forward 从远方开向我(驶入)，Reverse 从我开向远方(驶出)
+                        if (isForward) entryLanes.Add(lane);
+                        else exitLanes.Add(lane);
+                    }
+                    else if (node.Id == minId)
+                    {
+                        // 如果当前路口是 minId：Reverse 从远方开向我(驶入)，Forward 从我开向远方(驶出)
+                        if (!isForward) entryLanes.Add(lane);
+                        else exitLanes.Add(lane);
+                    }
+                }
             }
 
-            entryLanes = entryLanes.Distinct().ToList();
-            exitLanes  = exitLanes.Distinct().ToList();
-
-            // 2. 同方向配对（排除同路段以避免原地掉头，留到后面死路兜底时单独处理）
+            // 2. 正常路口转向配对
             foreach (Lane entry in entryLanes)
             {
                 if (entry.NextConnectorIds == null)
@@ -562,8 +572,9 @@ public class WorldModel : MonoBehaviour
 
                 foreach (Lane exit in exitLanes)
                 {
+                    // 排除同一条路的掉头（同一条 RoadId 说明是原路返回）
+                    // 正常的十字路口不应该直接掉头，除非是死胡同
                     if (entry.RoadId == exit.RoadId) continue;
-                    if (entry.Direction != exit.Direction) continue;
 
                     LaneConnector connector = BuildConnector(entry, exit, node);
                     if (connector != null)
@@ -573,7 +584,8 @@ public class WorldModel : MonoBehaviour
                     }
                 }
 
-                // 3. 死路兜底：掉头连接器
+                // 3. 死路兜底：如果这个车道进入路口后没有任何出口（比如单条边的尽头 Node）
+                // 此时强制生成掉头连接器 (U-Turn)，防止车开出地图
                 if (entry.NextConnectorIds.Count == 0)
                 {
                     LaneConnector uTurn = BuildUTurnConnector(entry, node);
@@ -586,7 +598,7 @@ public class WorldModel : MonoBehaviour
             }
         }
 
-        Debug.Log($"[WorldModel] 成功生成 {_nextConnectorId} 条路口连接线 (路宽={roadWidth}, 判定半径={junctionSnapRadius:F1})");
+        Debug.Log($"[WorldModel] 成功生成 {GlobalConnectors.Count} 条路口连接线 (完全基于图拓扑精确匹配)");
     }
 
     private LaneConnector BuildConnector(Lane entry, Lane exit, RoadNode node)

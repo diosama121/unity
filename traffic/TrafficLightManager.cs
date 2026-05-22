@@ -203,7 +203,7 @@ public class TrafficLightManager : MonoBehaviour
 {
     return trafficLights.Select(t => t.gameObject).ToList();
 }
-    void PlaceTrafficLightAtNode(RoadNetworkGenerator.WaypointNode node, int directionIndex)
+   void PlaceTrafficLightAtNode(RoadNetworkGenerator.WaypointNode node, int directionIndex)
     {
         int neighborId = node.neighbors[directionIndex];
         Vector3 neighborPos = roadGen.nodes[neighborId].position;
@@ -217,10 +217,15 @@ public class TrafficLightManager : MonoBehaviour
         Vector3 basePos = new Vector3(node.position.x, groundY, node.position.z) + Vector3.up * heightOffset;
         Vector3 rightDir = Vector3.Cross(Vector3.up, facingDir).normalized;
         
+        // 【核心修复】：强制使用面板中的 offsetFromCenter！
+        // 如果面板没填 (<=0)，才退化使用道路宽度的 0.7 倍
         float roadW = roadBuilder != null ? roadBuilder.roadWidth : 6f;
-        float diagOffset = roadW * 0.7f;
-        Vector3 spawnPos = basePos + facingDir * diagOffset + rightDir * diagOffset;
+        float actualOffset = offsetFromCenter > 0.1f ? offsetFromCenter : (roadW * 0.7f);
         
+        Vector3 spawnPos = basePos + facingDir * actualOffset + rightDir * actualOffset;
+        
+        // ... 下面的生成 GameObject 等代码保持原样不变 ...
+       
         // 创建交通灯GameObject
         GameObject tlObj;
         if (trafficLightPrefab != null)
