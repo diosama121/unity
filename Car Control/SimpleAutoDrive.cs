@@ -121,7 +121,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
     // ==========================================
     // 初始化
     // ==========================================
-    void Start()
+   void Start()
     {
         carController = GetComponent<SimpleCarController>();
         if (pathPlanner == null) pathPlanner = FindObjectOfType<PathPlanner>();
@@ -144,22 +144,24 @@ public partial class SimpleAutoDrive : MonoBehaviour
             trajectoryPoints[i] = transform.position;
         trajectoryLine.SetPositions(trajectoryPoints);
 
-        if (pathEdgeIds.Count > 0)
+        // 拦截TrafficManager的数据，防止被兜底覆盖
+        if (pathEdgeIds.Count > 0 && currentCurve == null)
             StartPath();
-        else
+        else if (pathEdgeIds.Count == 0 && currentCurve == null)
             RequestNewPath();
     }
 
     // ==========================================
     // 每帧更新：纯曲线滑动 + 纵向状态机
     // ==========================================
-    void Update()
+   void Update()
     {
         UpdateTrajectoryLine();
         DrawLidarRays();
 
         if (isPlayerControlled)
         {
+            // 玩家控制时交还物理权
             VehicleCommand cmd = new VehicleCommand
             {
                 throttle  = Input.GetAxis("Vertical"),
@@ -181,20 +183,20 @@ public partial class SimpleAutoDrive : MonoBehaviour
         float moveDist = currentSpeed * Time.deltaTime;
         AdvanceOnEdge(moveDist);
 
-        // 【核心修改】删掉了 SnapToCurve()。只做 Pure Pursuit (纯追踪) 算出转向角度。
-        float lookAheadDist = Mathf.Clamp(Mathf.Abs(currentSpeed) * 0.8f, lookAheadMin, lookAheadMax);
-        float lookT = Mathf.Clamp01(currentT + lookAheadDist / currentEdgeLength);
-        
-        Vector3 targetPos = currentCurve.GetPoint(lookT);
+        // ==== 保留你的路线吸附核心 ====
+        SnapToCurve();
+
+        // 仅为了让车轮能够有转向动画，随便算个切线
+        Vector3 targetPos = currentCurve.GetPoint(Mathf.Clamp01(currentT + 0.05f));
         Vector3 localTarget = transform.InverseTransformPoint(targetPos);
-        
         float steering = Mathf.Clamp(localTarget.x / 3f, -1f, 1f);
         
+        // 下发命令仅仅是为了视觉表现（车轮转动/尾灯），物理位移已被 SnapToCurve 彻底接管
         carController.ApplyCommand(new VehicleCommand
         {
             throttle  = currentSpeed / Mathf.Max(carController.maxSpeed, 0.1f),
             steering  = steering,
-            isBraking = (brakeHard && Mathf.Abs(currentSpeed) <= 0.1f)
+            isBraking = brakeHard
         });
     }
 
@@ -249,7 +251,6 @@ public partial class SimpleAutoDrive : MonoBehaviour
     {
         if (currentEdgeLength <= 0) return;
         
-        // 【核心修改】按物理距离消耗，完美跨越路口，绝对不再转圈
         float remainingDist = distance;
         while (remainingDist > 0 && currentCurve != null)
         {
