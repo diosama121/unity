@@ -186,11 +186,7 @@ if (Input.GetKeyDown(KeyCode.R))
                 SyncDropdownValue("TimeMode", prev);
             }
 
-            // [Space] 原有刹车逻辑
-            if (RuntimeInputManager.Instance != null && RuntimeInputManager.Instance.GetKey("Brake") && carController != null)
-            {
-                // 刹车由 SimpleAutoDrive 的 isPlayerControlled 路径中 Input.GetKey(Space) 处理
-            }
+            // [Space] 刹车由 SimpleAutoDrive 的 isPlayerControlled 路径中 Input.GetKey(Space) 处理
         }
 
         if (isTORFlashing)
@@ -228,7 +224,6 @@ if (Input.GetKeyDown(KeyCode.R))
         {
             cameraController.modeSwitchKey = newKey;
         }
-        RefreshAllKeyTexts();
     }
 
     #region Component Discovery
@@ -2223,8 +2218,7 @@ if (Input.GetKeyDown(KeyCode.R))
                 rd.color = rosColor;
             }
         }
-        int npcCount = FindObjectsOfType<SimpleAutoDrive>().Length;
-SetHUDValue("HUDCurrentNode", autoDrive != null ? autoDrive.currentLaneId.ToString() : "N/A");
+        SetHUDValue("HUDCurrentNode", autoDrive != null ? autoDrive.currentLaneId.ToString() : "N/A");
         SetHUDValue("HUDNextNode", autoDrive != null ? "计算中..." : "N/A"); 
 
         // 2. 动态读取底层的路网节点数 (安全反射防报错)
@@ -2258,15 +2252,6 @@ SetHUDValue("HUDCurrentNode", autoDrive != null ? autoDrive.currentLaneId.ToStri
         {
             txt.text = value;
         }
-    }
-
-    #endregion
-
-    #region Key Display
-
-    void RefreshAllKeyTexts()
-    {
-        if (RuntimeInputManager.Instance == null) return;
     }
 
     #endregion

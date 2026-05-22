@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 
+/// <summary>基于 A* 的路网路径规划器，在 Lane 级别拓扑图上搜索边序列路径。</summary>
 public class PathPlanner : MonoBehaviour
 {
     private class PathNode

@@ -260,8 +260,6 @@ public class DebugPanel : MonoBehaviour
             else
             {
                 Debug.Log("✅ [DebugPanel] 一键停止数据录制，正在导出...");
-                var exportMethod = dataManager.GetType().GetMethod("ExportToCSV", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
-                exportMethod?.Invoke(dataManager, null);
             }
         }
     }

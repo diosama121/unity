@@ -744,9 +744,3 @@ public class WorldModel : MonoBehaviour
         return null;
     }
 }
-
-public class LaneKDEntry
-{
-    public Vector3 Point;
-    public int LaneId;
-}

@@ -38,3 +38,10 @@ public class StopLine
     public Vector3 Normal;
     public int AssociatedPhaseId = -1;
 }
+
+/// <summary>KD-Tree 空间索引中的车道采样点条目。</summary>
+public class LaneKDEntry
+{
+    public Vector3 Point;
+    public int LaneId;
+}

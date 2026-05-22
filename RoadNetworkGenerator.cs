@@ -1,12 +1,12 @@
 using UnityEngine;
 using System.Collections.Generic;
-using System;
 using System.Linq;
 
 #if UNITY_EDITOR
 using UnityEditor;
 #endif
 
+/// <summary>网格化路网生成器：按 gridWidth × gridHeight 生成节点和边的拓扑图。</summary>
 public class RoadNetworkGenerator : MonoBehaviour
 {
     [Header("=== 路网尺寸 ===")]
@@ -32,7 +32,6 @@ public class RoadNetworkGenerator : MonoBehaviour
     [Header("=== 生成控制 ===")]
     public bool generateOnStart = true;
     public bool autoLinkPathPlanner = true;
-    public bool showRuntimeUI = true;
 
     [Header("=== 环境模式 ===")]
     [Tooltip("勾选为乡村(起伏地形无高楼)，取消勾选为城市(纯平地形+高楼)")]
@@ -69,14 +68,7 @@ public class RoadNetworkGenerator : MonoBehaviour
     [HideInInspector] public List<(int, int)> edges = new List<(int, int)>();
     [HideInInspector] public List<RoadSegment> roadSegments = new List<RoadSegment>();
 
-    private int[,] grid;
-
-    // UI
-
-
     public PathPlanner pathPlanner;
-
-    public int nodeCount { get; internal set; }
 
     // =============================================
     // 生命周期
@@ -245,51 +237,7 @@ public class RoadNetworkGenerator : MonoBehaviour
             Debug.Log($"[RoadNetworkGenerator] 🔗 节点聚类熔断: 合并了 {mergeCount} 个过密节点，拓扑已安全重建");
     }
 
-    private void AddEdge(int a, int b)
-    {
-        // 避免重复与自连
-        if (a == b) return;
-        if (nodes[a].neighbors.Contains(b)) return;
-
-        nodes[a].neighbors.Add(b);
-        nodes[b].neighbors.Add(a);
-
-        // 边列表保持规范（a < b）
-        int min = Mathf.Min(a, b);
-        int max = Mathf.Max(a, b);
-        edges.Add((min, max));
-    }
-
-    private void RemoveEdge(int a, int b)
-    {
-        nodes[a].neighbors.Remove(b);
-        nodes[b].neighbors.Remove(a);
-
-        // 从 edges 列表中移除对应条目
-        int min = Mathf.Min(a, b);
-        int max = Mathf.Max(a, b);
-        edges.RemoveAll(e => e.Item1 == min && e.Item2 == max);
-    }
-
-    // 洗牌算法（Fisher-Yates）
-    private void ShuffleList(List<int> list)
-    {
-        for (int i = 0; i < list.Count; i++)
-        {
-            int randomIndex = UnityEngine.Random.Range(i, list.Count);
-            int temp = list[i];
-            list[i] = list[randomIndex];
-            list[randomIndex] = temp;
-        }
-    }
-
-    // =============================================
-    // 其余逻辑（保留原样，未改动）
-    // =============================================
-
-    void Start()
-    {
-    }
+    void Start() { }
 
     void OnValidate()
     {

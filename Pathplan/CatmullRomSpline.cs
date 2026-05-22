@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 
+/// <summary>Catmull-Rom 样条曲线：支持均匀/向心参数化，提供位置、切线和距离查询。</summary>
 public class CatmullRomSpline
 {
     public List<Vector3> ControlPoints { get; private set; }
