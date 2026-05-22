@@ -155,7 +155,6 @@ public partial class SimpleAutoDrive : MonoBehaviour
     // ==========================================
     void Update()
     {
-        // 可视化始终运行
         UpdateTrajectoryLine();
         DrawLidarRays();
 
@@ -173,28 +172,24 @@ public partial class SimpleAutoDrive : MonoBehaviour
 
         if (currentCurve == null || currentEdgeLength <= 0) return;
 
-        // 1. 传感器更新
         UpdateSensors();
-
-        // 2. 纵向状态机计算期望速度
         (float targetSpd, bool brakeHard) = GetLongitudinalCommand();
 
-        // 3. 平滑速度变化
-        float accel = brakeHard ? maxDeceleration
-            : (targetSpd < currentSpeed ? normalDeceleration : maxAcceleration);
+        float accel = brakeHard ? maxDeceleration : (targetSpd < currentSpeed ? normalDeceleration : maxAcceleration);
         currentSpeed = Mathf.MoveTowards(currentSpeed, targetSpd, accel * Time.deltaTime);
 
-        // 4. 沿曲线移动
         float moveDist = currentSpeed * Time.deltaTime;
         AdvanceOnEdge(moveDist);
 
-        // 5. 位置与朝向吸附（纯数学，彻底剥离物理引擎）
-        SnapToCurve();
-
-        // 6. 下发横向控制（沿切线自动转向）
-        Vector3 tangent = currentCurve.GetPoint(Mathf.Clamp01(currentT + 0.02f)) - transform.position;
-        Vector3 localDir = transform.InverseTransformDirection(tangent);
-        float steering = Mathf.Clamp(localDir.x / 3f, -1f, 1f);
+        // 【核心修改】删掉了 SnapToCurve()。只做 Pure Pursuit (纯追踪) 算出转向角度。
+        float lookAheadDist = Mathf.Clamp(Mathf.Abs(currentSpeed) * 0.8f, lookAheadMin, lookAheadMax);
+        float lookT = Mathf.Clamp01(currentT + lookAheadDist / currentEdgeLength);
+        
+        Vector3 targetPos = currentCurve.GetPoint(lookT);
+        Vector3 localTarget = transform.InverseTransformPoint(targetPos);
+        
+        float steering = Mathf.Clamp(localTarget.x / 3f, -1f, 1f);
+        
         carController.ApplyCommand(new VehicleCommand
         {
             throttle  = currentSpeed / Mathf.Max(carController.maxSpeed, 0.1f),
@@ -250,32 +245,42 @@ public partial class SimpleAutoDrive : MonoBehaviour
     // ==========================================
     // 沿边推进与切换
     // ==========================================
-    void AdvanceOnEdge(float distance)
+   void AdvanceOnEdge(float distance)
     {
         if (currentEdgeLength <= 0) return;
-        float deltaT = distance / currentEdgeLength;
-        currentT += deltaT;
-
-        // 到达边末端，切换到下一条
-        while (currentT >= 1.0f && currentEdgeIndex < pathEdgeIds.Count - 1)
+        
+        // 【核心修改】按物理距离消耗，完美跨越路口，绝对不再转圈
+        float remainingDist = distance;
+        while (remainingDist > 0 && currentCurve != null)
         {
-            currentT -= 1.0f;
-            currentEdgeIndex++;
-            LoadCurrentEdge();
-            if (currentEdgeLength <= 0) { currentT = 0f; return; }
+            float distToEdgeEnd = (1.0f - currentT) * currentEdgeLength;
+            
+            if (remainingDist >= distToEdgeEnd)
+            {
+                remainingDist -= distToEdgeEnd;
+                
+                if (currentEdgeIndex < pathEdgeIds.Count - 1)
+                {
+                    currentEdgeIndex++;
+                    LoadCurrentEdge();
+                    currentT = 0f; 
+                }
+                else
+                {
+                    currentT = 1.0f;
+                    currentSpeed = 0f;
+                    RequestNewPath();
+                    break;
+                }
+            }
+            else
+            {
+                currentT += remainingDist / currentEdgeLength;
+                remainingDist = 0f;
+            }
         }
-
-        // 到达路径终点，自动规划新路径
-        if (currentEdgeIndex >= pathEdgeIds.Count - 1 && currentT >= 1.0f)
-        {
-            currentT = 1.0f;
-            currentSpeed = 0f;
-            RequestNewPath();
-        }
-
         currentT = Mathf.Clamp01(currentT);
     }
-
     void SnapToCurve()
     {
         if (currentCurve == null) return;
@@ -417,6 +422,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
     {
         if (worldModel == null || pathPlanner == null) return;
 
+        // (寻路逻辑保持原样)
         for (int i = 0; i < 15; i++)
         {
             int randId = Random.Range(0, worldModel.NodeCount);
@@ -426,8 +432,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
 
             int startLaneId = worldModel.FindNearestLane(transform.position);
             int endLaneId   = worldModel.FindNearestLane(targetNode.WorldPos);
-            if (startLaneId < 0 || endLaneId < 0) continue;
-            if (startLaneId == endLaneId) continue;
+            if (startLaneId < 0 || endLaneId < 0 || startLaneId == endLaneId) continue;
 
             List<int> edgePath = pathPlanner.PlanEdgePath(startLaneId, endLaneId);
             if (edgePath != null && edgePath.Count > 0)
@@ -437,7 +442,6 @@ public partial class SimpleAutoDrive : MonoBehaviour
             }
         }
 
-        // 兜底1：如果已有 currentCurve（TrafficManager 注入），直接当单边路径行驶
         if (currentCurve != null && currentEdgeLength > 0)
         {
             int laneId = worldModel.FindNearestLane(transform.position);
@@ -445,16 +449,15 @@ public partial class SimpleAutoDrive : MonoBehaviour
             {
                 pathEdgeIds = new List<int> { laneId };
                 StartPath();
-                Debug.Log($"[SimpleAutoDrive] {name} 兜底路径：单车道 {laneId}");
                 return;
             }
         }
 
-        // 兜底2：减速等待下次机会
-        targetSpeed = 0f;
+        // 【核心修改】不要设置 targetSpeed = 0f 去把车弄成半身不遂，只要不推曲线即可
+        currentCurve = null;
+        currentSpeed = 0f;
         Debug.LogWarning($"[SimpleAutoDrive] {name} 无法规划任何路径，等待中...");
     }
-
     // ==========================================
     // 公共接口（兼容旧调用）
     // ==========================================
