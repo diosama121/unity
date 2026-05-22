@@ -20,7 +20,7 @@ public struct VehicleCommand
 // 纯运动学执行层：只负责接收 VehicleCommand 并移动
 // 不读输入、不做决策、不依赖 Rigidbody
 // ==========================================
-public partial class SimpleCarController : MonoBehaviour
+public class SimpleCarController : MonoBehaviour
 {
     [Header("车辆参数")]
     public float maxSpeed          = 30f;

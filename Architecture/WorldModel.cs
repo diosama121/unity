@@ -637,23 +637,13 @@ public class WorldModel : MonoBehaviour
 
     private LaneConnector BuildConnector(Lane entry, Lane exit, RoadNode node)
     {
-        // ==== 从路口边界开始，而非车道终点（终点已深入路口中心）====
-        // 防止连接器极短导致 Hermite 控制向量爆炸，产生小半径自旋曲线
-        const float setbackDist = 2.5f; // 从车道终点向后退的距离（米）
-        float entryLen = Mathf.Max(entry.CenterSpline.TotalLength, 1f);
-        float exitLen  = Mathf.Max(exit.CenterSpline.TotalLength,  1f);
-        float entrySetback = Mathf.Min(0.3f, setbackDist / entryLen);
-        float exitSetback  = Mathf.Min(0.3f, setbackDist / exitLen);
+        // 直接使用车道端点。几何反推拓扑 + 角度过滤已消灭幽灵连接器，
+        // 路口中心不再有多连接器重叠，无需 setback。
+        Vector3 p1 = entry.CenterSpline.GetPoint(1f);
+        Vector3 p3 = exit.CenterSpline.GetPoint(0f);
 
-        float entryT = 1f - entrySetback;
-        float exitT  = exitSetback;
-
-        Vector3 p1 = entry.CenterSpline.GetPoint(entryT);
-        Vector3 p3 = exit.CenterSpline.GetPoint(exitT);
-
-        // 切线也取自退缩点，保证方向一致
-        Vector3 entryDir = entry.CenterSpline.GetTangent(entryT);
-        Vector3 exitDir  = exit.CenterSpline.GetTangent(exitT);
+        Vector3 entryDir = entry.CenterSpline.GetTangent(1f);
+        Vector3 exitDir  = exit.CenterSpline.GetTangent(0f);
 
         float signedAngle = Vector3.SignedAngle(entryDir, exitDir, Vector3.up);
         TurnType tType = TurnType.Straight;

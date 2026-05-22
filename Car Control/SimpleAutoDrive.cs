@@ -2,7 +2,7 @@ using UnityEngine;
 using System.Collections.Generic;
 
 [RequireComponent(typeof(SimpleCarController))]
-public partial class SimpleAutoDrive : MonoBehaviour
+public class SimpleAutoDrive : MonoBehaviour
 {
     // ==========================================
     // 旧枚举保留（外部代码兼容）
@@ -20,8 +20,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
     public bool  dynamicLookAhead   = true;
     public float lookAheadMin       = 3f;
     public float lookAheadMax       = 12f;
- public float prob       = 12f;
-    [Header("传感器设置")]
+ [Header("传感器设置")]
     public float sensorForwardOffset = 4f;
     public LayerMask obstacleLayers;     // Vehicle + Pedestrian
     public LayerMask pedestrianLayer;    // Pedestrian only
@@ -96,7 +95,6 @@ public partial class SimpleAutoDrive : MonoBehaviour
 
     // --- 内部引用 ---
     private SimpleCarController carController;
-    private MasterUIManager     _uiManager;
     private LineRenderer        trajectoryLine;
     private Vector3[]           trajectoryPoints = new Vector3[20];
 
@@ -138,8 +136,6 @@ public partial class SimpleAutoDrive : MonoBehaviour
     {
         carController = GetComponent<SimpleCarController>();
         if (pathPlanner == null) pathPlanner = FindObjectOfType<PathPlanner>();
-        _uiManager = FindObjectOfType<MasterUIManager>();
-
         // 【修复3】：剥离一切刚体动力学，剥夺 Unity Solver 的控制权
         Rigidbody rb = GetComponent<Rigidbody>();
         if (rb != null)
@@ -592,8 +588,6 @@ public partial class SimpleAutoDrive : MonoBehaviour
         float speed    = Mathf.Abs(currentSpeed);
         float lookDist = Mathf.Clamp(speed * 0.8f, 5f, 15f);
         float steerAng = carController.currentSteeringAngle;  
-        ///重
-
         for (int i = 0; i < trajectoryPoints.Length; i++)
         {
             float t = i / (float)(trajectoryPoints.Length - 1);
