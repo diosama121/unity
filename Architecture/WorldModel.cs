@@ -432,8 +432,10 @@ public class WorldModel : MonoBehaviour
     // 彻底解决 T 字口多条车道/连接器空间重叠时的"随机吸错"问题。
     public int FindNearestLane(Vector3 worldPos, Vector3 forward = default, float maxRadius = 15f)
     {
-        // 优先使用 KDTree 快速索引
-        if (_laneSpatialIndex != null && _laneSamples.Count > 0 && forward == default)
+        // 仅当调用者未传入方向时才走 KDTree 快速路径（纯空间最近）
+        bool hasForward = forward.sqrMagnitude > 0.1f;
+
+        if (!hasForward && _laneSpatialIndex != null && _laneSamples.Count > 0)
         {
             int bestIdx = _laneSpatialIndex.QueryNearest(worldPos);
             if (bestIdx >= 0 && bestIdx < _laneSamples.Count)
@@ -671,8 +673,9 @@ public class WorldModel : MonoBehaviour
         connector.JunctionId = node.Id;
         connector.FromLaneId = entry.LaneId;
         connector.ToLaneId = exit.LaneId;
-        connector.TurnCurve = spline;
-        connector.TurnType = tType;
+        connector.Polyline  = pts;    // 离散Hermite多段线（端点切线精准，跳过CatmullRom二次近似）
+        connector.TurnCurve  = spline;
+        connector.TurnType  = tType;
 
         return connector;
     }

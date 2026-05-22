@@ -27,6 +27,8 @@ public class LaneConnector
     public int ToLaneId;
     public TurnType TurnType;
     public CatmullRomSpline TurnCurve;
+    /// <summary>已离散化的Hermite多段线（绕过CatmullRom二次近似的切线误差）。</summary>
+    public List<Vector3> Polyline;
 }
 
 [System.Serializable]

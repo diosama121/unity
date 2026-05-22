@@ -250,10 +250,9 @@ public class TrafficManager : MonoBehaviour
             if (autoDrive != null)
             {
                 autoDrive.isPlayerControlled = false;
-                autoDrive.currentLaneId      = randomLane.LaneId;
-                autoDrive.currentSpline      = randomLane.CenterSpline;
-                autoDrive.currentT           = startT;
-                autoDrive.currentState       = SimpleAutoDrive.DriveState.Cruising;
+                // 统一走 SetPath，避免半初始化导致 StartPath/_isTrajectoryLocked 未生效
+                float startDist = startT * randomLane.CenterSpline.TotalLength;
+                autoDrive.SetPath(new List<int>{randomLane.LaneId}, startDist);
                 npcVehicles.Add(autoDrive);
                 spawnedCount++;
             }

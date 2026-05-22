@@ -30,6 +30,20 @@ public class BakedTrajectory
         }
     }
 
+    /// <summary>直接用已离散化的多段线构造（跳过 CatmullRom 二次近似，端点切线绝对精准）。</summary>
+    public BakedTrajectory(List<Vector3> polyline)
+    {
+        Points = new List<Vector3>(polyline);
+        TotalLength = 0f;
+        accumulatedDistances.Add(0f);
+        for (int i = 1; i < Points.Count; i++)
+        {
+            float dist = Vector3.Distance(Points[i - 1], Points[i]);
+            TotalLength += dist;
+            accumulatedDistances.Add(TotalLength);
+        }
+    }
+
     /// <summary>根据物理前进距离（米），插值获取精确坐标。</summary>
     public Vector3 GetPointAtDistance(float dist)
     {

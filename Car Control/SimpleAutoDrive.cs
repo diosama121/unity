@@ -36,12 +36,6 @@ public class SimpleAutoDrive : MonoBehaviour
     }
 
     // ========== 旧字段兼容（外部读写映射） ==========
-    private CatmullRomSpline _backingSpline; // 仅用于兼容旧接口
-     public CatmullRomSpline currentSpline
-    { 
-        get => _backingSpline;
-        set { _backingSpline = value; currentTrajectory = (value != null) ? new BakedTrajectory(value) : null; currentEdgeLength = (currentTrajectory != null) ? currentTrajectory.TotalLength : 0f; }
-    } 
     public int currentLaneId
     {
         get
@@ -104,6 +98,8 @@ public class SimpleAutoDrive : MonoBehaviour
 
     // 【轨迹锁死】：一旦 StartPath 被调用，禁止运行时任何重吸附/重寻路
     private bool _isTrajectoryLocked = false;
+    // 【目的地锁定】：SetDestination 后禁止 ExtendPathSeamlessly 覆盖
+    private bool _hasDestination = false;
 
     // ========== 曲线运动 (离散烘焙架构：Polyline 替代连续曲线) ==========
     private BakedTrajectory currentTrajectory;
@@ -243,23 +239,24 @@ public class SimpleAutoDrive : MonoBehaviour
     // ==========================================
     // 路径管理
     // ==========================================
-    public void SetPath(List<int> edgeIds)
+    public void SetPath(List<int> edgeIds, float startDistance = 0f)
     {
         pathEdgeIds = edgeIds ?? new List<int>();
-        StartPath();
+        StartPath(startDistance);
     }
 
-    void StartPath()
+    void StartPath(float startDistance = 0f)
     {
         if (pathEdgeIds == null || pathEdgeIds.Count == 0) return;
 
         currentEdgeIndex = 0;
         LoadCurrentEdge();
-        currentDistOnEdge = 0f;
+        currentDistOnEdge = Mathf.Clamp(startDistance, 0f, currentEdgeLength);
         currentSpeed = 0f;
         longState = LongitudinalState.FreeDrive;
         stoppedTimer = 0f;
         reverseTimer = 0f;
+        _hasDestination = false;
 
         // 锁死！一旦上路，断绝一切外部重定位干扰
         _isTrajectoryLocked = true;
@@ -280,7 +277,16 @@ public class SimpleAutoDrive : MonoBehaviour
         if (id > 0 && worldModel.GlobalLanes.TryGetValue(id, out Lane lane))
             splineToBake = lane.CenterSpline;
         else if (id < 0 && worldModel.GlobalConnectors.TryGetValue(-id - 1, out LaneConnector conn))
+        {
+            // 优先使用离散Hermite多段线（绕过CatmullRom二次近似，端点切线绝对精准）
+            if (conn.Polyline != null && conn.Polyline.Count >= 2)
+            {
+                currentTrajectory = new BakedTrajectory(conn.Polyline);
+                currentEdgeLength = currentTrajectory.TotalLength;
+                return;
+            }
             splineToBake = conn.TurnCurve;
+        }
 
         if (splineToBake != null)
         {
@@ -301,37 +307,71 @@ public class SimpleAutoDrive : MonoBehaviour
    void AdvanceOnEdge(float distance)
     {
         if (currentEdgeLength <= 0) return;
-        
-        float remainingDist = distance;
-        while (remainingDist > 0 && currentTrajectory != null)
+
+        if (distance >= 0)
         {
-            float distToEdgeEnd = currentEdgeLength - currentDistOnEdge;
-            
-            if (remainingDist >= distToEdgeEnd)
+            float remainingDist = distance;
+            while (remainingDist > 0 && currentTrajectory != null)
             {
-                remainingDist -= distToEdgeEnd;
-                
-                if (currentEdgeIndex < pathEdgeIds.Count - 1)
+                float distToEdgeEnd = currentEdgeLength - currentDistOnEdge;
+
+                if (remainingDist >= distToEdgeEnd)
                 {
-                    currentEdgeIndex++;
-                    LoadCurrentEdge();
-                    currentDistOnEdge = 0f; 
+                    remainingDist -= distToEdgeEnd;
+
+                    if (currentEdgeIndex < pathEdgeIds.Count - 1)
+                    {
+                        // 切换到下一个预规划的 edge
+                        currentEdgeIndex++;
+                        LoadCurrentEdge();
+                        currentDistOnEdge = 0f;
+                    }
+                    else
+                    {
+                        currentDistOnEdge = currentEdgeLength;
+                        // 尝试拓扑顺延。成功则继续推进刚延伸的 edge（不丢距离）
+                        if (ExtendPathSeamlessly())
+                            continue;
+                        // 顺延失败 → 减速 + 全图寻路
+                        currentSpeed = 0f;
+                        RequestNewPath();
+                        break;
+                    }
                 }
                 else
                 {
-                    currentDistOnEdge = currentEdgeLength;
-                    currentSpeed = 0f;
-
-                    // 先尝试纯拓扑顺延（盲接 NextConnectorIds），失败才走全图寻路
-                    if (!ExtendPathSeamlessly())
-                        RequestNewPath();
-                    break;
+                    currentDistOnEdge += remainingDist;
+                    remainingDist = 0f;
                 }
             }
-            else
+        }
+        else
+        {
+            // 倒车：沿折线后退
+            float remainingDist = -distance;
+            while (remainingDist > 0 && currentTrajectory != null)
             {
-                currentDistOnEdge += remainingDist;
-                remainingDist = 0f;
+                if (remainingDist >= currentDistOnEdge)
+                {
+                    remainingDist -= currentDistOnEdge;
+                    if (currentEdgeIndex > 0)
+                    {
+                        currentEdgeIndex--;
+                        LoadCurrentEdge();
+                        currentDistOnEdge = currentEdgeLength;
+                    }
+                    else
+                    {
+                        currentDistOnEdge = 0f;
+                        currentSpeed = 0f;
+                        break;
+                    }
+                }
+                else
+                {
+                    currentDistOnEdge -= remainingDist;
+                    remainingDist = 0f;
+                }
             }
         }
         currentDistOnEdge = Mathf.Clamp(currentDistOnEdge, 0f, currentEdgeLength);
@@ -348,6 +388,10 @@ public class SimpleAutoDrive : MonoBehaviour
         // 2. 获取基于绝对距离的折线切线 (永远是两点相减，永不翻转)
         Vector3 tangent = currentTrajectory.GetTangentAtDistance(currentDistOnEdge);
         if (tangent.sqrMagnitude < 0.0001f) tangent = transform.forward;
+
+        // 倒车时翻转朝向
+        if (longState == LongitudinalState.Reverse)
+            tangent = -tangent;
 
         // 3. 旋转直接对齐切线 —— 折线方向是确定性的，Slerp 滞后反而导致弯道抽搐
         Quaternion targetRot = Quaternion.LookRotation(tangent);
@@ -449,6 +493,9 @@ public class SimpleAutoDrive : MonoBehaviour
     // ==========================================
     bool ExtendPathSeamlessly()
     {
+        // 有明确目的地时，禁止随机拓扑顺延覆盖
+        if (_hasDestination) return false;
+
         int lastId = pathEdgeIds[pathEdgeIds.Count - 1];
         if (lastId > 0 && worldModel.GlobalLanes.TryGetValue(lastId, out Lane lane))
         {
@@ -538,7 +585,10 @@ public class SimpleAutoDrive : MonoBehaviour
 
         List<int> edgePath = pathPlanner.PlanEdgePath(startLaneId, endLaneId);
         if (edgePath != null && edgePath.Count > 0)
+        {
+            _hasDestination = true;
             SetPath(edgePath);
+        }
     }
 
     public void ResetNavigation() => RequestNewPath();

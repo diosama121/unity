@@ -185,10 +185,7 @@ if (Input.GetKeyDown(KeyCode.R))
                 if (timeSlider != null) timeSlider.SetValueWithoutNotify(prev);
                 SyncDropdownValue("TimeMode", prev);
             }
-
-            // [Space] 刹车由 SimpleAutoDrive 的 isPlayerControlled 路径中 Input.GetKey(Space) 处理
         }
-
         if (isTORFlashing)
         {
             torFlashTimer += Time.deltaTime;
@@ -200,7 +197,7 @@ if (Input.GetKeyDown(KeyCode.R))
                 isTORFlashing = false;
                 if (torOverlay != null) torOverlay.SetActive(false);
             }
-        }
+        } 
 
         hudRefreshTimer += Time.unscaledDeltaTime;
         if (hudRefreshTimer >= hudRefreshInterval)
