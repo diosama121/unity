@@ -40,6 +40,7 @@ public class WorldModel : MonoBehaviour
     public Dictionary<int, IntersectionState> PhaseStates = new Dictionary<int, IntersectionState>();
     public Dictionary<string, List<SplinePoint>> GlobalSplineCache = new Dictionary<string, List<SplinePoint>>();
     private int _nextLaneId = 0;
+    private int _nextConnectorId = 0;
 
     // 观测接口
     public int NodeCount => _graph.Count;
@@ -74,6 +75,8 @@ public class WorldModel : MonoBehaviour
 
         GenerateAndRegisterLanes();
 
+        GenerateConnectors();
+
         roadBuilder.BuildRoads();
 
         if (roadGenerator != null && !roadGenerator.isCountryside)
@@ -91,7 +94,7 @@ public class WorldModel : MonoBehaviour
             }
             trafficManager.ResetSpawnState();
         }
-        if (trafficManager != null) trafficManager.SpawnNPCs();
+        if (trafficManager != null) trafficManager.SpawnNPCsOnLanes();
 
         Debug.Log("[WorldModel] World generation complete.");
     }
@@ -513,6 +516,101 @@ public class WorldModel : MonoBehaviour
         }
 
         Debug.Log($"[WorldModel] Lane KD-Tree built: {_laneSamples.Count} samples");
+    }
+
+    private void GenerateConnectors()
+    {
+        if (GlobalConnectors == null) GlobalConnectors = new Dictionary<int, LaneConnector>();
+        GlobalConnectors.Clear();
+        _nextConnectorId = 0;
+
+        foreach (var kvp in _graph)
+        {
+            RoadNode node = kvp.Value;
+            // 只有邻居 >= 3 才是标准路口
+            if (node.NeighborIds == null || node.NeighborIds.Count < 3) continue;
+
+            List<Lane> entryLanes = new List<Lane>();
+            List<Lane> exitLanes = new List<Lane>();
+
+            // 1. 收集进出车道：利用首尾点与 Node.WorldPos 的距离判定（2米容差）
+            foreach (var laneKvp in GlobalLanes)
+            {
+                Lane lane = laneKvp.Value;
+                if (lane.CenterSpline == null || lane.CenterSpline.TotalLength < 0.1f) continue;
+
+                Vector3 startPos = lane.CenterSpline.GetPoint(0f);
+                Vector3 endPos = lane.CenterSpline.GetPoint(1f);
+
+                if (Vector3.Distance(endPos, node.WorldPos) < 2.0f) entryLanes.Add(lane);
+                if (Vector3.Distance(startPos, node.WorldPos) < 2.0f) exitLanes.Add(lane);
+            }
+
+            // 2. 笛卡尔配对生成 Connector
+            foreach (Lane entry in entryLanes)
+            {
+                if (entry.NextConnectorIds == null) entry.NextConnectorIds = new List<int>();
+
+                foreach (Lane exit in exitLanes)
+                {
+                    // 排除原地掉头（同一路段）
+                    if (entry.RoadId == exit.RoadId) continue;
+
+                    LaneConnector connector = BuildConnector(entry, exit, node);
+                    if (connector != null)
+                    {
+                        GlobalConnectors[connector.ConnectorId] = connector;
+                        entry.NextConnectorIds.Add(connector.ConnectorId);
+                    }
+                }
+            }
+        }
+
+        Debug.Log($"[WorldModel] 成功生成 {_nextConnectorId} 条路口连接线(Connectors).");
+    }
+
+    private LaneConnector BuildConnector(Lane entry, Lane exit, RoadNode node)
+    {
+        float entryLen = entry.CenterSpline.TotalLength;
+        float exitLen = exit.CenterSpline.TotalLength;
+
+        // 5点 CatmullRom 取样
+        // P0: 进入端倒数第二点 (往回退 6 米)
+        Vector3 p0 = entry.CenterSpline.GetPoint(Mathf.Max(0f, 1f - 6f / entryLen));
+        // P1: 进入端终点 (路口边界)
+        Vector3 p1 = entry.CenterSpline.GetPoint(1f);
+
+        // P3: 退出端起点 (路口边界)
+        Vector3 p3 = exit.CenterSpline.GetPoint(0f);
+        // P4: 退出端第二点 (往前走 6 米)
+        Vector3 p4 = exit.CenterSpline.GetPoint(Mathf.Min(1f, 6f / exitLen));
+
+        // P2: 路口中心向内侧偏移（入口+出口+节点坐标加权）
+        Vector3 p2 = (p1 + p3 + node.WorldPos) / 3.0f;
+
+        List<Vector3> pts = new List<Vector3>() { p0, p1, p2, p3, p4 };
+        CatmullRomSpline spline = new CatmullRomSpline(pts, false);
+
+        // 向量叉乘 + 夹角判定转向类型
+        Vector3 entryDir = (p1 - p0).normalized;
+        Vector3 exitDir = (p4 - p3).normalized;
+        float signedAngle = Vector3.SignedAngle(entryDir, exitDir, Vector3.up);
+
+        LaneConnector connector = new LaneConnector();
+        connector.ConnectorId = _nextConnectorId++;
+        connector.JunctionId = node.Id;
+        connector.FromLaneId = entry.LaneId;
+        connector.ToLaneId = exit.LaneId;
+        connector.TurnCurve = spline;
+
+        if (signedAngle < -20f)
+            connector.TurnType = TurnType.LeftTurn;
+        else if (signedAngle > 20f)
+            connector.TurnType = TurnType.RightTurn;
+        else
+            connector.TurnType = TurnType.Straight;
+
+        return connector;
     }
 }
 

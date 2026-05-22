@@ -145,9 +145,9 @@ public class ROS2BridgeV2 : MonoBehaviour
             rosLinearVelocity = 0f;
             rosAngularVelocity = 0f;
 
-            if (autoDrive != null && autoDrive.currentState == SimpleAutoDrive.DriveState.RemoteControlled)
+            if (autoDrive != null && !autoDrive.enabled)
             {
-                autoDrive.currentState = SimpleAutoDrive.DriveState.Following;
+                autoDrive.enabled = true;
             }
         }
 
@@ -161,19 +161,25 @@ public class ROS2BridgeV2 : MonoBehaviour
 
         if (useRosControl)
         {
-            if (autoDrive != null && autoDrive.currentState != SimpleAutoDrive.DriveState.RemoteControlled)
+            if (autoDrive != null && autoDrive.enabled)
             {
-                autoDrive.currentState = SimpleAutoDrive.DriveState.RemoteControlled;
-            } 
+                autoDrive.enabled = false;
+            }
 
             if (carController != null)
             {
-                carController.autoMode = true; 
                 float maxSpd = carController.maxSpeed > 0 ? carController.maxSpeed : 20f;
                 float targetThrottle = Mathf.Clamp(rosLinearVelocity / maxSpd, -1f, 1f);
                 float targetSteering = Mathf.Clamp(-rosAngularVelocity / 1.5f, -1f, 1f);
 
-                carController.SetAutoControl(targetThrottle, targetSteering);
+                carController.ApplyCommand(new VehicleCommand { throttle = targetThrottle, steering = targetSteering });
+            }
+        }
+        else
+        {
+            if (autoDrive != null && !autoDrive.enabled)
+            {
+                autoDrive.enabled = true;
             }
         }
     }
@@ -196,18 +202,18 @@ public class ROS2BridgeV2 : MonoBehaviour
                 phase_state = "Uncontrolled",
                 timestamp = Time.time
             };
-
-            if (autoDrive != null && WorldModel.Instance != null && autoDrive.currentDestinationNodeId >= 0)
-            {
-                var stopLine = WorldModel.Instance.GetNearestStopLine(autoDrive.currentDestinationNodeId, transform.position);
-                if (stopLine != null)
-                {
-                    state.stopline_distance = Vector3.Distance(transform.position, stopLine.Position);
-                    int phaseId = stopLine.AssociatedPhaseId;
-                    state.phase_state = WorldModel.Instance.GetPhaseState(phaseId).ToString();
-                }
-            }
-
+///
+      //      if (autoDrive != null && WorldModel.Instance != null )//autoDrive.currentDestinationNodeId这里之前有东西的，是个判断的，重构过程中先删一下//
+      //      {
+      //          var stopLine =WorldModel.Instance.GetNearestStopLine(autoDrive.currentDestinationNodeId, transform.position);
+      //         if (stopLine != null)
+      //          {
+//state.stopline_distance = Vector3.Distance(transform.position, stopLine.Position);
+       //             int phaseId = stopLine.AssociatedPhaseId;
+  //                 state.phase_state = WorldModel.Instance.GetPhaseState(phaseId).ToString();
+    //            }
+   //         }
+///
             string jsonData = JsonUtility.ToJson(state) + "\n";
             byte[] data = Encoding.UTF8.GetBytes(jsonData);
             while (sendQueue.TryDequeue(out _)) { }
@@ -338,9 +344,9 @@ public class ROS2BridgeV2 : MonoBehaviour
         rosAngularVelocity = 0f;
 
         // 如果当前处于远程控制状态，交还本地 AI
-        if (autoDrive != null && autoDrive.currentState == SimpleAutoDrive.DriveState.RemoteControlled)
+        if (autoDrive != null && !autoDrive.enabled)
         {
-            autoDrive.currentState = SimpleAutoDrive.DriveState.Following;
+            autoDrive.enabled = true;
         }
     }
     // ==============================

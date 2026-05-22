@@ -156,14 +156,14 @@ if (Input.GetKeyDown(KeyCode.R))
             // [T] 切换自动驾驶/手动驾驶
             if (Input.GetKeyDown(KeyCode.T) && carController != null)
             {
-                carController.ToggleMode();
-                if (thoughtStreamText != null) AppendThoughtLine("已切换驾驶模式: " + (carController.autoMode ? "自动" : "手动"));
+                if (autoDrive != null) autoDrive.isPlayerControlled = !autoDrive.isPlayerControlled;
+                if (thoughtStreamText != null) AppendThoughtLine("已切换驾驶模式: " + ((autoDrive != null && !autoDrive.isPlayerControlled) ? "自动" : "手动"));
             }
 
             // [N] 重新导航 (重置状态)
             if (Input.GetKeyDown(KeyCode.N) && autoDrive != null)
             {
-                autoDrive.currentState = SimpleAutoDrive.DriveState.Idle;
+                autoDrive.currentState = SimpleAutoDrive.DriveState.Cruising;
                 if (thoughtStreamText != null) AppendThoughtLine("手动触发：导航状态重置");
             }
 
@@ -189,7 +189,7 @@ if (Input.GetKeyDown(KeyCode.R))
             // [Space] 原有刹车逻辑
             if (RuntimeInputManager.Instance != null && RuntimeInputManager.Instance.GetKey("Brake") && carController != null)
             {
-                carController.SetAutoBrake(carController.brakeDeceleration);
+                // 刹车由 SimpleAutoDrive 的 isPlayerControlled 路径中 Input.GetKey(Space) 处理
             }
         }
 
@@ -810,8 +810,7 @@ if (Input.GetKeyDown(KeyCode.R))
         goBtnObj.GetComponent<Button>().onClick.AddListener(() => {
             if (autoDrive != null && float.TryParse(xInput.text, out float tx) && float.TryParse(zInput.text, out float tz))
             {
-                carController.ChangeRole(false);
-                carController.autoMode = true;
+                if (autoDrive != null) autoDrive.isPlayerControlled = false;
                 float ty = WorldModel.Instance != null ? WorldModel.Instance.GetUnifiedHeight(tx, tz) : 0f;
                 autoDrive.SetDestination(new Vector3(tx, ty, tz));
                 AppendThoughtLine($"主车自动驾驶激活，目标坐标: ({tx}, {tz})");
@@ -1862,7 +1861,8 @@ if (Input.GetKeyDown(KeyCode.R))
         SyncInputFieldValue("NPCCount", trafficManager != null ? trafficManager.npcCount.ToString() : "3");
         SyncInputFieldValue("NPCMaxSpeed", carController != null ? carController.maxSpeed.ToString("F0") : "30");
         SyncInputFieldValue("NPCSafeDist", autoDrive != null ? autoDrive.safeDistance.ToString("F0") : "8");
-        SyncInputFieldValue("NPCLookAhead", autoDrive != null ? autoDrive.lookAheadT.ToString("F3") : "0.020");
+        // [注释] lookAheadT 已移除，改用 lookAheadMin/lookAheadMax
+        // SyncInputFieldValue("NPCLookAhead", autoDrive != null ? autoDrive.lookAheadT.ToString("F3") : "0.020");
 
         SyncToggleValue("SplineGizmos", roadBuilder != null ? roadBuilder.showSplineGizmos : false);
 
@@ -1954,7 +1954,8 @@ if (Input.GetKeyDown(KeyCode.R))
             {
                 foreach (var npc in trafficManager.ActiveNPCs)
                 {
-                    if (npc != null) npc.lookAheadT = f;
+                    // [注释] lookAheadT 已移除
+                    // if (npc != null) npc.lookAheadT = f;
                 }
             }
         });
@@ -2164,7 +2165,7 @@ if (Input.GetKeyDown(KeyCode.R))
 
         SetHUDValue("HUDSpeed", carController != null ? carController.currentSpeed.ToString("F1") + " m/s" : "N/A");
         SetHUDValue("HUDSteering", carController != null ? carController.currentSteeringAngle.ToString("F1") + " deg" : "N/A");
-        SetHUDValue("HUDAutoMode", carController != null ? (carController.autoMode ? "是" : "否") : "N/A");
+        SetHUDValue("HUDAutoMode", autoDrive != null ? (autoDrive.isPlayerControlled ? "手动" : "自动") : "N/A");
         SetHUDValue("HUDState", autoDrive != null ? autoDrive.currentState.ToString() : "N/A");
         SetHUDValue("HUDLaneId", autoDrive != null ? autoDrive.currentLaneId.ToString() : "N/A");
         SetHUDValue("HUDYielding", autoDrive != null ? (autoDrive.isYielding ? "是 <<<" : "否") : "N/A");

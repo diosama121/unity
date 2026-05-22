@@ -95,26 +95,54 @@ public class CameraController : MonoBehaviour
             RefreshVehicleList();
             if (allVehicles.Count > 0)
             {
-                // 1. 剥夺当前旧车的控制权，将其变为 NPC
+                // 1. 剥夺当前旧车的控制权
                 if (target != null)
                 {
-                    SimpleCarController oldCar = target.GetComponent<SimpleCarController>();
-                    if (oldCar != null) oldCar.ChangeRole(toNPC: true);
+                    SimpleAutoDrive oldDrive = target.GetComponent<SimpleAutoDrive>();
+                    if (oldDrive != null) oldDrive.isPlayerControlled = false;
                 }
 
                 // 2. 寻找下一辆车
                 currentTargetIndex = (currentTargetIndex + 1) % allVehicles.Count;
                 target = allVehicles[currentTargetIndex];
                 
-                // 3. 赋予新车控制权，将其变为 玩家主车
+                // 3. 赋予新车控制权
                 if (target != null)
                 {
-                    SimpleCarController newCar = target.GetComponent<SimpleCarController>();
-                    if (newCar != null) newCar.ChangeRole(toNPC: false);
+                    SimpleAutoDrive newDrive = target.GetComponent<SimpleAutoDrive>();
+                    if (newDrive != null) newDrive.isPlayerControlled = true;
                 }
 
                 currentMode = CameraMode.Follow; 
                 Debug.Log($"🎯 相机目标切换并接管控制: {target.name}");
+            }
+        }
+
+        // 鼠标左键点击接管车辆（Possess）
+        if (Input.GetMouseButtonDown(0))
+        {
+            Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
+            if (Physics.Raycast(ray, out RaycastHit hit, 1000f))
+            {
+                SimpleAutoDrive targetDrive = hit.collider.GetComponentInParent<SimpleAutoDrive>();
+                if (targetDrive != null)
+                {
+                    // 先把所有车的控制权交还给 AI
+                    SimpleAutoDrive[] allCars = FindObjectsOfType<SimpleAutoDrive>();
+                    foreach (var car in allCars)
+                    {
+                        car.isPlayerControlled = false;
+                    }
+
+                    // 接管被点击的车
+                    targetDrive.isPlayerControlled = true;
+
+                    // 将相机的 target 设为这辆车
+                    this.target = targetDrive.transform;
+                    currentMode = CameraMode.Follow;
+
+                    Debug.Log("已接管车辆: " + targetDrive.gameObject.name);
+                }
             }
         }
     }
