@@ -121,7 +121,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
     // ==========================================
     // 初始化
     // ==========================================
-   void Start()
+ void Start()
     {
         carController = GetComponent<SimpleCarController>();
         if (pathPlanner == null) pathPlanner = FindObjectOfType<PathPlanner>();
@@ -144,11 +144,37 @@ public partial class SimpleAutoDrive : MonoBehaviour
             trajectoryPoints[i] = transform.position;
         trajectoryLine.SetPositions(trajectoryPoints);
 
-        // 拦截TrafficManager的数据，防止被兜底覆盖
+        // 防止 TrafficManager 的寻路记忆被清空
         if (pathEdgeIds.Count > 0 && currentCurve == null)
             StartPath();
         else if (pathEdgeIds.Count == 0 && currentCurve == null)
-            RequestNewPath();
+            RequestNewPath(); 
+    }
+
+    float SampleFrontDistance(float maxDist, LayerMask mask)
+    {
+        if (currentCurve == null || currentEdgeLength <= 0) return maxDist;
+        if (mask.value == 0) return maxDist;
+
+        float step = 0.5f;
+        // 把起始侦测点推到车头之外，防止扫到自己的包围盒导致死锁
+        float startD = sensorForwardOffset > 0 ? sensorForwardOffset : 2.5f; 
+        
+        for (float d = startD; d < maxDist; d += step)
+        {
+            float t = currentT + d / currentEdgeLength;
+            if (t > 1.0f) break;
+            
+            Vector3 point = currentCurve.GetPoint(t);
+            Collider[] hits = Physics.OverlapSphere(point, 1.0f, mask);
+            
+            foreach (var hit in hits)
+            {
+                if (!hit.transform.IsChildOf(this.transform))
+                    return d;
+            }
+        }
+        return maxDist;
     }
 
     // ==========================================
@@ -282,26 +308,30 @@ public partial class SimpleAutoDrive : MonoBehaviour
         }
         currentT = Mathf.Clamp01(currentT);
     }
-    void SnapToCurve()
+ void SnapToCurve()
     {
         if (currentCurve == null) return;
         Vector3 pos = currentCurve.GetPoint(currentT);
         if (worldModel != null)
             pos.y = worldModel.GetUnifiedHeight(pos.x, pos.z) + 0.15f;
 
-        Vector3 nextPos = currentCurve.GetPoint(Mathf.Clamp01(currentT + 0.02f));
-        Vector3 tangent = (nextPos - currentCurve.GetPoint(currentT)).normalized;
+        // 【解决转圈核心】：强制钳制 nextT 不超过 1.0，防止到了路口尽头切线倒转
+        float nextT = Mathf.Min(1.0f, currentT + 0.02f);
+        Vector3 nextPos = currentCurve.GetPoint(nextT);
+        Vector3 tangent = (nextPos - pos).normalized;
+        
         if (tangent == Vector3.zero)
         {
-            Vector3 prevPos = currentCurve.GetPoint(Mathf.Clamp01(currentT - 0.02f));
-            tangent = (pos - prevPos).normalized;
+            float prevT = Mathf.Max(0.0f, currentT - 0.02f);
+            tangent = (pos - currentCurve.GetPoint(prevT)).normalized;
         }
         if (tangent == Vector3.zero) tangent = transform.forward;
 
         Rigidbody rb = GetComponent<Rigidbody>();
         if (rb != null)
         {
-            rb.velocity = Vector3.zero;
+            // 给刚体直接赋速度，完美覆盖 SimpleCarController 的内部物理摩擦力干扰
+            rb.velocity = tangent * currentSpeed; 
             rb.angularVelocity = Vector3.zero;
             rb.MovePosition(pos);
             rb.MoveRotation(Quaternion.LookRotation(tangent));
@@ -387,22 +417,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
         redLightAhead    = CheckRedLight();
     }
 
-    float SampleFrontDistance(float maxDist, LayerMask mask)
-    {
-        if (currentCurve == null || currentEdgeLength <= 0) return maxDist;
-        if (mask.value == 0) return maxDist;
-
-        float step = 0.5f;
-        for (float d = 0; d < maxDist; d += step)
-        {
-            float t = currentT + d / currentEdgeLength;
-            if (t > 1.0f) break;
-            Vector3 point = currentCurve.GetPoint(t);
-            if (Physics.CheckSphere(point, 1.0f, mask))
-                return d;
-        }
-        return maxDist;
-    }
+   
 
     bool CheckRedLight()
     {
@@ -419,11 +434,11 @@ public partial class SimpleAutoDrive : MonoBehaviour
     // ==========================================
     // 自动路径规划（随机远端节点 → A* 边序列）
     // ==========================================
-    void RequestNewPath()
+   void RequestNewPath()
     {
         if (worldModel == null || pathPlanner == null) return;
 
-        // (寻路逻辑保持原样)
+        // 保持原有的 A* 循环寻路逻辑
         for (int i = 0; i < 15; i++)
         {
             int randId = Random.Range(0, worldModel.NodeCount);
@@ -454,9 +469,9 @@ public partial class SimpleAutoDrive : MonoBehaviour
             }
         }
 
-        // 【核心修改】不要设置 targetSpeed = 0f 去把车弄成半身不遂，只要不推曲线即可
+        // 不再暴力清零 targetSpeed 导致引擎半身不遂，只清空当前曲线自然停车
         currentCurve = null;
-        currentSpeed = 0f;
+        currentSpeed = 0f; 
         Debug.LogWarning($"[SimpleAutoDrive] {name} 无法规划任何路径，等待中...");
     }
     // ==========================================
