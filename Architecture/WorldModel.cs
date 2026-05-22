@@ -191,7 +191,7 @@ public class WorldModel : MonoBehaviour
         GlobalConnectors.Clear();
         _nextLaneId = 0;
 
-        if (roadGenerator == null || roadGenerator.isCountryside) return;
+        if (roadGenerator == null) return;
 
         HashSet<string> processedEdges = new HashSet<string>();
         float roadWidth = roadBuilder != null ? roadBuilder.roadWidth : 6f;
@@ -574,27 +574,34 @@ public class WorldModel : MonoBehaviour
         float entryLen = entry.CenterSpline.TotalLength;
         float exitLen = exit.CenterSpline.TotalLength;
 
-        // 5点 CatmullRom 取样
-        // P0: 进入端倒数第二点 (往回退 6 米)
-        Vector3 p0 = entry.CenterSpline.GetPoint(Mathf.Max(0f, 1f - 6f / entryLen));
-        // P1: 进入端终点 (路口边界)
+        // 只保留路口边界点
         Vector3 p1 = entry.CenterSpline.GetPoint(1f);
-
-        // P3: 退出端起点 (路口边界)
         Vector3 p3 = exit.CenterSpline.GetPoint(0f);
-        // P4: 退出端第二点 (往前走 6 米)
-        Vector3 p4 = exit.CenterSpline.GetPoint(Mathf.Min(1f, 6f / exitLen));
 
-        // P2: 路口中心向内侧偏移（入口+出口+节点坐标加权）
-        Vector3 p2 = (p1 + p3 + node.WorldPos) / 3.0f;
-
-        List<Vector3> pts = new List<Vector3>() { p0, p1, p2, p3, p4 };
-        CatmullRomSpline spline = new CatmullRomSpline(pts, false);
-
-        // 向量叉乘 + 夹角判定转向类型
+        // 取微小偏移量算切线方向（基于车道长度比例，避免固定6m在小路口失效）
+        Vector3 p0 = entry.CenterSpline.GetPoint(Mathf.Max(0f, 1f - 2f / entryLen));
+        Vector3 p4 = exit.CenterSpline.GetPoint(Mathf.Min(1f, 2f / exitLen));
         Vector3 entryDir = (p1 - p0).normalized;
-        Vector3 exitDir = (p4 - p3).normalized;
+        Vector3 exitDir = (p3 - p4).normalized; // 注意：exitDir 是从 p3 指向 p4（出口方向）
+
         float signedAngle = Vector3.SignedAngle(entryDir, exitDir, Vector3.up);
+
+        TurnType tType = TurnType.Straight;
+        if (signedAngle < -20f) tType = TurnType.LeftTurn;
+        else if (signedAngle > 20f) tType = TurnType.RightTurn;
+
+        float dist = Vector3.Distance(p1, p3);
+        float mag = dist * 0.4f;
+        if (tType == TurnType.LeftTurn) mag = dist * 0.6f;
+        if (tType == TurnType.RightTurn) mag = dist * 0.25f;
+
+        // 埃尔米特插值生成极其平滑的中间控制点
+        Vector3 mid1 = SplineMath.EvaluateHermite(0.33f, p1, entryDir * mag, p3, exitDir * mag);
+        Vector3 mid2 = SplineMath.EvaluateHermite(0.66f, p1, entryDir * mag, p3, exitDir * mag);
+
+        // 【核心修复】：只用 4 个点构建，彻底消除曲线过冲绕圈现象
+        List<Vector3> pts = new List<Vector3>() { p1, mid1, mid2, p3 };
+        CatmullRomSpline spline = new CatmullRomSpline(pts, false);
 
         LaneConnector connector = new LaneConnector();
         connector.ConnectorId = _nextConnectorId++;
@@ -602,15 +609,43 @@ public class WorldModel : MonoBehaviour
         connector.FromLaneId = entry.LaneId;
         connector.ToLaneId = exit.LaneId;
         connector.TurnCurve = spline;
-
-        if (signedAngle < -20f)
-            connector.TurnType = TurnType.LeftTurn;
-        else if (signedAngle > 20f)
-            connector.TurnType = TurnType.RightTurn;
-        else
-            connector.TurnType = TurnType.Straight;
+        connector.TurnType = tType;
 
         return connector;
+    }
+
+    public Lane GetLaneByNodeFlow(int fromNodeId, int toNodeId)
+    {
+        foreach (var kvp in GlobalLanes)
+        {
+            Lane lane = kvp.Value;
+            if (lane.CenterSpline == null || lane.CenterSpline.TotalLength < 1f) continue;
+
+            Vector3 startPos = lane.CenterSpline.GetPoint(0f);
+            Vector3 endPos = lane.CenterSpline.GetPoint(1f);
+            RoadNode fromNode = GetNode(fromNodeId);
+            RoadNode toNode = GetNode(toNodeId);
+
+            if (fromNode != null && toNode != null)
+            {
+                if (Vector3.Distance(startPos, fromNode.WorldPos) < 5f &&
+                    Vector3.Distance(endPos, toNode.WorldPos) < 5f)
+                {
+                    return lane;
+                }
+            }
+        }
+        return null;
+    }
+
+    public LaneConnector GetConnector(int fromLaneId, int toLaneId)
+    {
+        foreach (var kvp in GlobalConnectors)
+        {
+            if (kvp.Value.FromLaneId == fromLaneId && kvp.Value.ToLaneId == toLaneId)
+                return kvp.Value;
+        }
+        return null;
     }
 }
 

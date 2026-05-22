@@ -142,14 +142,56 @@ public class PathPlanner : MonoBehaviour
 
         List<Vector3> controlPoints = new List<Vector3>();
 
+        // 起点对齐
         controlPoints.Add(startPos);
-
         if (startForward.HasValue)
             controlPoints.Add(startPos + startForward.Value * 3f);
 
         for (int i = 0; i < discretePath.Count - 1; i++)
         {
-            controlPoints.AddRange(GetCachedPoints(discretePath[i], discretePath[i + 1]));
+            int currId = discretePath[i];
+            int nextId = discretePath[i + 1];
+
+            // 获取正确的偏置车道
+            Lane lane = _worldModel.GetLaneByNodeFlow(currId, nextId);
+            if (lane != null && lane.CenterSpline != null)
+            {
+                // 加入车道的控制点（剔除重合点防止打结）
+                foreach (var pt in lane.CenterSpline.ControlPoints)
+                {
+                    if (controlPoints.Count == 0 || Vector3.Distance(controlPoints[controlPoints.Count - 1], pt) > 0.1f)
+                        controlPoints.Add(pt);
+                }
+
+                // 如果没到终点，插入路口转向器 (Connector) 的控制点
+                if (i < discretePath.Count - 2)
+                {
+                    int nextNextId = discretePath[i + 2];
+                    Lane nextLane = _worldModel.GetLaneByNodeFlow(nextId, nextNextId);
+                    if (nextLane != null)
+                    {
+                        LaneConnector connector = _worldModel.GetConnector(lane.LaneId, nextLane.LaneId);
+                        if (connector != null && connector.TurnCurve != null)
+                        {
+                            foreach (var pt in connector.TurnCurve.ControlPoints)
+                            {
+                                if (Vector3.Distance(controlPoints[controlPoints.Count - 1], pt) > 0.1f)
+                                    controlPoints.Add(pt);
+                            }
+                        }
+                    }
+                }
+            }
+            else
+            {
+                // 异常回退兜底
+                var fallbackPts = GetCachedPoints(currId, nextId);
+                foreach (var pt in fallbackPts)
+                {
+                    if (controlPoints.Count == 0 || Vector3.Distance(controlPoints[controlPoints.Count - 1], pt) > 0.1f)
+                        controlPoints.Add(pt);
+                }
+            }
         }
 
         return new CatmullRomSpline(controlPoints, useCentripetal: false);

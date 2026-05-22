@@ -45,6 +45,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
     private int   lastNodeId               = -1;
     private float rerouteCooldown          = 0f;
     private bool  isFetchingNextPath       = false;
+    private float currentVirtualSpeed       = 0f;
     private Vector3 lastLaneCheckPos       = Vector3.one * -9999f;
 
     // --- 红绿灯停车 ---
@@ -131,6 +132,9 @@ public partial class SimpleAutoDrive : MonoBehaviour
 
         // 4. 统一向下发送指令
         carController.ApplyCommand(cmd);
+
+        // 5. 贴线吸附：纯数学推演位置和朝向，彻底剥离物理引擎
+        ForceSnapToSpline();
     }
 
     // ==========================================
@@ -148,7 +152,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
             if (otherCar != null && otherCar != this.carController)
             {
                 obstacleDetected = true;
-                if (hit.distance < safeDistance * 0.4f && carController.GetSpeed() > 3f)
+                if (hit.distance < safeDistance * 0.4f && Mathf.Abs(currentVirtualSpeed) > 3f)
                 {
                     if (_uiManager != null && !carController.isNPC) _uiManager.ShowTORWarning(1.5f);
                 }
@@ -269,11 +273,11 @@ public partial class SimpleAutoDrive : MonoBehaviour
         if (_diagTimer >= 3f)
         {
             _diagTimer = 0f;
-            Debug.Log($"[AutoDrive] {name} | Cruising | T={currentT:F3} speed={carController.GetSpeed():F1} tgtSpeed={targetSpeed:F1} splineLen={currentSpline.TotalLength:F1}");
+            Debug.Log($"[AutoDrive] {name} | Cruising | T={currentT:F3} speed={Mathf.Abs(currentVirtualSpeed):F1} tgtSpeed={targetSpeed:F1} splineLen={currentSpline.TotalLength:F1}");
         }
 
         // --- Pure Pursuit 转向（算 target T → 算 localTarget → 算 steering）---
-        float currentSpeed  = carController.GetSpeed();
+        float currentSpeed  = Mathf.Abs(currentVirtualSpeed);
         float lookAheadDist = dynamicLookAhead
             ? Mathf.Clamp(Mathf.Abs(currentSpeed) * 0.5f, 3f, 12f)
             : 5f;
@@ -321,14 +325,6 @@ public partial class SimpleAutoDrive : MonoBehaviour
             }
         }
 
-        // --- 接近终点 → 请求新路径 ---
-        if (currentT >= 0.95f && !isFetchingNextPath && rerouteCooldown <= 0f)
-        {
-            rerouteCooldown    = 1f;
-            isFetchingNextPath = true;
-            RequestNewRandomPath();
-        }
-
         return cmd;
     }
 
@@ -346,7 +342,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
         }
 
         // --- Pure Pursuit 转向（与 Cruising 一致）---
-        float currentSpeed  = carController.GetSpeed();
+        float currentSpeed  = Mathf.Abs(currentVirtualSpeed);
         float lookAheadDist = dynamicLookAhead
             ? Mathf.Clamp(Mathf.Abs(currentSpeed) * 0.5f, 3f, 12f)
             : 5f;
@@ -458,6 +454,44 @@ public partial class SimpleAutoDrive : MonoBehaviour
     VehicleCommand HandleCrashed()
     {
         return new VehicleCommand { isBraking = true };
+    }
+
+    // ==========================================
+    // 贴线吸附：纯数学切线推演，防自旋、防抖动
+    // ==========================================
+    private void ForceSnapToSpline()
+    {
+        if (currentSpline == null || currentSpline.TotalLength <= 0) return;
+
+        // 1. 算出精确位置
+        Vector3 exactPos = currentSpline.GetPoint(currentT);
+        if (WorldModel.Instance != null)
+            exactPos.y = WorldModel.Instance.GetUnifiedHeight(exactPos.x, exactPos.z) + 0.15f;
+
+        // 2. 【防自旋】向前方取微小偏移点计算朝向，到底了就向后方取
+        Vector3 nextPos = currentSpline.GetPoint(Mathf.Clamp01(currentT + 0.02f));
+        Vector3 tangent = (nextPos - currentSpline.GetPoint(currentT)).normalized;
+        if (tangent == Vector3.zero)
+        {
+            Vector3 prevPos = currentSpline.GetPoint(Mathf.Clamp01(currentT - 0.02f));
+            tangent = (exactPos - prevPos).normalized;
+        }
+        if (tangent == Vector3.zero) tangent = transform.forward; // 终极兜底
+
+        // 3. 剥离物理引擎
+        Rigidbody rb = GetComponent<Rigidbody>();
+        if (rb != null)
+        {
+            rb.velocity = Vector3.zero;
+            rb.angularVelocity = Vector3.zero;
+            rb.MovePosition(exactPos);
+            rb.MoveRotation(Quaternion.LookRotation(tangent));
+        }
+        else
+        {
+            transform.position = exactPos;
+            transform.rotation = Quaternion.LookRotation(tangent);
+        }
     }
 
     // ==========================================
@@ -597,7 +631,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
             return;
         }
 
-        float speed     = Mathf.Abs(carController.GetSpeed());
+        float speed     = Mathf.Abs(Mathf.Abs(currentVirtualSpeed));
         float lookDist  = Mathf.Clamp(speed * 0.8f, 5f, 15f);
         float steerAng  = carController.currentSteeringAngle;
 
@@ -662,7 +696,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
     {
         if (currentSpline != null && currentT < 1f)
         {
-            float lookAheadDist = Mathf.Clamp(Mathf.Abs(carController.GetSpeed()) * 0.5f, 3f, 12f);
+            float lookAheadDist = Mathf.Clamp(Mathf.Abs(Mathf.Abs(currentVirtualSpeed)) * 0.5f, 3f, 12f);
             float lookT = Mathf.Clamp01(currentT + lookAheadDist / currentSpline.TotalLength);
             Gizmos.color = Color.yellow;
             Gizmos.DrawWireSphere(currentSpline.GetPoint(lookT), 2f);

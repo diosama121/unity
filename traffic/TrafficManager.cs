@@ -13,7 +13,7 @@ public class TrafficManager : MonoBehaviour
     [Range(0f, 1f)]
     public float emergencySpawnRate = 0.1f; // 10%概率
     public int npcCount = 20;
-    public LayerMask npcSpawnBlockMask = ~0; // 防撞检测层（默认全部，可设为只检测 Vehicle 层）
+    public LayerMask npcSpawnBlockMask = 0; // 防撞检测层（默认关闭；上线后可设为 Vehicle 层）
     public float spawnHeightOffset = 0.3f;  // 出生点 Y 轴抬高（避免 CheckSphere 碰地形）
 
     [Header("自适应调度")]
@@ -73,16 +73,8 @@ public class TrafficManager : MonoBehaviour
     {
         if (_hasSpawned) { Debug.Log("[TrafficManager] NPC 已生成，跳过"); return; }
 
-        // 城市模式：有 GlobalLanes → 贴线生成
-        if (WorldModel.Instance != null && WorldModel.Instance.GlobalLanes != null && WorldModel.Instance.GlobalLanes.Count > 0)
-        {
-            SpawnNPCsOnLanes();
-        }
-        // 乡村模式：无车道数据 → 回退到节点+PathPlanner 生成
-        else
-        {
-            SpawnNPCsFromNodes();
-        }
+        // 城市和乡村一视同仁，统一走贴线生成
+        SpawnNPCsOnLanes();
     }
 
     public void SpawnNPCsFromNodes()
