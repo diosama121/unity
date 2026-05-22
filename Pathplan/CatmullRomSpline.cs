@@ -143,6 +143,39 @@ public class CatmullRomSpline
         return (t2 - u) / (t2 - t1) * B1 + (u - t1) / (t2 - t1) * B2;
     }
     
+    /// <summary>
+    /// Catmull-Rom 解析导数（真实切线方向），不再使用 nextPos - pos 近似
+    /// </summary>
+    public Vector3 GetTangent(float t)
+    {
+        if (ControlPoints == null || ControlPoints.Count < 2)
+            return Vector3.forward;
+
+        if (t <= 0f) return (ControlPoints[1] - ControlPoints[0]).normalized;
+        if (t >= 1f) return (ControlPoints[ControlPoints.Count - 1] - ControlPoints[ControlPoints.Count - 2]).normalized;
+
+        float p = t * (ControlPoints.Count - 1);
+        int i = Mathf.FloorToInt(p);
+        float localT = p - i;
+
+        if (i >= ControlPoints.Count - 1)
+            return (ControlPoints[ControlPoints.Count - 1] - ControlPoints[ControlPoints.Count - 2]).normalized;
+
+        Vector3 p0 = ControlPoints[Mathf.Max(i - 1, 0)];
+        Vector3 p1 = ControlPoints[i];
+        Vector3 p2 = ControlPoints[Mathf.Min(i + 1, ControlPoints.Count - 1)];
+        Vector3 p3 = ControlPoints[Mathf.Min(i + 2, ControlPoints.Count - 1)];
+
+        // Catmull-Rom 解析导数公式
+        Vector3 tangent = 0.5f * (
+            (-p0 + p2) +
+            2f * (2f * p0 - 5f * p1 + 4f * p2 - p3) * localT +
+            3f * (-p0 + 3f * p1 - 3f * p2 + p3) * localT * localT
+        );
+
+        return tangent == Vector3.zero ? (p2 - p1).normalized : tangent.normalized;
+    }
+
     public float GetTFromLength(float length)
     {
         if (TotalLength <= 0 || length <= 0) return 0;

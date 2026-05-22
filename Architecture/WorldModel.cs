@@ -427,9 +427,13 @@ public class WorldModel : MonoBehaviour
         return 0f;
     }
 
-    public int FindNearestLane(Vector3 worldPos)
+    // 【核心架构升级】：带方向约束的空间吸附
+    // 传入 forward 向量。只有当车道方向与车头方向夹角小于阈值时，才允许吸附！
+    // 彻底解决 T 字口多条车道/连接器空间重叠时的"随机吸错"问题。
+    public int FindNearestLane(Vector3 worldPos, Vector3 forward = default, float maxRadius = 15f)
     {
-        if (_laneSpatialIndex != null && _laneSamples.Count > 0)
+        // 优先使用 KDTree 快速索引
+        if (_laneSpatialIndex != null && _laneSamples.Count > 0 && forward == default)
         {
             int bestIdx = _laneSpatialIndex.QueryNearest(worldPos);
             if (bestIdx >= 0 && bestIdx < _laneSamples.Count)
@@ -438,14 +442,15 @@ public class WorldModel : MonoBehaviour
             }
         }
 
-        return FindNearestLaneBruteForce(worldPos);
+        return FindNearestLaneBruteForce(worldPos, forward, maxRadius);
     }
 
-    public int FindNearestLaneBruteForce(Vector3 worldPos)
+    public int FindNearestLaneBruteForce(Vector3 worldPos, Vector3 forward = default, float maxRadius = 15f)
     {
         int bestLaneId = -1;
-        float bestDist = 900f;
+        float bestDist = float.MaxValue;
         Vector2 posXZ = new Vector2(worldPos.x, worldPos.z);
+        bool hasForward = (forward != default && forward.sqrMagnitude > 0.1f);
 
         foreach (var kvp in GlobalLanes)
         {
@@ -455,26 +460,36 @@ public class WorldModel : MonoBehaviour
             float totalLen = lane.CenterSpline.TotalLength;
             if (totalLen <= 0) continue;
 
+            // 快速包围盒剔除
             Vector3 startPt = lane.CenterSpline.GetPoint(0);
             Vector3 endPt = lane.CenterSpline.GetPoint(1);
-            float safeExpand = totalLen * 0.5f + 20f;
+            float safeExpand = totalLen * 0.5f + maxRadius + 5f;
             float minX = Mathf.Min(startPt.x, endPt.x) - safeExpand;
             float maxX = Mathf.Max(startPt.x, endPt.x) + safeExpand;
             float minZ = Mathf.Min(startPt.z, endPt.z) - safeExpand;
             float maxZ = Mathf.Max(startPt.z, endPt.z) + safeExpand;
             if (posXZ.x < minX || posXZ.x > maxX || posXZ.y < minZ || posXZ.y > maxZ) continue;
 
-            int samples = Mathf.Max(10, Mathf.CeilToInt(totalLen / 1f));
-            for (int i = 0; i <= samples; i++)
+            // 获取最近点及其切线
+            float t = lane.CenterSpline.GetClosestT(worldPos, 0.5f);
+            Vector3 pt = lane.CenterSpline.GetPoint(t);
+            float sqrD = (posXZ.x - pt.x) * (posXZ.x - pt.x) + (posXZ.y - pt.z) * (posXZ.y - pt.z);
+
+            if (sqrD < bestDist && sqrD < maxRadius * maxRadius)
             {
-                float t = (float)i / samples;
-                Vector3 pt = lane.CenterSpline.GetPoint(t);
-                float sqrD = (posXZ.x - pt.x) * (posXZ.x - pt.x) + (posXZ.y - pt.z) * (posXZ.y - pt.z);
-                if (sqrD < bestDist)
+                // 【绝杀过滤】：如果有传入车头朝向，进行严格的方向匹配！
+                if (hasForward)
                 {
-                    bestDist = sqrD;
-                    bestLaneId = lane.LaneId;
+                    Vector3 laneDir = lane.CenterSpline.GetTangent(t);
+                    float dot = Vector3.Dot(forward.normalized, laneDir.normalized);
+
+                    // dot < 0.5f 意味着夹角大于 60 度（包括反向、垂直）
+                    // 彻底杀掉 T 字口横向车道和对向车道的错误吸附！
+                    if (dot < 0.5f) continue;
                 }
+
+                bestDist = sqrD;
+                bestLaneId = lane.LaneId;
             }
         }
 
@@ -520,51 +535,66 @@ public class WorldModel : MonoBehaviour
         Debug.Log($"[WorldModel] Lane KD-Tree built: {_laneSamples.Count} samples");
     }
 
-   private void GenerateConnectors()
+   // 核心辅助：只认空间距离，不认逻辑图。从真实 spline 端点反推所属路口。
+    private RoadNode GetNearestNodeToPosition(Vector3 pos, float maxRadius = 15f)
+    {
+        RoadNode nearest = null;
+        float minDist = maxRadius;
+
+        foreach (var kvp in _graph)
+        {
+            float dist2D = Vector2.Distance(
+                new Vector2(pos.x, pos.z),
+                new Vector2(kvp.Value.WorldPos.x, kvp.Value.WorldPos.z)
+            );
+
+            if (dist2D < minDist)
+            {
+                minDist = dist2D;
+                nearest = kvp.Value;
+            }
+        }
+        return nearest;
+    }
+
+    private void GenerateConnectors()
     {
         GlobalConnectors.Clear();
         _nextConnectorId = 0;
 
+        // 【核心大手术 1】建立纯净的基于几何的输入/输出字典
+        Dictionary<int, List<Lane>> nodeIncomingLanes = new Dictionary<int, List<Lane>>();
+        Dictionary<int, List<Lane>> nodeOutgoingLanes = new Dictionary<int, List<Lane>>();
+
+        foreach (var kvp in _graph)
+        {
+            nodeIncomingLanes[kvp.Key] = new List<Lane>();
+            nodeOutgoingLanes[kvp.Key] = new List<Lane>();
+        }
+
+        // 【核心大手术 2】遍历 GlobalLanes 中所有真实 spline 实体，反推它们连着哪个路口
+        foreach (var lane in GlobalLanes.Values)
+        {
+            if (lane.CenterSpline == null) continue;
+
+            RoadNode startNode = GetNearestNodeToPosition(lane.CenterSpline.GetPoint(0f), 15f);
+            RoadNode endNode   = GetNearestNodeToPosition(lane.CenterSpline.GetPoint(1f), 15f);
+
+            if (startNode != null)
+                nodeOutgoingLanes[startNode.Id].Add(lane);
+
+            if (endNode != null)
+                nodeIncomingLanes[endNode.Id].Add(lane);
+        }
+
+        // 【核心大手术 3】在纯净拓扑上生成安全连接器
         foreach (var kvp in _graph)
         {
             RoadNode node = kvp.Value;
-            if (node.NeighborIds == null || node.NeighborIds.Count == 0) continue;
 
-            List<Lane> entryLanes = new List<Lane>();
-            List<Lane> exitLanes  = new List<Lane>();
+            List<Lane> entryLanes = nodeIncomingLanes[node.Id];
+            List<Lane> exitLanes  = nodeOutgoingLanes[node.Id];
 
-            // 1. 基于绝对图论拓扑，精准收集当前路口的进出车道，彻底抛弃距离检测！
-            foreach (int nbId in node.NeighborIds)
-            {
-                int minId = Mathf.Min(node.Id, nbId);
-                int maxId = Mathf.Max(node.Id, nbId);
-                int roadId = minId * 10000 + maxId;
-
-                // 找到挂载在这条路上的所有车道
-                var lanesOnRoad = GlobalLanes.Values.Where(l => l.RoadId == roadId).ToList();
-
-                foreach (var lane in lanesOnRoad)
-                {
-                    // 在生成时：Forward 总是从 minId 节点走向 maxId 节点
-                    //           Reverse 总是从 maxId 节点走向 minId 节点
-                    bool isForward = (lane.Direction == LaneDirection.Forward);
-                    
-                    if (node.Id == maxId)
-                    {
-                        // 如果当前路口是 maxId：Forward 从远方开向我(驶入)，Reverse 从我开向远方(驶出)
-                        if (isForward) entryLanes.Add(lane);
-                        else exitLanes.Add(lane);
-                    }
-                    else if (node.Id == minId)
-                    {
-                        // 如果当前路口是 minId：Reverse 从远方开向我(驶入)，Forward 从我开向远方(驶出)
-                        if (!isForward) entryLanes.Add(lane);
-                        else exitLanes.Add(lane);
-                    }
-                }
-            }
-
-            // 2. 正常路口转向配对
             foreach (Lane entry in entryLanes)
             {
                 if (entry.NextConnectorIds == null)
@@ -572,9 +602,14 @@ public class WorldModel : MonoBehaviour
 
                 foreach (Lane exit in exitLanes)
                 {
-                    // 排除同一条路的掉头（同一条 RoadId 说明是原路返回）
-                    // 正常的十字路口不应该直接掉头，除非是死胡同
                     if (entry.RoadId == exit.RoadId) continue;
+
+                    // ==== 角度合法性过滤：双保险 ====
+                    Vector3 inDir  = entry.CenterSpline.GetTangent(1f);
+                    Vector3 outDir = exit.CenterSpline.GetTangent(0f);
+                    float turnAngle = Vector3.Angle(inDir, outDir);
+                    if (turnAngle < 25f || turnAngle > 170f)
+                        continue;
 
                     LaneConnector connector = BuildConnector(entry, exit, node);
                     if (connector != null)
@@ -584,8 +619,7 @@ public class WorldModel : MonoBehaviour
                     }
                 }
 
-                // 3. 死路兜底：如果这个车道进入路口后没有任何出口（比如单条边的尽头 Node）
-                // 此时强制生成掉头连接器 (U-Turn)，防止车开出地图
+                // 死路兜底
                 if (entry.NextConnectorIds.Count == 0)
                 {
                     LaneConnector uTurn = BuildUTurnConnector(entry, node);
@@ -598,26 +632,30 @@ public class WorldModel : MonoBehaviour
             }
         }
 
-        Debug.Log($"[WorldModel] 成功生成 {GlobalConnectors.Count} 条路口连接线 (完全基于图拓扑精确匹配)");
+        Debug.Log($"[WorldModel] 成功生成 {GlobalConnectors.Count} 条路口连接线 (完全基于真实几何反推，幽灵边已清除)");
     }
 
     private LaneConnector BuildConnector(Lane entry, Lane exit, RoadNode node)
     {
-        float entryLen = entry.CenterSpline.TotalLength;
-        float exitLen = exit.CenterSpline.TotalLength;
+        // ==== 从路口边界开始，而非车道终点（终点已深入路口中心）====
+        // 防止连接器极短导致 Hermite 控制向量爆炸，产生小半径自旋曲线
+        const float setbackDist = 2.5f; // 从车道终点向后退的距离（米）
+        float entryLen = Mathf.Max(entry.CenterSpline.TotalLength, 1f);
+        float exitLen  = Mathf.Max(exit.CenterSpline.TotalLength,  1f);
+        float entrySetback = Mathf.Min(0.3f, setbackDist / entryLen);
+        float exitSetback  = Mathf.Min(0.3f, setbackDist / exitLen);
 
-        // 只保留路口边界点
-        Vector3 p1 = entry.CenterSpline.GetPoint(1f);
-        Vector3 p3 = exit.CenterSpline.GetPoint(0f);
+        float entryT = 1f - entrySetback;
+        float exitT  = exitSetback;
 
-        // 【修复切线稳定性】：safeLen 避免微小长度导致切线爆炸
-        float entrySafeLen = Mathf.Max(entryLen, 0.1f);
-        float exitSafeLen  = Mathf.Max(exitLen, 0.1f);
-        Vector3 entryDir = (p1 - entry.CenterSpline.GetPoint(1f - 2f / entrySafeLen)).normalized;
-        Vector3 exitDir  = (exit.CenterSpline.GetPoint(2f / exitSafeLen) - p3).normalized;
+        Vector3 p1 = entry.CenterSpline.GetPoint(entryT);
+        Vector3 p3 = exit.CenterSpline.GetPoint(exitT);
+
+        // 切线也取自退缩点，保证方向一致
+        Vector3 entryDir = entry.CenterSpline.GetTangent(entryT);
+        Vector3 exitDir  = exit.CenterSpline.GetTangent(exitT);
 
         float signedAngle = Vector3.SignedAngle(entryDir, exitDir, Vector3.up);
-
         TurnType tType = TurnType.Straight;
         if (signedAngle < -20f) tType = TurnType.LeftTurn;
         else if (signedAngle > 20f) tType = TurnType.RightTurn;
@@ -627,12 +665,15 @@ public class WorldModel : MonoBehaviour
         if (tType == TurnType.LeftTurn) mag = dist * 0.6f;
         if (tType == TurnType.RightTurn) mag = dist * 0.25f;
 
-        // 埃尔米特插值生成极其平滑的中间控制点
-        Vector3 mid1 = SplineMath.EvaluateHermite(0.33f, p1, entryDir * mag, p3, exitDir * mag);
-        Vector3 mid2 = SplineMath.EvaluateHermite(0.66f, p1, entryDir * mag, p3, exitDir * mag);
+        // 【修复2】：Hermite 密集采样！强制给 CatmullRom 塞入大量点，锁定轨迹绝对平滑不突变
+        int samples = Mathf.Max(10, Mathf.CeilToInt(dist / 1.5f));
+        List<Vector3> pts = new List<Vector3>();
+        for (int i = 0; i <= samples; i++)
+        {
+            float t = i / (float)samples;
+            pts.Add(SplineMath.EvaluateHermite(t, p1, entryDir * mag, p3, exitDir * mag));
+        }
 
-        // 【核心修复】：只用 4 个点构建，彻底消除曲线过冲绕圈现象
-        List<Vector3> pts = new List<Vector3>() { p1, mid1, mid2, p3 };
         CatmullRomSpline spline = new CatmullRomSpline(pts, false);
 
         LaneConnector connector = new LaneConnector();

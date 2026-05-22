@@ -20,7 +20,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
     public bool  dynamicLookAhead   = true;
     public float lookAheadMin       = 3f;
     public float lookAheadMax       = 12f;
-
+ public float prob       = 12f;
     [Header("传感器设置")]
     public float sensorForwardOffset = 4f;
     public LayerMask obstacleLayers;     // Vehicle + Pedestrian
@@ -30,25 +30,34 @@ public partial class SimpleAutoDrive : MonoBehaviour
     public bool isPlayerControlled = false; 
     public LongitudinalState longState = LongitudinalState.FreeDrive;
  public bool reverseComplete = false;
-    [Header("调试信息")]
-    public float currentT = 0f;
+    public float currentT
+    {
+        get => (currentEdgeLength > 0f) ? currentDistOnEdge / currentEdgeLength : 0f;
+        set => currentDistOnEdge = value * currentEdgeLength;
+    }
 
     // ========== 旧字段兼容（外部读写映射） ==========
-    public CatmullRomSpline currentSpline
-    {
-        get => currentCurve;
-        set { currentCurve = value; currentEdgeLength = (value != null) ? value.TotalLength : 0f; }
-    }
+    private CatmullRomSpline _backingSpline; // 仅用于兼容旧接口
+     public CatmullRomSpline currentSpline
+    { 
+        get => _backingSpline;
+        set { _backingSpline = value; currentTrajectory = (value != null) ? new BakedTrajectory(value) : null; currentEdgeLength = (currentTrajectory != null) ? currentTrajectory.TotalLength : 0f; }
+    } 
     public int currentLaneId
     {
         get
         {
+            if (_isTrajectoryLocked && currentEdgeIndex < pathEdgeIds.Count)
+            {
+                int id = pathEdgeIds[currentEdgeIndex];
+                return (id > 0) ? id : -1;
+            }
             if (currentEdgeIndex < pathEdgeIds.Count)
             {
                 int id = pathEdgeIds[currentEdgeIndex];
                 return (id > 0) ? id : -1;
             }
-            return (worldModel != null) ? worldModel.FindNearestLane(transform.position) : -1;
+            return (worldModel != null) ? worldModel.FindNearestLane(transform.position, transform.forward) : -1;
         }
         set
         {
@@ -95,8 +104,12 @@ public partial class SimpleAutoDrive : MonoBehaviour
     [HideInInspector] public List<int> pathEdgeIds = new List<int>(); // +ve = LaneId, -ve = -ConnectorId
     private int currentEdgeIndex = 0;
 
-    // ========== 曲线运动 ==========
-    private CatmullRomSpline currentCurve;
+    // 【轨迹锁死】：一旦 StartPath 被调用，禁止运行时任何重吸附/重寻路
+    private bool _isTrajectoryLocked = false;
+
+    // ========== 曲线运动 (离散烘焙架构：Polyline 替代连续曲线) ==========
+    private BakedTrajectory currentTrajectory;
+    public float currentDistOnEdge = 0f;     // 绝对物理距离(米)，替代旧的 currentT
     private float currentEdgeLength;
     public float currentSpeed;               // m/s, 正=前进, 负=倒车
 
@@ -127,6 +140,14 @@ public partial class SimpleAutoDrive : MonoBehaviour
         if (pathPlanner == null) pathPlanner = FindObjectOfType<PathPlanner>();
         _uiManager = FindObjectOfType<MasterUIManager>();
 
+        // 【修复3】：剥离一切刚体动力学，剥夺 Unity Solver 的控制权
+        Rigidbody rb = GetComponent<Rigidbody>();
+        if (rb != null)
+        {
+            rb.isKinematic = true;
+            rb.useGravity = false;
+        }
+
         LineRenderer lr = GetComponent<LineRenderer>();
         if (lr == null) lr = gameObject.AddComponent<LineRenderer>();
         trajectoryLine = lr;
@@ -145,15 +166,15 @@ public partial class SimpleAutoDrive : MonoBehaviour
         trajectoryLine.SetPositions(trajectoryPoints);
 
         // 防止 TrafficManager 的寻路记忆被清空
-        if (pathEdgeIds.Count > 0 && currentCurve == null)
+        if (pathEdgeIds.Count > 0 && currentTrajectory == null)
             StartPath();
-        else if (pathEdgeIds.Count == 0 && currentCurve == null)
+        else if (pathEdgeIds.Count == 0 && currentTrajectory == null)
             RequestNewPath(); 
     }
 
     float SampleFrontDistance(float maxDist, LayerMask mask)
     {
-        if (currentCurve == null || currentEdgeLength <= 0) return maxDist;
+        if (currentTrajectory == null || currentEdgeLength <= 0) return maxDist;
         if (mask.value == 0) return maxDist;
 
         float step = 0.5f;
@@ -162,10 +183,10 @@ public partial class SimpleAutoDrive : MonoBehaviour
         
         for (float d = startD; d < maxDist; d += step)
         {
-            float t = currentT + d / currentEdgeLength;
-            if (t > 1.0f) break;
+            float distOnEdge = currentDistOnEdge + d;
+            if (distOnEdge > currentEdgeLength) break;
             
-            Vector3 point = currentCurve.GetPoint(t);
+            Vector3 point = currentTrajectory.GetPointAtDistance(distOnEdge);
             Collider[] hits = Physics.OverlapSphere(point, 1.0f, mask);
             
             foreach (var hit in hits)
@@ -198,7 +219,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
             return;
         }
 
-        if (currentCurve == null || currentEdgeLength <= 0) return;
+        if (currentTrajectory == null || currentEdgeLength <= 0) return;
 
         UpdateSensors();
         (float targetSpd, bool brakeHard) = GetLongitudinalCommand();
@@ -209,19 +230,16 @@ public partial class SimpleAutoDrive : MonoBehaviour
         float moveDist = currentSpeed * Time.deltaTime;
         AdvanceOnEdge(moveDist);
 
-        // ==== 保留你的路线吸附核心 ====
+        // ==== 焊死在离散折线上的核心吸附 ====
         SnapToCurve();
 
-        // 仅为了让车轮能够有转向动画，随便算个切线
-        Vector3 targetPos = currentCurve.GetPoint(Mathf.Clamp01(currentT + 0.05f));
-        Vector3 localTarget = transform.InverseTransformPoint(targetPos);
-        float steering = Mathf.Clamp(localTarget.x / 3f, -1f, 1f);
-        
-        // 下发命令仅仅是为了视觉表现（车轮转动/尾灯），物理位移已被 SnapToCurve 彻底接管
+        if (currentTrajectory == null) return; // AdvanceOnEdge/RequestNewPath 可能已将轨迹清空
+
+        // 下发命令仅用于视觉表现（车轮转动/尾灯），物理位移已被 SnapToCurve 彻底接管
         carController.ApplyCommand(new VehicleCommand
         {
             throttle  = currentSpeed / Mathf.Max(carController.maxSpeed, 0.1f),
-            steering  = steering,
+            steering  = 0f,
             isBraking = brakeHard
         });
     }
@@ -237,37 +255,48 @@ public partial class SimpleAutoDrive : MonoBehaviour
 
     void StartPath()
     {
+        if (pathEdgeIds == null || pathEdgeIds.Count == 0) return;
+
         currentEdgeIndex = 0;
-        currentT = 0f;
+        LoadCurrentEdge();
+        currentDistOnEdge = 0f;
         currentSpeed = 0f;
         longState = LongitudinalState.FreeDrive;
         stoppedTimer = 0f;
         reverseTimer = 0f;
-        LoadCurrentEdge();
+
+        // 锁死！一旦上路，断绝一切外部重定位干扰
+        _isTrajectoryLocked = true;
     }
 
     void LoadCurrentEdge()
     {
         if (currentEdgeIndex >= pathEdgeIds.Count)
         {
-            currentCurve = null;
+            currentTrajectory = null;
             currentEdgeLength = 0;
             return;
         }
+        
         int id = pathEdgeIds[currentEdgeIndex];
+        CatmullRomSpline splineToBake = null;
 
-        if (id > 0) // 车道
+        if (id > 0 && worldModel.GlobalLanes.TryGetValue(id, out Lane lane))
+            splineToBake = lane.CenterSpline;
+        else if (id < 0 && worldModel.GlobalConnectors.TryGetValue(-id - 1, out LaneConnector conn))
+            splineToBake = conn.TurnCurve;
+
+        if (splineToBake != null)
         {
-            if (worldModel != null && worldModel.GlobalLanes.TryGetValue(id, out Lane lane))
-                currentCurve = lane.CenterSpline;
+            // 瞬间烘焙！每 0.5 米采样一个点，彻底消除参数畸变
+            currentTrajectory = new BakedTrajectory(splineToBake, 0.5f);
+            currentEdgeLength = currentTrajectory.TotalLength;
         }
-        else // 连接器（id为负值，-(ConnectorId+1) 编码以避免 -0 歧义）
+        else
         {
-            int connId = -id - 1;
-            if (worldModel != null && worldModel.GlobalConnectors.TryGetValue(connId, out LaneConnector conn))
-                currentCurve = conn.TurnCurve;
+            currentTrajectory = null;
+            currentEdgeLength = 0;
         }
-        currentEdgeLength = (currentCurve != null) ? currentCurve.TotalLength : 0f;
     }
 
     // ==========================================
@@ -278,9 +307,9 @@ public partial class SimpleAutoDrive : MonoBehaviour
         if (currentEdgeLength <= 0) return;
         
         float remainingDist = distance;
-        while (remainingDist > 0 && currentCurve != null)
+        while (remainingDist > 0 && currentTrajectory != null)
         {
-            float distToEdgeEnd = (1.0f - currentT) * currentEdgeLength;
+            float distToEdgeEnd = currentEdgeLength - currentDistOnEdge;
             
             if (remainingDist >= distToEdgeEnd)
             {
@@ -290,56 +319,44 @@ public partial class SimpleAutoDrive : MonoBehaviour
                 {
                     currentEdgeIndex++;
                     LoadCurrentEdge();
-                    currentT = 0f; 
+                    currentDistOnEdge = 0f; 
                 }
                 else
                 {
-                    currentT = 1.0f;
+                    currentDistOnEdge = currentEdgeLength;
                     currentSpeed = 0f;
-                    RequestNewPath();
+
+                    // 先尝试纯拓扑顺延（盲接 NextConnectorIds），失败才走全图寻路
+                    if (!ExtendPathSeamlessly())
+                        RequestNewPath();
                     break;
                 }
             }
             else
             {
-                currentT += remainingDist / currentEdgeLength;
+                currentDistOnEdge += remainingDist;
                 remainingDist = 0f;
             }
         }
-        currentT = Mathf.Clamp01(currentT);
+        currentDistOnEdge = Mathf.Clamp(currentDistOnEdge, 0f, currentEdgeLength);
     }
  void SnapToCurve()
     {
-        if (currentCurve == null) return;
-        Vector3 pos = currentCurve.GetPoint(currentT);
+        if (currentTrajectory == null) return;
+        
+        // 1. 获取基于绝对距离的空间坐标
+        Vector3 pos = currentTrajectory.GetPointAtDistance(currentDistOnEdge);
         if (worldModel != null)
             pos.y = worldModel.GetUnifiedHeight(pos.x, pos.z) + 0.15f;
 
-        // 【解决转圈核心】：强制钳制 nextT 不超过 1.0，防止到了路口尽头切线倒转
-        float nextT = Mathf.Min(1.0f, currentT + 0.02f);
-        Vector3 nextPos = currentCurve.GetPoint(nextT);
-        Vector3 tangent = (nextPos - pos).normalized;
-        
-        if (tangent == Vector3.zero)
-        {
-            float prevT = Mathf.Max(0.0f, currentT - 0.02f);
-            tangent = (pos - currentCurve.GetPoint(prevT)).normalized;
-        }
-        if (tangent == Vector3.zero) tangent = transform.forward;
+        // 2. 获取基于绝对距离的折线切线 (永远是两点相减，永不翻转)
+        Vector3 tangent = currentTrajectory.GetTangentAtDistance(currentDistOnEdge);
+        if (tangent.sqrMagnitude < 0.0001f) tangent = transform.forward;
 
-        Rigidbody rb = GetComponent<Rigidbody>();
-        if (rb != null)
-        {
-            // 给刚体直接赋速度，完美覆盖 SimpleCarController 的内部物理摩擦力干扰
-            rb.velocity = tangent * currentSpeed; 
-            rb.angularVelocity = Vector3.zero;
-            rb.MovePosition(pos);
-            rb.MoveRotation(Quaternion.LookRotation(tangent));
-        }
-        else
-        {
-            transform.SetPositionAndRotation(pos, Quaternion.LookRotation(tangent));
-        }
+        // 3. 旋转直接对齐切线 —— 折线方向是确定性的，Slerp 滞后反而导致弯道抽搐
+        Quaternion targetRot = Quaternion.LookRotation(tangent);
+
+        transform.SetPositionAndRotation(pos, targetRot);
     }
 
     // ==========================================
@@ -425,20 +442,52 @@ public partial class SimpleAutoDrive : MonoBehaviour
         RoadNode nearestNode = worldModel.GetNearestNode(transform.position);
         if (nearestNode == null) return false;
         if (nearestNode.Type != NodeType.Intersection && nearestNode.Type != NodeType.Merge) return false;
-        if (currentEdgeLength * (1f - currentT) > 15f) return false; // 离路口还远
+        if (currentEdgeLength - currentDistOnEdge > 15f) return false; // 离路口还远
 
         IntersectionState state = worldModel.GetIntersectionState(nearestNode.Id);
         return (state == IntersectionState.RedLight || state == IntersectionState.YellowLight);
     }
 
     // ==========================================
-    // 自动路径规划（随机远端节点 → A* 边序列）
+    // 纯拓扑路径顺延：完全不看空间距离，图论说连着哪就无脑接哪
+    // ==========================================
+    bool ExtendPathSeamlessly()
+    {
+        int lastId = pathEdgeIds[pathEdgeIds.Count - 1];
+        if (lastId > 0 && worldModel.GlobalLanes.TryGetValue(lastId, out Lane lane))
+        {
+            if (lane.NextConnectorIds != null && lane.NextConnectorIds.Count > 0)
+            {
+                int randConn = lane.NextConnectorIds[Random.Range(0, lane.NextConnectorIds.Count)];
+                if (worldModel.GlobalConnectors.TryGetValue(randConn, out LaneConnector conn))
+                {
+                    pathEdgeIds.Add(-conn.ConnectorId - 1);  // connector 编码为负数
+                    pathEdgeIds.Add(conn.ToLaneId);
+                    currentEdgeIndex++;
+                    LoadCurrentEdge();
+                    currentDistOnEdge = 0f;
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // ==========================================
+    // 自动路径规划（仅在初始或彻底迷路时调用）
     // ==========================================
    void RequestNewPath()
     {
+        // 【最强防御】：轨迹锁死状态下，绝对禁止重新寻路！
+        if (_isTrajectoryLocked && currentTrajectory != null) return;
+
         if (worldModel == null || pathPlanner == null) return;
 
-        // 保持原有的 A* 循环寻路逻辑
+        // 只在刚出生或彻底停下时，带车头朝向来找初始车道
+        // 杜绝吸附到脚下反向/垂直的错误车道
+        int startLaneId = worldModel.FindNearestLane(transform.position, transform.forward);
+        if (startLaneId < 0) return;
+
         for (int i = 0; i < 15; i++)
         {
             int randId = Random.Range(0, worldModel.NodeCount);
@@ -446,9 +495,8 @@ public partial class SimpleAutoDrive : MonoBehaviour
             if (targetNode == null || targetNode.NeighborIds == null || targetNode.NeighborIds.Count <= 1) continue;
             if (Vector3.Distance(transform.position, targetNode.WorldPos) < 30f) continue;
 
-            int startLaneId = worldModel.FindNearestLane(transform.position);
-            int endLaneId   = worldModel.FindNearestLane(targetNode.WorldPos);
-            if (startLaneId < 0 || endLaneId < 0 || startLaneId == endLaneId) continue;
+            int endLaneId = worldModel.FindNearestLane(targetNode.WorldPos);
+            if (endLaneId < 0 || startLaneId == endLaneId) continue;
 
             List<int> edgePath = pathPlanner.PlanEdgePath(startLaneId, endLaneId);
             if (edgePath != null && edgePath.Count > 0)
@@ -458,9 +506,10 @@ public partial class SimpleAutoDrive : MonoBehaviour
             }
         }
 
-        if (currentCurve != null && currentEdgeLength > 0)
+        // 兜底：沿当前轨迹所在车道走
+        if (currentTrajectory != null && currentEdgeLength > 0)
         {
-            int laneId = worldModel.FindNearestLane(transform.position);
+            int laneId = worldModel.FindNearestLane(transform.position, transform.forward);
             if (laneId >= 0)
             {
                 pathEdgeIds = new List<int> { laneId };
@@ -469,10 +518,11 @@ public partial class SimpleAutoDrive : MonoBehaviour
             }
         }
 
-        // 不再暴力清零 targetSpeed 导致引擎半身不遂，只清空当前曲线自然停车
-        currentCurve = null;
-        currentSpeed = 0f; 
-        Debug.LogWarning($"[SimpleAutoDrive] {name} 无法规划任何路径，等待中...");
+        // 彻底找不到路，解开锁等待下次唤醒
+        currentTrajectory = null;
+        currentSpeed = 0f;
+        _isTrajectoryLocked = false;
+        Debug.LogWarning($"[SimpleAutoDrive] {name} 无法规划路径，原地待命...");
     }
     // ==========================================
     // 公共接口（兼容旧调用）
@@ -486,7 +536,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
     public void SetDestination(Vector3 destination)
     {
         if (worldModel == null || pathPlanner == null) return;
-        int startLaneId = worldModel.FindNearestLane(transform.position);
+        int startLaneId = worldModel.FindNearestLane(transform.position, transform.forward);
         int endLaneId   = worldModel.FindNearestLane(destination);
         if (startLaneId < 0 || endLaneId < 0) return;
 
@@ -503,7 +553,7 @@ public partial class SimpleAutoDrive : MonoBehaviour
         stoppedTimer = 0f;
         reverseTimer = 0f;
         currentSpeed = 0f;
-        currentT = 0f;
+        currentDistOnEdge = 0f;
         currentEdgeIndex = 0;
         LoadCurrentEdge();
     }
@@ -603,13 +653,6 @@ public partial class SimpleAutoDrive : MonoBehaviour
 
     void OnDrawGizmos()
     {
-        if (currentCurve != null && currentT < 1f)
-        {
-            float lookAheadDist = Mathf.Clamp(Mathf.Abs(currentSpeed) * 0.5f, 3f, 12f);
-            float lookT = Mathf.Clamp01(currentT + lookAheadDist / currentEdgeLength);
-            Gizmos.color = Color.yellow;
-            Gizmos.DrawWireSphere(currentCurve.GetPoint(lookT), 2f);
-        }
         Gizmos.color = Color.red;
         Gizmos.DrawWireSphere(transform.position, safeDistance);
 
@@ -621,5 +664,69 @@ public partial class SimpleAutoDrive : MonoBehaviour
                 Gizmos.DrawWireCube(hit.point, new Vector3(2.2f, 1.5f, 4.5f));
             }
         }
+    }
+}
+
+// ==========================================
+// 核心升维：将连续数学曲线烘焙为纯物理距离的离散折线
+// ==========================================
+public class BakedTrajectory
+{
+    public List<Vector3> Points = new List<Vector3>();
+    public float TotalLength;
+    private List<float> accumulatedDistances = new List<float>();
+
+    // 烘焙过程：将 Spline 切割成密集的真实物理点
+    public BakedTrajectory(CatmullRomSpline spline, float stepDistance = 0.5f)
+    {
+        TotalLength = 0f;
+        accumulatedDistances.Add(0f);
+        Points.Add(spline.GetPoint(0f));
+
+        int samples = Mathf.Max(10, Mathf.CeilToInt(spline.TotalLength / stepDistance));
+        for (int i = 1; i <= samples; i++)
+        {
+            float t = i / (float)samples;
+            Vector3 pt = spline.GetPoint(t);
+            float dist = Vector3.Distance(Points[i - 1], pt);
+            TotalLength += dist;
+            accumulatedDistances.Add(TotalLength);
+            Points.Add(pt);
+        }
+    }
+
+    // 根据真实的物理前进距离（米），获取绝对精确的坐标
+    public Vector3 GetPointAtDistance(float dist)
+    {
+        if (dist <= 0) return Points[0];
+        if (dist >= TotalLength) return Points[Points.Count - 1];
+
+        for (int i = 0; i < accumulatedDistances.Count - 1; i++)
+        {
+            if (dist >= accumulatedDistances[i] && dist <= accumulatedDistances[i + 1])
+            {
+                float segmentLen = accumulatedDistances[i + 1] - accumulatedDistances[i];
+                if (segmentLen == 0) return Points[i];
+                float t = (dist - accumulatedDistances[i]) / segmentLen;
+                return Vector3.Lerp(Points[i], Points[i + 1], t);
+            }
+        }
+        return Points[Points.Count - 1];
+    }
+
+    // 根据真实的物理距离，获取折线方向（完全避免了导数扭曲）
+    public Vector3 GetTangentAtDistance(float dist)
+    {
+        if (dist <= 0) return (Points[1] - Points[0]).normalized;
+        if (dist >= TotalLength) return (Points[Points.Count - 1] - Points[Points.Count - 2]).normalized;
+
+        for (int i = 0; i < accumulatedDistances.Count - 1; i++)
+        {
+            if (dist >= accumulatedDistances[i] && dist <= accumulatedDistances[i + 1])
+            {
+                return (Points[i + 1] - Points[i]).normalized;
+            }
+        }
+        return (Points[Points.Count - 1] - Points[Points.Count - 2]).normalized;
     }
 }

@@ -71,6 +71,14 @@ public partial class SimpleCarController : MonoBehaviour
     // ==========================================
     void Update()
     {
+        // NPC 车辆位移完全由 SimpleAutoDrive.SnapToCurve 接管，此处不再移动/旋转，
+        // 否则两套位移系统会在转弯时互相打架导致抽搐。
+        if (isNPC)
+        {
+            ApplyGroundAlignment();
+            return;
+        }
+
         // 1. 位移
         float moveStep = currentSpeed * Time.deltaTime;
         transform.position += transform.forward * moveStep;
