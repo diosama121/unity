@@ -1076,7 +1076,7 @@ public class SimpleAutoDrive : MonoBehaviour
 
         float y = 35f;
         float lineH = 22f;
-        float x0 = 20f, x1 = 220f;
+        float x0 = 20f;
 
         // ---- 轨迹状态 ----
         bool trajOk = (currentTrajectory != null && currentEdgeLength > 0.001f);

@@ -58,7 +58,7 @@ public class ROS2BridgeV2 : MonoBehaviour
     private float[] _cachedLidarPoints = new float[0];
     private readonly object _lidarLock = new object();
 
-    // ===== ROS2回传的全局状态（来自global_state消息） =====
+    // ===== ROS2回传的全局状态（来自global_state消息） ===== 
     private string _rosAebState = "IDLE";
     private float _rosTTC = 0f;
     private float _rosMinDist = 0f;
