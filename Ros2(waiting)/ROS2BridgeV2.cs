@@ -607,5 +607,21 @@ public class ROS2BridgeV2 : MonoBehaviour
             : new Color(1f, 0.4f, 0.3f);
         Rect statusRect = new Rect(Screen.width - 360f, 8f, 350f, 22f);
         GUI.Label(statusRect, statusLine, statusStyle);
+
+        // --- ROS2回传数据（TTC / 速度 / AEB状态） ---
+        if (isConnected)
+        {
+            string aebColor = _rosAebState == "ACTIVE" ? "FF4444" : "88FF88";
+            string ttcColor = _rosTTC < 2f ? "FF4444" : (_rosTTC < 5f ? "FFAA00" : "88FF88");
+            string infoLine = $"TTC: <color=#{ttcColor}>{_rosTTC:F2}s</color>  |  距离: {_rosMinDist:F1}m  |  速度: {_rosSpeedKmh:F1}km/h  |  AEB: <color=#{aebColor}>{_rosAebState}</color>";
+
+            GUIStyle infoStyle = new GUIStyle(GUI.skin.label);
+            infoStyle.fontSize = 12;
+            infoStyle.alignment = TextAnchor.UpperRight;
+            infoStyle.richText = true;
+            infoStyle.normal.textColor = new Color(0.7f, 0.9f, 0.7f);
+            Rect infoRect = new Rect(Screen.width - 550f, 28f, 540f, 20f);
+            GUI.Label(infoRect, infoLine, infoStyle);
+        }
     }
 }

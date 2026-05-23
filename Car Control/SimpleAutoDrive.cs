@@ -25,6 +25,11 @@ public class SimpleAutoDrive : MonoBehaviour
     public LayerMask obstacleLayers;     // Vehicle + Pedestrian
     public LayerMask pedestrianLayer;    // Pedestrian only
 
+    [Header("手动驾驶参数（玩具车模式）")]
+    public float manualDriveSpeed = 15f;
+    public float manualTurnRate = 120f;  // 度/秒
+    public float manualAccel = 25f;      // m/s²
+
     [Header("状态机")]
     public bool isPlayerControlled = false; 
     public LongitudinalState longState = LongitudinalState.FreeDrive;
@@ -113,9 +118,9 @@ public class SimpleAutoDrive : MonoBehaviour
     public float normalDeceleration = 5f;     // 普通减速
 
     // ========== 传感器 ==========
-    private float frontDistance;
-    private float frontSpeed;
-    private bool  redLightAhead;
+    public float frontDistance { get; private set; }
+    public float frontSpeed { get; private set; }
+    public bool  redLightAhead { get; private set; }
     private bool  pedestrianDanger;
     private float stoppedTimer;
 
@@ -126,6 +131,10 @@ public class SimpleAutoDrive : MonoBehaviour
     // ========== 僵死恢复 ==========
     private float _recoveryTimer = 0f;
     private const float recoveryInterval = 2f;    // 轨迹为空后每隔2秒重试一次
+
+    // ========== 手动模式状态 ==========
+    private bool _wasPlayerControlled = false;
+    private float _manualSpeed = 0f;
 
     // ========== 死循环检测（同位置反复卡死） ==========
     private int _stuckCount = 0;
@@ -144,9 +153,11 @@ public class SimpleAutoDrive : MonoBehaviour
     [Header("红绿灯交规")]
     public float redLightStopDistance = 18f;     // 距停止线多远开始减速
     public float stopLinePassedThreshold = -2f;  // 超过停止线2m后不再强制停车(防路口内锁死)
-    private Vector3 _nearestStopLinePos;
-    private float _distToStopLine;
-    private bool _hasStopLineAhead;
+    
+    // ★ 公开给 SpecialSituations 读取
+    public float distToStopLine { get; private set; }
+    public bool  hasStopLineAhead { get; private set; }
+    public Vector3 nearestStopLinePos { get; private set; }
 
     private WorldModel worldModel => WorldModel.Instance;
 
@@ -237,15 +248,51 @@ public class SimpleAutoDrive : MonoBehaviour
 
         if (isPlayerControlled)
         {
-            // 玩家控制时交还物理权
-            VehicleCommand cmd = new VehicleCommand
+            // === 进入手动模式 ===
+            if (!_wasPlayerControlled)
             {
-                throttle  = Input.GetAxis("Vertical"),
-                steering  = Input.GetAxis("Horizontal"),
-                isBraking = Input.GetKey(KeyCode.Space)
-            };
-            carController.ApplyCommand(cmd);
+                _wasPlayerControlled = true;
+                _manualSpeed = carController.currentSpeed; // 继承当前速度
+                carController.manualControl = true;
+                Debug.Log($"[SimpleAutoDrive] {name} → 手动驾驶模式");
+            }
+
+            // === 自由移动（玩具车） ===
+            float steerInput = Input.GetAxis("Horizontal");
+            float throttleInput = Input.GetAxis("Vertical");
+            bool braking = Input.GetKey(KeyCode.Space);
+
+            if (braking)
+            {
+                _manualSpeed = Mathf.MoveTowards(_manualSpeed, 0f, manualAccel * 2f * Time.deltaTime);
+            }
+            else
+            {
+                float targetSpeed = throttleInput * manualDriveSpeed;
+                _manualSpeed = Mathf.MoveTowards(_manualSpeed, targetSpeed, manualAccel * Time.deltaTime);
+            }
+
+            // 位移
+            transform.position += transform.forward * (_manualSpeed * Time.deltaTime);
+
+            // 转向（速度无关！）
+            float turnAmount = steerInput * manualTurnRate * Time.deltaTime;
+            transform.Rotate(0f, turnAmount, 0f);
+
+            // 同步到 SimpleCarController（供外部读取用）
+            carController.currentSpeed = _manualSpeed;
+            carController.currentSteeringAngle = steerInput * carController.maxSteeringAngle;
+
+            // 贴地由 SimpleCarController.Update(manualControl=true) 完成
             return;
+        }
+        else if (_wasPlayerControlled)
+        {
+            // === 手动→自动：回归车流 ===
+            _wasPlayerControlled = false;
+            _manualSpeed = 0f;
+            carController.manualControl = false;
+            MergeBackToTraffic();
         }
 
         if (currentTrajectory == null || currentEdgeLength <= 0)
@@ -562,8 +609,8 @@ public class SimpleAutoDrive : MonoBehaviour
     void UpdateSensors()
     {
         frontSpeed = 0f;
-        _hasStopLineAhead = false;
-        _distToStopLine = 999f;
+        hasStopLineAhead = false;
+        distToStopLine = 999f;
 
         // ★ 统一红绿灯检测（都用 WorldModel 相位状态 + 停止线）
         redLightAhead = CheckRedLightUnified();
@@ -582,8 +629,8 @@ public class SimpleAutoDrive : MonoBehaviour
         }
 
         // ★ 红灯时：用停止线距离钳制frontDistance，让状态机自动减速停车
-        if (redLightAhead && _hasStopLineAhead && _distToStopLine > 0)
-            frontDistance = Mathf.Min(frontDistance, _distToStopLine);
+        if (redLightAhead && hasStopLineAhead && distToStopLine > 0)
+            frontDistance = Mathf.Min(frontDistance, distToStopLine);
     }
 
     /// <summary> 统一红绿灯检测：查WorldModel相位状态 + 停止线距离 </summary>
@@ -601,14 +648,14 @@ public class SimpleAutoDrive : MonoBehaviour
 
         // 获取该路口的停止线
         StopLine stopLine = worldModel.GetNearestStopLine(nearestNode.Id, transform.position);
-        _distToStopLine = stopLine != null
+        distToStopLine = stopLine != null
             ? Vector3.Distance(transform.position, stopLine.Position)
             : distToNode - 5f;
-        _nearestStopLinePos = stopLine != null ? stopLine.Position : nearestNode.WorldPos;
-        _hasStopLineAhead = true;
+        nearestStopLinePos = stopLine != null ? stopLine.Position : nearestNode.WorldPos;
+        hasStopLineAhead = true;
 
         // 已越过停止线 → 不再拦截（防路口内锁死）
-        if (_distToStopLine < stopLinePassedThreshold) return false;
+        if (distToStopLine < stopLinePassedThreshold) return false;
 
         // 查相位状态
         IntersectionState state = stopLine != null && stopLine.AssociatedPhaseId >= 0
@@ -839,6 +886,67 @@ public class SimpleAutoDrive : MonoBehaviour
         isPlayerControlled = !isPlayerControlled;
     }
 
+    /// <summary>
+    /// 手动→自动：解锁轨迹，吸附到最近车道，重新规划路径
+    /// </summary>
+    public void MergeBackToTraffic()
+    {
+        if (worldModel == null || pathPlanner == null) return;
+
+        // 1. 找最近车道
+        int nearestLaneId = worldModel.FindNearestLane(transform.position, transform.forward);
+        if (nearestLaneId < 0)
+            nearestLaneId = worldModel.FindNearestLane(transform.position);
+        if (nearestLaneId < 0)
+        {
+            Debug.LogWarning($"[SimpleAutoDrive] {name} 回归失败：找不到最近车道");
+            return;
+        }
+
+        // 2. 找最近边
+        if (!worldModel.GlobalLanes.TryGetValue(nearestLaneId, out Lane lane) || lane.CenterSpline == null)
+        {
+            Debug.LogWarning($"[SimpleAutoDrive] {name} 回归失败：车道{nearestLaneId}不存在");
+            return;
+        }
+
+        // 3. 吸附位置到车道上
+        Vector3 snappedPos = lane.CenterSpline.GetClosestPoint(transform.position);
+        snappedPos.y = worldModel.GetUnifiedHeight(snappedPos.x, snappedPos.z) + 0.15f;
+        transform.position = snappedPos;
+
+        // 4. 对齐车道方向
+        float distOnLane = lane.CenterSpline.GetDistanceAtPoint(snappedPos);
+        Vector3 tangent = lane.CenterSpline.GetTangent(distOnLane);
+        if (tangent.sqrMagnitude > 0.001f)
+            transform.rotation = Quaternion.LookRotation(tangent);
+
+        // 5. 解锁轨迹并重新规划
+        _isTrajectoryLocked = false;
+        _hasDestination = false;
+        currentSpeed = 0f;
+        currentDistOnEdge = 0f;
+        longState = LongitudinalState.FreeDrive;
+
+        // 6. 设定起始车道 + 规划路径
+        pathEdgeIds.Clear();
+        pathEdgeIds.Add(nearestLaneId);
+        currentEdgeIndex = 0;
+
+        // 预先烘焙该车道
+        currentTrajectory = new BakedTrajectory(lane.CenterSpline, 0.5f);
+        currentEdgeLength = currentTrajectory.TotalLength;
+
+        // 设置当前距离为吸附点距离
+        currentDistOnEdge = Mathf.Clamp(distOnLane, 0f, currentEdgeLength);
+        _isTrajectoryLocked = true;
+
+        Debug.Log($"[SimpleAutoDrive] {name} 回归车流 → 车道{nearestLaneId} 距离{distOnLane:F1}m");
+
+        // 7. 继续延伸到目的地
+        RequestNewPath();
+    }
+
     // ==========================================
     // 可视化：轨迹线
     // ==========================================
@@ -1046,7 +1154,7 @@ public class SimpleAutoDrive : MonoBehaviour
 
         // ---- 红绿灯/停止线 ----
         GUI.Label(new Rect(x0, y, 380, lineH),
-            $"红绿灯: {(redLightAhead ? "红灯/黄灯" : "无/绿灯")} | 停止线距: {(_hasStopLineAhead ? $"{_distToStopLine:F1}m" : "无")}",
+            $"红绿灯: {(redLightAhead ? "红灯/黄灯" : "无/绿灯")} | 停止线距: {(hasStopLineAhead ? $"{distToStopLine:F1}m" : "无")}",
             redLightAhead ? errStyle : okStyle);
         y += lineH;
         GUI.Label(new Rect(x0, y, 380, lineH),

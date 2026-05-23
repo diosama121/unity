@@ -40,6 +40,8 @@ public class SimpleCarController : MonoBehaviour
     public float currentSpeed         = 0f;
     public float currentSteeringAngle = 0f;
 
+    [HideInInspector] public bool manualControl = false; // 手动模式：跳过运动学位移
+
     // --- 内部状态 ---
     private Vector3 _originalPosition;
 
@@ -73,7 +75,7 @@ public class SimpleCarController : MonoBehaviour
     {
         // NPC 车辆位移完全由 SimpleAutoDrive.SnapToCurve 接管，此处不再移动/旋转，
         // 否则两套位移系统会在转弯时互相打架导致抽搐。
-        if (isNPC)
+        if (isNPC || manualControl)
         {
             ApplyGroundAlignment();
             return;

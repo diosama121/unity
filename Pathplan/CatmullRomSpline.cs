@@ -232,4 +232,20 @@ public class CatmullRomSpline
         float frac = floatIndex - idx;
         return Mathf.Lerp(_cumulativeLengths[idx], _cumulativeLengths[idx + 1], frac);
     }
+
+    /// <summary>获取曲线上离给定点最近的位置</summary>
+    public Vector3 GetClosestPoint(Vector3 position)
+    {
+        if (ControlPoints == null || ControlPoints.Count < 2) return position;
+        float t = GetClosestT(position, 0.5f);
+        return GetPoint(t);
+    }
+
+    /// <summary>获取曲线上离给定点最近位置的距离（米）</summary>
+    public float GetDistanceAtPoint(Vector3 position)
+    {
+        if (ControlPoints == null || ControlPoints.Count < 2) return 0f;
+        float t = GetClosestT(position, 0.5f);
+        return GetLengthAtT(t);
+    }
 }
