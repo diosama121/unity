@@ -74,6 +74,8 @@ public class ROS2BridgeV2 : MonoBehaviour
 
     // 主车切换检测
     private GameObject _lastMainCar = null;
+    private bool _firstDataSent = false;
+    private bool _firstDataReceived = false;
 
     void Start()
     {
@@ -127,8 +129,8 @@ public class ROS2BridgeV2 : MonoBehaviour
             {
                 client = new TcpClient();
                 client.NoDelay = true;
-                client.SendTimeout = 2000;
-                client.ReceiveTimeout = 2000;
+                client.SendTimeout = 3000;
+                // 不设ReceiveTimeout —— 接收线程一直阻塞等待，不等超时
 
                 client.Connect(cleanIP, rosPort);
                 stream = client.GetStream();
@@ -184,6 +186,11 @@ public class ROS2BridgeV2 : MonoBehaviour
         bool receivedThisFrame = false;
         while (commandQueue.TryDequeue(out string jsonData))
         {
+            if (!_firstDataReceived)
+            {
+                _firstDataReceived = true;
+                Debug.Log($"[ROS2Bridge] 首次接收ROS2数据 → {jsonData.Length}字节");
+            }
             ProcessControlCommand(jsonData);
             receivedThisFrame = true;
         }
@@ -321,6 +328,12 @@ public class ROS2BridgeV2 : MonoBehaviour
 
             while (sendQueue.TryDequeue(out _)) { }
             sendQueue.Enqueue(data);
+
+            if (!_firstDataSent)
+            {
+                _firstDataSent = true;
+                Debug.Log($"[ROS2Bridge] 首次发送数据 → {jsonData.Length}字节 (速度={state.velocity:F1}m/s, LiDAR点={lidarCopy.Length/3})");
+            }
         }
         catch (Exception)
         {
@@ -343,6 +356,7 @@ public class ROS2BridgeV2 : MonoBehaviour
                 int bytesRead = stream.Read(buffer, 0, buffer.Length);
                 if (bytesRead == 0)
                 {
+                    Debug.LogWarning("[ROS2Bridge] 接收线程：对端关闭连接 (bytesRead=0)");
                     _isConnected = false;
                     break;
                 }
@@ -370,8 +384,15 @@ public class ROS2BridgeV2 : MonoBehaviour
                     if (currentBuffer.EndsWith("\n")) messageBuffer.Clear();
                 }
             }
-            catch (Exception)
+            catch (ObjectDisposedException)
             {
+                Debug.Log("[ROS2Bridge] 接收线程：连接已释放");
+                _isConnected = false;
+                break;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[ROS2Bridge] 接收线程异常: {ex.Message}");
                 _isConnected = false;
                 break;
             }
@@ -392,8 +413,15 @@ public class ROS2BridgeV2 : MonoBehaviour
                         stream.Flush();
                     }
                 }
-                catch (Exception)
+                catch (ObjectDisposedException)
                 {
+                    Debug.Log("[ROS2Bridge] 发送线程：连接已释放");
+                    _isConnected = false;
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"[ROS2Bridge] 发送线程异常: {ex.Message}");
                     _isConnected = false;
                     break;
                 }
@@ -472,6 +500,8 @@ public class ROS2BridgeV2 : MonoBehaviour
         }
 
         _lastMainCar = null;
+        _firstDataSent = false;
+        _firstDataReceived = false;
     }
 
     public void Reconnect()
