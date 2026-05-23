@@ -868,7 +868,7 @@ if (Input.GetKeyDown(KeyCode.R))
     {
         keyPanel = new GameObject("KeyPanel");
         keyPanel.transform.SetParent(parent.transform, false);
-        keyPanel.AddComponent<LayoutElement>().minHeight = 160;
+        keyPanel.AddComponent<LayoutElement>().minHeight = 320;
         Image kpBg = keyPanel.AddComponent<Image>();
         kpBg.color = new Color(0.06f, 0.08f, 0.16f, 0.6f);
 
@@ -890,7 +890,39 @@ if (Input.GetKeyDown(KeyCode.R))
         keyTexts["N"] = CreateKeyDisplay(keyPanel, "N", "重新导航", font);
         keyTexts["R"] = CreateKeyDisplay(keyPanel, "R", "重置位置", font);
         keyTexts["T"] = CreateKeyDisplay(keyPanel, "T", "切换自动与否", font);
-        keyTexts["Space"] = CreateKeyDisplay(keyPanel, "刹车","控制", font);
+        keyTexts["Space"] = CreateKeyDisplay(keyPanel, "Space / 刹车", "停车控制", font);
+
+        // ★ V4.2：数据功能区（F9/F10/F11 热键 + 一键导出按钮）
+        UIPanelBuilder.CreateTitle(keyPanel, "数据功能");
+
+        keyTexts["F9"] = CreateKeyDisplay(keyPanel, "F9", "开始录制CSV", font);
+        keyTexts["F10"] = CreateKeyDisplay(keyPanel, "F10", "停止录制+导出", font);
+        keyTexts["F11"] = CreateKeyDisplay(keyPanel, "F11", "一键导出报告", font);
+
+        // 一键导出按钮
+        GameObject exportRow = new GameObject("ExportBtnRow");
+        exportRow.transform.SetParent(keyPanel.transform, false);
+        exportRow.AddComponent<LayoutElement>().minHeight = 30;
+        HorizontalLayoutGroup expHLG = exportRow.AddComponent<HorizontalLayoutGroup>();
+        expHLG.childAlignment = TextAnchor.MiddleCenter;
+        expHLG.childControlWidth = true;
+        expHLG.childControlHeight = true;
+        expHLG.childForceExpandWidth = true;
+
+        GameObject expBtn = UIPanelBuilder.CreateButton(exportRow, "ExportFullReport", "导出完整报告(JSON)");
+        expBtn.GetComponent<Button>().onClick.AddListener(() =>
+        {
+            if (SystemDataManager.Instance != null)
+            {
+                string p = SystemDataManager.Instance.ExportFullReport();
+                if (!string.IsNullOrEmpty(p))
+                    AppendThoughtLine($"报告已导出: {System.IO.Path.GetFileName(p)}");
+            }
+            else
+            {
+                Debug.LogWarning("[UI] SystemDataManager.Instance 未找到，无法导出");
+            }
+        });
     }
 
     TextMeshProUGUI CreateKeyDisplay(GameObject parent, string key, string desc, TMP_FontAsset font)

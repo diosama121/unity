@@ -3,9 +3,9 @@ using UnityEngine.UI;
 using System.Text;
 
 /// <summary>
-/// V4.1 上帝视角观测台 (a5 视觉与数据观测官)
-/// 核心准则：零物理射线，纯语义数据驱动
-/// 功能：节点总数统计、NPC活跃监控、模式状态实时观测、城乡一键切换、高程场健康度监控、一键数据录制
+/// V4.2 上帝视角观测台 (a5 视觉与数据观测官)
+/// V4.2 优化：去除反射调用，改用 SystemDataManager.Instance 公共API
+/// 功能：节点总数统计、NPC活跃监控、模式状态实时观测、城乡一键切换、高程场健康度监控、一键数据录制/导出
 /// </summary>
 public class DebugPanel : MonoBehaviour
 {
@@ -19,36 +19,32 @@ public class DebugPanel : MonoBehaviour
     public Text recordButtonText;         // 录制按钮状态文本
     public Button toggleCountrysideButton;// 城乡模式切换按钮
     public Text modeButtonText;           // 模式按钮状态文本
+    public Button exportReportButton;     // ★ V4.2 一键导出完整报告按钮
+    public Text exportButtonText;         // ★ 导出按钮文本
 
     [Header("=== 观测台设置 ===")]
     public KeyCode togglePanelKey = KeyCode.F1; // 开关面板快捷键
     public float updateInterval = 0.1f;         // 数据刷新频率
 
     // 内部引用缓存
-    private SystemDataManager dataManager;
-    private RoadNetworkGenerator roadGen;
-    private float updateTimer;
-    private bool isPanelVisible = true;
+    private RoadNetworkGenerator _roadGen;
+    private float _updateTimer;
+    private bool _isPanelVisible = true;
 
     void Start()
     {
-        // 预缓存核心管理器，避免每帧查找损耗
-        dataManager = FindObjectOfType<SystemDataManager>();
-        roadGen = FindObjectOfType<RoadNetworkGenerator>();
-        
-        // 初始化录制按钮事件
+        _roadGen = FindObjectOfType<RoadNetworkGenerator>();
+
+        // ★ V4.2：直接用 SystemDataManager.Instance，不再反射
         if (toggleRecordButton != null)
-        {
             toggleRecordButton.onClick.AddListener(OnToggleRecordClicked);
-        }
-        
-        // 初始化城乡模式切换按钮事件
+
         if (toggleCountrysideButton != null)
-        {
             toggleCountrysideButton.onClick.AddListener(OnToggleCountrysideClicked);
-        }
-        
-        // 初始更新UI
+
+        if (exportReportButton != null)
+            exportReportButton.onClick.AddListener(OnExportReportClicked);
+
         UpdateWorldStats();
         UpdateRecordButtonUI(false);
         UpdateModeButtonUI();
@@ -56,91 +52,88 @@ public class DebugPanel : MonoBehaviour
 
     void Update()
     {
-        // 面板开关控制
         if (Input.GetKeyDown(togglePanelKey))
         {
-            isPanelVisible = !isPanelVisible;
-            gameObject.SetActive(isPanelVisible);
+            _isPanelVisible = !_isPanelVisible;
+            gameObject.SetActive(_isPanelVisible);
         }
 
-        if (!isPanelVisible) return;
+        if (!_isPanelVisible) return;
 
-        // 定时刷新数据
-        updateTimer += Time.deltaTime;
-        if (updateTimer >= updateInterval)
+        _updateTimer += Time.deltaTime;
+        if (_updateTimer >= updateInterval)
         {
             UpdateWorldStats();
             UpdateMouseHoverInfo();
             UpdateCameraGroundInfo();
-            updateTimer = 0f;
+
+            // ★ V4.2：同步录制按钮状态
+            if (SystemDataManager.Instance != null)
+            {
+                bool recording = SystemDataManager.Instance.IsRecording;
+                UpdateRecordButtonUI(recording);
+            }
+            _updateTimer = 0f;
         }
     }
 
     /// <summary>
-    /// 更新世界统计信息 (节点总数、NPC数量)
+    /// 更新世界统计信息（节点总数、NPC数量）
     /// </summary>
     void UpdateWorldStats()
     {
         if (worldStatsText == null) return;
 
         StringBuilder sb = new StringBuilder();
-        sb.AppendLine("=== 🌍 世界语义统计 ===");
-        
-        // 1. 获取节点总数 (通过 WorldModel 接口)
+        sb.AppendLine("=== 世界语义统计 ===");
+
+        // 1. 节点总数
         int nodeCount = 0;
         if (WorldModel.Instance != null)
         {
-            var nodeCountProp = WorldModel.Instance.GetType().GetProperty("NodeCount");
-            if (nodeCountProp != null)
-            {
-                nodeCount = (int)nodeCountProp.GetValue(WorldModel.Instance);
-            }
-            else
-            {
-                var nodesProp = WorldModel.Instance.GetType().GetProperty("Nodes");
-                if (nodesProp != null)
-                {
-                    var nodesList = nodesProp.GetValue(WorldModel.Instance) as System.Collections.IList;
-                    nodeCount = nodesList?.Count ?? 0;
-                }
-            }
+            nodeCount = WorldModel.Instance.NodeCount;
         }
         sb.AppendLine($"路网节点总数: {nodeCount}");
 
-        // 2. 获取活跃 NPC 数量
+        // 2. 车道数
+        int laneCount = WorldModel.Instance?.GlobalLanes?.Count ?? 0;
+        sb.AppendLine($"车道总数: {laneCount}");
+
+        // 3. 活跃 NPC 数量
         int npcCount = FindObjectsOfType<SimpleAutoDrive>().Length;
         sb.AppendLine($"活跃 NPC 数量: {npcCount}");
+
+        // 4. 连接器数
+        int connCount = WorldModel.Instance?.GlobalConnectors?.Count ?? 0;
+        sb.AppendLine($"连接器总数: {connCount}");
 
         worldStatsText.text = sb.ToString();
     }
 
     /// <summary>
-    /// 更新鼠标悬停位置的语义信息 (零物理射线 + V4.1 状态监控)
+    /// 更新鼠标悬停位置语义信息
     /// </summary>
     void UpdateMouseHoverInfo()
     {
         if (mouseHoverInfoText == null || WorldModel.Instance == null) return;
 
         StringBuilder sb = new StringBuilder();
-        sb.AppendLine("=== 🖱️ 鼠标悬停语义 ===");
+        sb.AppendLine("=== 鼠标悬停语义 ===");
 
-        // 【V4.1 核心新增】生成模式与种子状态探测
-        if (roadGen != null)
+        if (_roadGen != null)
         {
-            sb.AppendLine($"当前模式: {(roadGen.isCountryside ? "🏞️ 乡村起伏" : "🏙️ 城市纯平")}");
-            sb.AppendLine($"当前种子 (Seed): {roadGen.seed}");
+            sb.AppendLine($"当前模式: {(_roadGen.isCountryside ? "乡村起伏" : "城市纯平")}");
+            sb.AppendLine($"当前种子 (Seed): {_roadGen.seed}");
         }
         else
         {
-            sb.AppendLine("⚠️ 未找到 RoadNetworkGenerator 组件");
+            sb.AppendLine("未找到 RoadNetworkGenerator 组件");
         }
 
-        // 零物理射线坐标转换
         Vector3 mouseScreenPos = Input.mousePosition;
         mouseScreenPos.z = 10f;
         Vector3 mouseWorldPos = Camera.main.ScreenToWorldPoint(mouseScreenPos);
-        
-        // 提取 XZ 坐标
+
         Vector2 mouseXZ = new Vector2(mouseWorldPos.x, mouseWorldPos.z);
         RoadNode nearestNode = WorldModel.Instance.GetNearestNode(new Vector3(mouseXZ.x, 0, mouseXZ.y));
 
@@ -148,9 +141,8 @@ public class DebugPanel : MonoBehaviour
         {
             sb.AppendLine($"鼠标 XZ: ({mouseXZ.x:F1}, {mouseXZ.y:F1})");
             sb.AppendLine($"最近节点 ID: {nearestNode.Id}");
-            sb.AppendLine($"节点世界坐标: ({nearestNode.WorldPos.x:F1}, {nearestNode.WorldPos.y:F1}, {nearestNode.WorldPos.z:F1})");
-            
-            // 节点类型判定
+            sb.AppendLine($"节点坐标: ({nearestNode.WorldPos.x:F1}, {nearestNode.WorldPos.y:F1}, {nearestNode.WorldPos.z:F1})");
+
             string nodeType = "未知";
             if (nearestNode.NeighborIds != null)
             {
@@ -166,7 +158,6 @@ public class DebugPanel : MonoBehaviour
             sb.AppendLine("未检测到有效路网节点");
         }
 
-        // 【V4.1 核心新增】统一高程观测
         float unifiedY = WorldModel.Instance.GetUnifiedHeight(mouseXZ.x, mouseXZ.y);
         sb.AppendLine($"地表绝对高程: {unifiedY:F2} m");
 
@@ -174,25 +165,25 @@ public class DebugPanel : MonoBehaviour
     }
 
     /// <summary>
-    /// 更新相机下方的语义信息 (零物理射线)
+    /// 更新相机下方语义信息
     /// </summary>
     void UpdateCameraGroundInfo()
     {
         if (cameraGroundInfoText == null || WorldModel.Instance == null) return;
 
         StringBuilder sb = new StringBuilder();
-        sb.AppendLine("=== 📷 相机下方语义 ===");
+        sb.AppendLine("=== 相机下方语义 ===");
 
         Vector3 cameraPos = Camera.main.transform.position;
         Vector2 cameraXZ = new Vector2(cameraPos.x, cameraPos.z);
-        
+
         RoadNode nearestNode = WorldModel.Instance.GetNearestNode(new Vector3(cameraXZ.x, 0, cameraXZ.y));
 
         if (nearestNode != null)
         {
             sb.AppendLine($"相机 XZ: ({cameraXZ.x:F1}, {cameraXZ.y:F1})");
             sb.AppendLine($"最近节点 ID: {nearestNode.Id}");
-            
+
             string nodeType = "未知";
             if (nearestNode.NeighborIds != null)
             {
@@ -201,8 +192,7 @@ public class DebugPanel : MonoBehaviour
                 else nodeType = "端点";
             }
             sb.AppendLine($"节点类型: {nodeType}");
-            
-            // 相机下方统一高程监控
+
             float unifiedHeight = WorldModel.Instance.GetUnifiedHeight(cameraXZ.x, cameraXZ.y);
             sb.AppendLine($"地表绝对高程: {unifiedHeight:F2} m");
         }
@@ -214,76 +204,67 @@ public class DebugPanel : MonoBehaviour
         cameraGroundInfoText.text = sb.ToString();
     }
 
-    /// <summary>
-    /// 【V4.1 新增】一键切换城乡生成模式
-    /// </summary>
+    // ============================================================
+    // 按钮回调
+    // ============================================================
+
+    /// <summary>城乡模式切换</summary>
     void OnToggleCountrysideClicked()
     {
-        if (roadGen == null)
+        if (_roadGen == null)
         {
-            Debug.LogWarning("[DebugPanel] 未找到 RoadNetworkGenerator，无法切换模式！");
+            Debug.LogWarning("[DebugPanel] 未找到 RoadNetworkGenerator");
             return;
         }
-
-        // 翻转模式状态
-        roadGen.isCountryside = !roadGen.isCountryside;
-        Debug.Log(roadGen.isCountryside ? "🏞️ [DebugPanel] 已切换至乡村起伏模式" : "🏙️ [DebugPanel] 已切换至城市纯平模式");
-        
-        // 更新按钮UI
+        _roadGen.isCountryside = !_roadGen.isCountryside;
+        Debug.Log(_roadGen.isCountryside ? "[DebugPanel] 已切换至乡村起伏模式" : "[DebugPanel] 已切换至城市纯平模式");
         UpdateModeButtonUI();
     }
 
-    /// <summary>
-    /// 一键触发数据录制
-    /// </summary>
+    /// <summary>一键录制（F9等效）</summary>
     void OnToggleRecordClicked()
     {
-        if (dataManager == null)
+        if (SystemDataManager.Instance == null)
         {
-            Debug.LogWarning("[DebugPanel] 未找到 SystemDataManager！");
+            Debug.LogWarning("[DebugPanel] 未找到 SystemDataManager.Instance");
             return;
         }
+        SystemDataManager.Instance.ToggleRecording();
+    }
 
-        var isRecordingField = dataManager.GetType().GetField("isRecording", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        if (isRecordingField != null)
+    /// <summary>★ V4.2：一键导出完整报告（F11等效）</summary>
+    void OnExportReportClicked()
+    {
+        if (SystemDataManager.Instance == null)
         {
-            bool currentState = (bool)isRecordingField.GetValue(dataManager);
-            bool newState = !currentState;
-            isRecordingField.SetValue(dataManager, newState);
-            
-            UpdateRecordButtonUI(newState);
-            
-            if (newState)
-            {
-                Debug.Log(" [DebugPanel] 一键启动数据录制...");
-            }
-            else
-            {
-                Debug.Log(" [DebugPanel] 一键停止数据录制，正在导出...");
-            }
+            Debug.LogWarning("[DebugPanel] 未找到 SystemDataManager.Instance");
+            return;
+        }
+        string path = SystemDataManager.Instance.ExportFullReport();
+        if (!string.IsNullOrEmpty(path))
+        {
+            Debug.Log($"[DebugPanel] 报告已导出: {path}");
         }
     }
 
-    /// <summary>
-    /// 更新模式按钮 UI
-    /// </summary>
+    // ============================================================
+    // UI 更新
+    // ============================================================
+
     void UpdateModeButtonUI()
     {
-        if (modeButtonText != null && roadGen != null)
+        if (modeButtonText != null && _roadGen != null)
         {
-            modeButtonText.text = roadGen.isCountryside ? "切换至城市纯平" : "切换至乡村起伏";
-            modeButtonText.color = roadGen.isCountryside ? Color.green : Color.blue;
+            modeButtonText.text = _roadGen.isCountryside ? "切换至城市纯平" : "切换至乡村起伏";
+            modeButtonText.color = _roadGen.isCountryside ? Color.green : Color.blue;
         }
     }
 
-    /// <summary>
-    /// 更新录制按钮 UI
-    /// </summary>
     void UpdateRecordButtonUI(bool isRecording)
     {
         if (recordButtonText != null)
         {
-            recordButtonText.text = isRecording ? "停止录制" : " 开始录制";
+            recordButtonText.text = isRecording ? "停止录制" : "开始录制";
             recordButtonText.color = isRecording ? Color.red : Color.green;
         }
     }

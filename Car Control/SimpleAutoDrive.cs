@@ -99,7 +99,7 @@ public class SimpleAutoDrive : MonoBehaviour
 
     // ========== 路径（图边序列） ==========
     [HideInInspector] public List<int> pathEdgeIds = new List<int>(); // +ve = LaneId, -ve = -ConnectorId
-    private int currentEdgeIndex = 0;
+    public int currentEdgeIndex = 0;   // V4.2: 改为public供数据导出
 
     // 【轨迹锁死】：一旦 StartPath 被调用，禁止运行时任何重吸附/重寻路
     private bool _isTrajectoryLocked = false;
