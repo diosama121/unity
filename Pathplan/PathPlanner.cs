@@ -81,22 +81,24 @@ public class PathPlanner : MonoBehaviour
     {
         if (forward.HasValue)
         {
-            int laneId = _worldModel.FindNearestLane(startPos);
+            // 关键: 传入车头方向，排除对向/垂直车道误吸
+            int laneId = _worldModel.FindNearestLane(startPos, forward.Value);
             if (laneId >= 0 && _worldModel.GlobalLanes.TryGetValue(laneId, out Lane lane))
             {
-                int nodeAId = lane.RoadId / 10000;
-                int nodeBId = lane.RoadId % 10000;
-                RoadNode nodeA = _worldModel.GetNode(nodeAId);
-                RoadNode nodeB = _worldModel.GetNode(nodeBId);
-
-                if (nodeA != null && nodeB != null)
+                // 用 LaneDirection 可靠确定车道走哪边
+                int fromId, toId;
+                if (lane.Direction == LaneDirection.Forward)
                 {
-                    Vector3 dirAToB = (nodeB.WorldPos - nodeA.WorldPos).normalized;
-                    if (Vector3.Dot(dirAToB, forward.Value) >= 0)
-                        return nodeB;
-                    else
-                        return nodeA;
+                    fromId = lane.RoadId / 10000;
+                    toId   = lane.RoadId % 10000;
                 }
+                else
+                {
+                    fromId = lane.RoadId % 10000;
+                    toId   = lane.RoadId / 10000;
+                }
+                // 返回车道驶向的节点（目标方向）
+                return _worldModel.GetNode(toId);
             }
         }
         return _worldModel.GetNearestNode(startPos);
@@ -381,17 +383,19 @@ public class PathPlanner : MonoBehaviour
             if (!_worldModel.GlobalLanes.TryGetValue(currentId, out Lane currentLane)) continue;
             if (currentLane.NextConnectorIds == null || currentLane.NextConnectorIds.Count == 0) continue;
 
-            float currentLaneLen = (currentLane.CenterSpline != null) ? currentLane.CenterSpline.TotalLength : 0f;
-
             foreach (int connId in currentLane.NextConnectorIds)
             {
                 if (!_worldModel.GlobalConnectors.TryGetValue(connId, out LaneConnector connector)) continue;
                 int nextLaneId = connector.ToLaneId;
                 if (closedSet.Contains(nextLaneId)) continue;
-                if (!_worldModel.GlobalLanes.ContainsKey(nextLaneId)) continue;
+                if (!_worldModel.GlobalLanes.TryGetValue(nextLaneId, out Lane nextLane)) continue;
 
-                float connLen = (connector.TurnCurve != null) ? connector.TurnCurve.TotalLength : 0f;
-                float edgeCost = currentLaneLen + connLen;
+                // 边代价 = 当前车道剩余长度（取总长近似） + 连接器长度 + 下一车道长度
+                // 不包含车道长度会导致 A* 无视 300m 直路和 30m 短路之间的压倒性差异
+                float laneLen   = currentLane.CenterSpline.TotalLength;
+                float connLen   = (connector.TurnCurve != null) ? connector.TurnCurve.TotalLength : 0f;
+                float nextLen   = nextLane.CenterSpline.TotalLength;
+                float edgeCost  = laneLen + connLen + nextLen;
                 if (edgeCost >= float.MaxValue) continue;
 
                 float tentativeG = currentNode.GCost + edgeCost;

@@ -161,12 +161,30 @@ public class TrafficLightManager : MonoBehaviour
     /// </summary>
     public void ClearTrafficLights()
     {
+        // 先销毁列表里的
+        foreach (var tl in trafficLights)
+        {
+            if (tl != null && tl.gameObject != null)
+            {
+                if (Application.isPlaying) Destroy(tl.gameObject); else DestroyImmediate(tl.gameObject);
+            }
+        }
         trafficLights.Clear();
 
+        // 再扫全场景残留的TrafficLightController（防止旧灯没在列表里）
+        var orphans = FindObjectsOfType<TrafficLightController>();
+        foreach (var orphan in orphans)
+        {
+            if (orphan != null && orphan.gameObject != null)
+            {
+                if (Application.isPlaying) Destroy(orphan.gameObject); else DestroyImmediate(orphan.gameObject);
+            }
+        }
+
+        // 最后删根节点
         Transform root = transform.Find("TrafficLights");
         if (root != null)
         {
-            root.name = "TrafficLights_Destroyed";
             if (Application.isPlaying) Destroy(root.gameObject); else DestroyImmediate(root.gameObject);
         }
     }
@@ -217,12 +235,13 @@ public class TrafficLightManager : MonoBehaviour
         Vector3 basePos = new Vector3(node.position.x, groundY, node.position.z) + Vector3.up * heightOffset;
         Vector3 rightDir = Vector3.Cross(Vector3.up, facingDir).normalized;
         
-        // 【核心修复】：强制使用面板中的 offsetFromCenter！
-        // 如果面板没填 (<=0)，才退化使用道路宽度的 0.7 倍
+        // 【核心修复】：灯放路边，不再放路中间
+        // facingDir = 从路口指向邻居方向, rightDir = 路右侧方向
+        // 灯放在：路口中心往邻居方向退 roadHalf 米 + 路右肩(roadHalf+sidewalkMargin)
         float roadW = roadBuilder != null ? roadBuilder.roadWidth : 6f;
-        float actualOffset = offsetFromCenter > 0.1f ? offsetFromCenter : (roadW * 0.7f);
-        
-        Vector3 spawnPos = basePos + facingDir * actualOffset + rightDir * actualOffset;
+        float roadHalf = roadW * 0.5f;
+        float sidewalkMargin = 2.0f;
+        Vector3 spawnPos = basePos + (-facingDir) * roadHalf + rightDir * (roadHalf + sidewalkMargin);
         
         // ... 下面的生成 GameObject 等代码保持原样不变 ...
        

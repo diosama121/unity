@@ -23,7 +23,7 @@ public static class RoadMathUtility
 
         float maxTangentMag = dist * 0.35f;
         if (Vector3.Dot(t0, edgeDir) < 0) t0 = -t0;
-        if (Vector3.Dot(t1, edgeDir) > 0) t1 = -t1;
+        if (Vector3.Dot(t1, edgeDir) < 0) t1 = -t1;
 
         Vector3 m0 = t0 * Mathf.Min(dist * 0.5f, maxTangentMag);
         Vector3 m1 = t1 * Mathf.Min(dist * 0.5f, maxTangentMag);

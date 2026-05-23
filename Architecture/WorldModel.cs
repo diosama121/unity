@@ -564,7 +564,7 @@ public class WorldModel : MonoBehaviour
         GlobalConnectors.Clear();
         _nextConnectorId = 0;
 
-        // 【核心大手术 1】建立纯净的基于几何的输入/输出字典
+        // Step 1: 建立 per-node 出入车道字典
         Dictionary<int, List<Lane>> nodeIncomingLanes = new Dictionary<int, List<Lane>>();
         Dictionary<int, List<Lane>> nodeOutgoingLanes = new Dictionary<int, List<Lane>>();
 
@@ -574,22 +574,35 @@ public class WorldModel : MonoBehaviour
             nodeOutgoingLanes[kvp.Key] = new List<Lane>();
         }
 
-        // 【核心大手术 2】遍历 GlobalLanes 中所有真实 spline 实体，反推它们连着哪个路口
+        // Step 2: 用 LaneDirection + RoadId 精确分配车道到节点（消灭15m空间搜索的随机性）
         foreach (var lane in GlobalLanes.Values)
         {
             if (lane.CenterSpline == null) continue;
 
-            RoadNode startNode = GetNearestNodeToPosition(lane.CenterSpline.GetPoint(0f), 15f);
-            RoadNode endNode   = GetNearestNodeToPosition(lane.CenterSpline.GetPoint(1f), 15f);
+            // RoadId = firstNode * 10000 + secondNode（即生成边时最先被遍历到的 node 和其 neighbor）
+            // Forward: spline 走 firstNode → secondNode
+            // Reverse: spline 被反转了，走 secondNode → firstNode
+            int fromNodeId, toNodeId;
+            if (lane.Direction == LaneDirection.Forward)
+            {
+                fromNodeId = lane.RoadId / 10000;
+                toNodeId   = lane.RoadId % 10000;
+            }
+            else
+            {
+                fromNodeId = lane.RoadId % 10000;
+                toNodeId   = lane.RoadId / 10000;
+            }
 
-            if (startNode != null)
-                nodeOutgoingLanes[startNode.Id].Add(lane);
-
-            if (endNode != null)
-                nodeIncomingLanes[endNode.Id].Add(lane);
+            if (_graph.ContainsKey(fromNodeId))
+                nodeOutgoingLanes[fromNodeId].Add(lane);
+            if (_graph.ContainsKey(toNodeId))
+                nodeIncomingLanes[toNodeId].Add(lane);
         }
 
-        // 【核心大手术 3】在纯净拓扑上生成安全连接器
+        // Step 3: 在每个路口生成合法连接器
+        // 注意：网格拓扑中 node.NeighborIds 只含出边(右/上)，grid边缘或随机挖边可能只有0-1个
+        // 不按邻居数过滤——单邻居节点走U-turn兜底，零邻居节点entry/exit列表本身就空
         foreach (var kvp in _graph)
         {
             RoadNode node = kvp.Value;
@@ -602,26 +615,34 @@ public class WorldModel : MonoBehaviour
                 if (entry.NextConnectorIds == null)
                     entry.NextConnectorIds = new List<int>();
 
+                Vector3 inDir = entry.CenterSpline.GetTangent(1f);
+                // 每条入口车道对每条出口道路只建一个连接器
+                HashSet<int> usedExitRoads = new HashSet<int>();
+
                 foreach (Lane exit in exitLanes)
                 {
+                    // 同一路段跳过
                     if (entry.RoadId == exit.RoadId) continue;
+                    // 同一出口道路已处理过
+                    if (usedExitRoads.Contains(exit.RoadId)) continue;
 
-                    // ==== 角度合法性过滤：双保险 ====
-                    Vector3 inDir  = entry.CenterSpline.GetTangent(1f);
                     Vector3 outDir = exit.CenterSpline.GetTangent(0f);
-                    float turnAngle = Vector3.Angle(inDir, outDir);
-                    if (turnAngle < 25f || turnAngle > 170f)
-                        continue;
+                    float signedAngle = Vector3.SignedAngle(inDir, outDir, Vector3.up);
+                    float absAngle = Mathf.Abs(signedAngle);
+
+                    // U 型掉头（>150°）：走兜底 U-turn
+                    if (absAngle > 150f) continue;
 
                     LaneConnector connector = BuildConnector(entry, exit, node);
                     if (connector != null)
                     {
                         GlobalConnectors[connector.ConnectorId] = connector;
                         entry.NextConnectorIds.Add(connector.ConnectorId);
+                        usedExitRoads.Add(exit.RoadId);
                     }
                 }
 
-                // 死路兜底
+                // 死路兜底：没有任何出口 → U-turn
                 if (entry.NextConnectorIds.Count == 0)
                 {
                     LaneConnector uTurn = BuildUTurnConnector(entry, node);
@@ -634,13 +655,11 @@ public class WorldModel : MonoBehaviour
             }
         }
 
-        Debug.Log($"[WorldModel] 成功生成 {GlobalConnectors.Count} 条路口连接线 (完全基于真实几何反推，幽灵边已清除)");
+        Debug.Log($"[WorldModel] 连接器生成完成: {GlobalConnectors.Count} 条 (RoadId确定,直行白名单开放,每出口道路单连接器)");
     }
 
     private LaneConnector BuildConnector(Lane entry, Lane exit, RoadNode node)
     {
-        // 直接使用车道端点。几何反推拓扑 + 角度过滤已消灭幽灵连接器，
-        // 路口中心不再有多连接器重叠，无需 setback。
         Vector3 p1 = entry.CenterSpline.GetPoint(1f);
         Vector3 p3 = exit.CenterSpline.GetPoint(0f);
 
@@ -648,17 +667,22 @@ public class WorldModel : MonoBehaviour
         Vector3 exitDir  = exit.CenterSpline.GetTangent(0f);
 
         float signedAngle = Vector3.SignedAngle(entryDir, exitDir, Vector3.up);
-        TurnType tType = TurnType.Straight;
-        if (signedAngle < -20f) tType = TurnType.LeftTurn;
-        else if (signedAngle > 20f) tType = TurnType.RightTurn;
+        TurnType tType;
+        if (signedAngle < -30f)      tType = TurnType.LeftTurn;
+        else if (signedAngle > 30f)  tType = TurnType.RightTurn;
+        else                         tType = TurnType.Straight;
 
         float dist = Vector3.Distance(p1, p3);
-        float mag = dist * 0.4f;
-        if (tType == TurnType.LeftTurn) mag = dist * 0.6f;
-        if (tType == TurnType.RightTurn) mag = dist * 0.25f;
 
-        // 【修复2】：Hermite 密集采样！强制给 CatmullRom 塞入大量点，锁定轨迹绝对平滑不突变
-        int samples = Mathf.Max(10, Mathf.CeilToInt(dist / 1.5f));
+        // 统一转弯幅度：路口内连接器曲线不应超过路口范围
+        // 路口退缩半径通常6-20m，连接器两端距离约是退缩半径的1-2倍
+        float mag = dist * 0.40f;           // 直行/默认
+        if (tType == TurnType.LeftTurn)
+            mag = dist * 0.50f;             // 左转稍宽，绕过路口中心
+        else if (tType == TurnType.RightTurn)
+            mag = dist * 0.35f;             // 右转收束，但不过紧（原0.25导致切角穿出）
+
+        int samples = Mathf.Max(10, Mathf.CeilToInt(dist / 1.0f));  // 加密采样
         List<Vector3> pts = new List<Vector3>();
         for (int i = 0; i <= samples; i++)
         {
@@ -668,16 +692,16 @@ public class WorldModel : MonoBehaviour
 
         CatmullRomSpline spline = new CatmullRomSpline(pts, false);
 
-        LaneConnector connector = new LaneConnector();
-        connector.ConnectorId = _nextConnectorId++;
-        connector.JunctionId = node.Id;
-        connector.FromLaneId = entry.LaneId;
-        connector.ToLaneId = exit.LaneId;
-        connector.Polyline  = pts;    // 离散Hermite多段线（端点切线精准，跳过CatmullRom二次近似）
-        connector.TurnCurve  = spline;
-        connector.TurnType  = tType;
-
-        return connector;
+        return new LaneConnector
+        {
+            ConnectorId = _nextConnectorId++,
+            JunctionId  = node.Id,
+            FromLaneId  = entry.LaneId,
+            ToLaneId    = exit.LaneId,
+            Polyline    = pts,
+            TurnCurve   = spline,
+            TurnType    = tType
+        };
     }
 
     private LaneConnector BuildUTurnConnector(Lane lane, RoadNode node)
@@ -706,6 +730,7 @@ public class WorldModel : MonoBehaviour
             JunctionId = node.Id,
             FromLaneId = lane.LaneId,
             ToLaneId = lane.LaneId,          // 自己连自己，形成掉头
+            Polyline  = pts,
             TurnCurve = spline,
             TurnType = TurnType.UTurn
         };

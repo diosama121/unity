@@ -123,6 +123,28 @@ public class SimpleAutoDrive : MonoBehaviour
     private float reverseTimer = 0f;
     private const float reverseDuration = 2.5f;
 
+    // ========== 僵死恢复 ==========
+    private float _recoveryTimer = 0f;
+    private const float recoveryInterval = 2f;    // 轨迹为空后每隔2秒重试一次
+
+    // ========== 死循环检测（同位置反复卡死） ==========
+    private int _stuckCount = 0;
+    private Vector3 _lastStuckPosition;
+    private const float stuckPositionThreshold = 8f;   // 两次卡死位置距离 < 8m 视为同一地点
+    private const int maxStuckRetries = 5;              // 同位置超过5次则强制跳转
+
+    // ========== NPC全局注册表（假检测用） ==========
+    public static List<SimpleAutoDrive> AllCars = new List<SimpleAutoDrive>();
+
+    // ========== 红绿灯/交规 ==========
+    private TrafficLightManager _trafficLightManager;
+    [Header("红绿灯交规")]
+    public float redLightStopDistance = 18f;     // 距停止线多远开始减速
+    public float stopLinePassedThreshold = -2f;  // 超过停止线2m后不再强制停车(防路口内锁死)
+    private Vector3 _nearestStopLinePos;
+    private float _distToStopLine;
+    private bool _hasStopLineAhead;
+
     private WorldModel worldModel => WorldModel.Instance;
 
     // ==========================================
@@ -161,7 +183,15 @@ public class SimpleAutoDrive : MonoBehaviour
         if (pathEdgeIds.Count > 0 && currentTrajectory == null)
             StartPath();
         else if (pathEdgeIds.Count == 0 && currentTrajectory == null)
-            RequestNewPath(); 
+            RequestNewPath();
+
+        // 注册到全局NPC列表（假检测用）
+        AllCars.Add(this);
+    }
+
+    void OnDestroy()
+    {
+        AllCars.Remove(this);
     }
 
     float SampleFrontDistance(float maxDist, LayerMask mask)
@@ -211,7 +241,38 @@ public class SimpleAutoDrive : MonoBehaviour
             return;
         }
 
-        if (currentTrajectory == null || currentEdgeLength <= 0) return;
+        if (currentTrajectory == null || currentEdgeLength <= 0)
+        {
+            _recoveryTimer += Time.deltaTime;
+            if (_recoveryTimer > recoveryInterval)
+            {
+                _recoveryTimer = 0f;
+
+                // ★ 死循环检测：同位置反复卡死(如死路↔路口来回跑)
+                float distFromLast = Vector3.Distance(transform.position, _lastStuckPosition);
+                if (distFromLast < stuckPositionThreshold)
+                    _stuckCount++;
+                else
+                {
+                    _stuckCount = 1;
+                    _lastStuckPosition = transform.position;
+                }
+
+                if (_stuckCount > maxStuckRetries)
+                {
+                    Debug.LogWarning($"[SimpleAutoDrive] {name} 同位置卡死{_stuckCount}次，强制跳转新地点");
+                    _stuckCount = 0;
+                    ForceNewDestination();
+                }
+                else
+                {
+                    RequestNewPath();
+                }
+            }
+            return;
+        }
+        _recoveryTimer = 0f;
+        _stuckCount = 0; // 轨迹正常，清零死循环计数
 
         UpdateSensors();
         (float targetSpd, bool brakeHard) = GetLongitudinalCommand();
@@ -274,7 +335,7 @@ public class SimpleAutoDrive : MonoBehaviour
         int id = pathEdgeIds[currentEdgeIndex];
         CatmullRomSpline splineToBake = null;
 
-        if (id > 0 && worldModel.GlobalLanes.TryGetValue(id, out Lane lane))
+        if (id >= 0 && worldModel.GlobalLanes.TryGetValue(id, out Lane lane))
             splineToBake = lane.CenterSpline;
         else if (id < 0 && worldModel.GlobalConnectors.TryGetValue(-id - 1, out LaneConnector conn))
         {
@@ -324,6 +385,18 @@ public class SimpleAutoDrive : MonoBehaviour
                         // 切换到下一个预规划的 edge
                         currentEdgeIndex++;
                         LoadCurrentEdge();
+
+                        // ★ 中间边切换失败(轨迹空)→整条路径已损毁,走全图重寻路
+                        if (currentTrajectory == null || currentEdgeLength <= 0f)
+                        {
+                            Debug.LogWarning($"[SimpleAutoDrive] {name} 边切换失败 idx={currentEdgeIndex},触发重寻路");
+                            currentSpeed = 0f;
+                            _isTrajectoryLocked = false;
+                            currentTrajectory = null;
+                            RequestNewPath();
+                            break;
+                        }
+
                         currentDistOnEdge = 0f;
                     }
                     else
@@ -332,8 +405,10 @@ public class SimpleAutoDrive : MonoBehaviour
                         // 尝试拓扑顺延。成功则继续推进刚延伸的 edge（不丢距离）
                         if (ExtendPathSeamlessly())
                             continue;
-                        // 顺延失败 → 减速 + 全图寻路
+                        // 顺延失败 → 解锁轨迹 + 全图寻路
                         currentSpeed = 0f;
+                        _isTrajectoryLocked = false;
+                        currentTrajectory = null;
                         RequestNewPath();
                         break;
                     }
@@ -375,6 +450,17 @@ public class SimpleAutoDrive : MonoBehaviour
             }
         }
         currentDistOnEdge = Mathf.Clamp(currentDistOnEdge, 0f, currentEdgeLength);
+        // ★ 裁剪已走过的边，防止路径无限增长(idx=82崩溃)
+        TrimPassedEdges();
+    }
+    void TrimPassedEdges()
+    {
+        if (currentEdgeIndex > 10 && currentEdgeIndex < pathEdgeIds.Count)
+        {
+            int removeCount = currentEdgeIndex;
+            pathEdgeIds.RemoveRange(0, removeCount);
+            currentEdgeIndex = 0;
+        }
     }
  void SnapToCurve()
     {
@@ -448,7 +534,7 @@ public class SimpleAutoDrive : MonoBehaviour
                 if (reverseTimer > reverseDuration)
                 {
                     longState = LongitudinalState.Stopped;
-                    stoppedTimer = 8f; // 倒车后短暂等待再尝试前进
+                    stoppedTimer = 0f; // 倒车后重新等满 10s 再尝试前进
                     return (0f, false);
                 }
                 return (-2f, false);
@@ -464,28 +550,95 @@ public class SimpleAutoDrive : MonoBehaviour
     }
 
     // ==========================================
-    // 沿曲线传感器采样
+    // 传感器采样（分支：NPC假检测 / 主车真雷达）
     // ==========================================
     void UpdateSensors()
     {
-        frontDistance    = SampleFrontDistance(30f, obstacleLayers);
-        frontSpeed       = 0f; // TODO: 通过前车引用获取真实速度
-        pedestrianDanger = SampleFrontDistance(3f, pedestrianLayer) < 3f;
-        redLightAhead    = CheckRedLight();
+        frontSpeed = 0f;
+        _hasStopLineAhead = false;
+        _distToStopLine = 999f;
+
+        // ★ 统一红绿灯检测（都用 WorldModel 相位状态 + 停止线）
+        redLightAhead = CheckRedLightUnified();
+
+        if (isPlayerControlled)
+        {
+            // 主车：真实物理雷达（后续对接ROS2）
+            frontDistance = SampleFrontDistance(50f, obstacleLayers);
+            pedestrianDanger = SampleFrontDistance(5f, pedestrianLayer) < 5f;
+        }
+        else
+        {
+            // NPC：假检测（无Physics开销）
+            pedestrianDanger = false;
+            frontDistance = CheckFrontVehicleFake();
+        }
+
+        // ★ 红灯时：用停止线距离钳制frontDistance，让状态机自动减速停车
+        if (redLightAhead && _hasStopLineAhead && _distToStopLine > 0)
+            frontDistance = Mathf.Min(frontDistance, _distToStopLine);
     }
 
-   
-
-    bool CheckRedLight()
+    /// <summary> 统一红绿灯检测：查WorldModel相位状态 + 停止线距离 </summary>
+    bool CheckRedLightUnified()
     {
         if (worldModel == null) return false;
         RoadNode nearestNode = worldModel.GetNearestNode(transform.position);
         if (nearestNode == null) return false;
         if (nearestNode.Type != NodeType.Intersection && nearestNode.Type != NodeType.Merge) return false;
-        if (currentEdgeLength - currentDistOnEdge > 15f) return false; // 离路口还远
 
-        IntersectionState state = worldModel.GetIntersectionState(nearestNode.Id);
+        float distToNode = Vector3.Distance(
+            new Vector3(transform.position.x, 0, transform.position.z),
+            new Vector3(nearestNode.WorldPos.x, 0, nearestNode.WorldPos.z));
+        if (distToNode > 30f) return false;
+
+        // 获取该路口的停止线
+        StopLine stopLine = worldModel.GetNearestStopLine(nearestNode.Id, transform.position);
+        _distToStopLine = stopLine != null
+            ? Vector3.Distance(transform.position, stopLine.Position)
+            : distToNode - 5f;
+        _nearestStopLinePos = stopLine != null ? stopLine.Position : nearestNode.WorldPos;
+        _hasStopLineAhead = true;
+
+        // 已越过停止线 → 不再拦截（防路口内锁死）
+        if (_distToStopLine < stopLinePassedThreshold) return false;
+
+        // 查相位状态
+        IntersectionState state = stopLine != null && stopLine.AssociatedPhaseId >= 0
+            ? worldModel.GetPhaseState(stopLine.AssociatedPhaseId)
+            : worldModel.GetIntersectionState(nearestNode.Id);
+
         return (state == IntersectionState.RedLight || state == IntersectionState.YellowLight);
+    }
+
+    /// <summary> NPC假检测：遍历全局车列表，前向点积判断前方车辆距离 </summary>
+    float CheckFrontVehicleFake()
+    {
+        float minDist = 30f;
+        Vector3 myPos = transform.position;
+        Vector3 myFwd = transform.forward;
+        // 清理null引用
+        AllCars.RemoveAll(c => c == null);
+
+        foreach (var car in AllCars)
+        {
+            if (car == this || car == null) continue;
+            Vector3 toOther = car.transform.position - myPos;
+            toOther.y = 0;
+            float dist = toOther.magnitude;
+            if (dist > 30f || dist < 0.1f) continue;
+
+            // 前向判断：在前方锥形内（dot > cos(45°) ≈ 0.7）
+            float dot = Vector3.Dot(toOther.normalized, myFwd);
+            if (dot < 0.7f) continue;
+
+            // 横向判断：同一道路（侧向偏移 < 4m）
+            float lateralDist = Mathf.Abs(Vector3.Cross(myFwd, toOther).y);
+            if (lateralDist > 4f) continue;
+
+            if (dist < minDist) minDist = dist;
+        }
+        return minDist;
     }
 
     // ==========================================
@@ -504,10 +657,22 @@ public class SimpleAutoDrive : MonoBehaviour
                 int randConn = lane.NextConnectorIds[Random.Range(0, lane.NextConnectorIds.Count)];
                 if (worldModel.GlobalConnectors.TryGetValue(randConn, out LaneConnector conn))
                 {
-                    pathEdgeIds.Add(-conn.ConnectorId - 1);  // connector 编码为负数
+                    pathEdgeIds.Add(-conn.ConnectorId - 1);
                     pathEdgeIds.Add(conn.ToLaneId);
                     currentEdgeIndex++;
                     LoadCurrentEdge();
+
+                    // ★ 防止僵尸状态：connector或lane轨迹烧录失败必须回滚
+                    if (currentTrajectory == null || currentEdgeLength <= 0f)
+                    {
+                        pathEdgeIds.RemoveRange(pathEdgeIds.Count - 2, 2);
+                        currentEdgeIndex--;
+                        LoadCurrentEdge(); // 退回上一段边
+                        currentDistOnEdge = currentEdgeLength;
+                        Debug.LogWarning($"[SimpleAutoDrive] {name} 延伸失败(轨迹空),已回滚");
+                        return false;
+                    }
+
                     currentDistOnEdge = 0f;
                     return true;
                 }
@@ -521,14 +686,17 @@ public class SimpleAutoDrive : MonoBehaviour
     // ==========================================
    void RequestNewPath()
     {
-        // 【最强防御】：轨迹锁死状态下，绝对禁止重新寻路！
+        // 轨迹锁死状态下，绝对禁止重新寻路
         if (_isTrajectoryLocked && currentTrajectory != null) return;
 
         if (worldModel == null || pathPlanner == null) return;
 
-        // 只在刚出生或彻底停下时，带车头朝向来找初始车道
-        // 杜绝吸附到脚下反向/垂直的错误车道
+        // 优先用方向过滤找到同向车道
         int startLaneId = worldModel.FindNearestLane(transform.position, transform.forward);
+        // ★ 兜底：方向过滤失败(如死路尽头车头对着墙)，退化为纯空间最近
+        if (startLaneId < 0)
+            startLaneId = worldModel.FindNearestLane(transform.position);
+
         if (startLaneId < 0) return;
 
         for (int i = 0; i < 15; i++)
@@ -549,10 +717,12 @@ public class SimpleAutoDrive : MonoBehaviour
             }
         }
 
-        // 兜底：沿当前轨迹所在车道走
-        if (currentTrajectory != null && currentEdgeLength > 0)
+        // 兜底：按车辆当前位置重新锚定到最近车道(不依赖currentTrajectory状态)
+        // 注意：AdvanceOnEdge已把currentTrajectory置null，不能检查它
         {
             int laneId = worldModel.FindNearestLane(transform.position, transform.forward);
+            if (laneId < 0)
+                laneId = worldModel.FindNearestLane(transform.position);
             if (laneId >= 0)
             {
                 pathEdgeIds = new List<int> { laneId };
@@ -567,6 +737,56 @@ public class SimpleAutoDrive : MonoBehaviour
         _isTrajectoryLocked = false;
         Debug.LogWarning($"[SimpleAutoDrive] {name} 无法规划路径，原地待命...");
     }
+
+    /// <summary> 死循环突破：强制找一个远离当前位置且有多个邻居的节点作为目的地 </summary>
+    void ForceNewDestination()
+    {
+        if (worldModel == null || pathPlanner == null) return;
+        _isTrajectoryLocked = false;
+        _hasDestination = false;
+
+        int startLaneId = worldModel.FindNearestLane(transform.position, transform.forward);
+        if (startLaneId < 0)
+            startLaneId = worldModel.FindNearestLane(transform.position);
+        if (startLaneId < 0) return;
+
+        // 找一个远离当前且非死路的节点（>=2个邻居）
+        RoadNode bestNode = null;
+        float bestDist = 0f;
+        for (int i = 0; i < 30; i++)
+        {
+            int randId = Random.Range(0, worldModel.NodeCount);
+            RoadNode node = worldModel.GetNode(randId);
+            if (node == null || node.NeighborIds == null || node.NeighborIds.Count <= 1) continue;
+            float d = Vector3.Distance(transform.position, node.WorldPos);
+            if (d < 50f) continue; // 至少50米外
+            if (d > bestDist)
+            {
+                bestDist = d;
+                bestNode = node;
+            }
+        }
+
+        if (bestNode != null)
+        {
+            int endLaneId = worldModel.FindNearestLane(bestNode.WorldPos);
+            if (endLaneId >= 0 && endLaneId != startLaneId)
+            {
+                List<int> edgePath = pathPlanner.PlanEdgePath(startLaneId, endLaneId);
+                if (edgePath != null && edgePath.Count > 0)
+                {
+                    _hasDestination = true;
+                    SetPath(edgePath);
+                    Debug.Log($"[SimpleAutoDrive] {name} 强制跳转至 {bestNode.WorldPos} (距离{bestDist:F0}m)");
+                    return;
+                }
+            }
+        }
+
+        // 兜底：直接走 RequestNewPath
+        RequestNewPath();
+    }
+
     // ==========================================
     // 公共接口（兼容旧调用）
     // ==========================================
@@ -708,6 +928,132 @@ public class SimpleAutoDrive : MonoBehaviour
                 Gizmos.DrawWireCube(hit.point, new Vector3(2.2f, 1.5f, 4.5f));
             }
         }
+    }
+
+    // ==========================================
+    // 实时状态面板 (OnGUI) — 主车专用
+    // ==========================================
+    void OnGUI()
+    {
+        if (!isPlayerControlled) return;
+
+        GUIStyle boxStyle = new GUIStyle(GUI.skin.box);
+        boxStyle.fontSize = 14;
+        boxStyle.normal.textColor = Color.white;
+
+        GUIStyle warnStyle = new GUIStyle(GUI.skin.label);
+        warnStyle.fontSize = 14;
+        warnStyle.normal.textColor = Color.yellow;
+
+        GUIStyle errStyle = new GUIStyle(GUI.skin.label);
+        errStyle.fontSize = 14;
+        errStyle.normal.textColor = Color.red;
+
+        GUIStyle okStyle = new GUIStyle(GUI.skin.label);
+        okStyle.fontSize = 14;
+        okStyle.normal.textColor = Color.green;
+
+        float panelW = 420f;
+        float panelH = 400f;
+        Rect panelRect = new Rect(10, 10, panelW, panelH);
+        GUI.Box(panelRect, $"[{name}] 实时状态", boxStyle);
+
+        float y = 35f;
+        float lineH = 22f;
+        float x0 = 20f, x1 = 220f;
+
+        // ---- 轨迹状态 ----
+        bool trajOk = (currentTrajectory != null && currentEdgeLength > 0.001f);
+        GUI.Label(new Rect(x0, y, 380, lineH),
+            $"轨迹: {(trajOk ? "OK" : "NULL/空")} | 边长度={currentEdgeLength:F2}m",
+            trajOk ? okStyle : errStyle);
+        y += lineH;
+
+        GUI.Label(new Rect(x0, y, 380, lineH),
+            $"进度: curDist={currentDistOnEdge:F2} / {currentEdgeLength:F2}  ({currentT:P1})",
+            boxStyle);
+        y += lineH;
+
+        // ---- 路径信息 ----
+        int curId = (currentEdgeIndex >= 0 && currentEdgeIndex < pathEdgeIds.Count) ? pathEdgeIds[currentEdgeIndex] : -999;
+        string curSegDesc = curId >= 0 ? $"车道#{curId}" : (curId < 0 ? $"连接器#{(-curId - 1)}" : "无效");
+        GUI.Label(new Rect(x0, y, 380, lineH),
+            $"路径: idx={currentEdgeIndex}/{pathEdgeIds.Count} | 当前段={curSegDesc}",
+            curId == -999 ? errStyle : boxStyle);
+        y += lineH;
+
+        // 显示后续3段路径
+        GUI.Label(new Rect(x0, y, 380, lineH), "后续3段:", boxStyle);
+        y += lineH;
+        for (int i = 1; i <= 3; i++)
+        {
+            int ni = currentEdgeIndex + i;
+            if (ni < pathEdgeIds.Count)
+            {
+                int nid = pathEdgeIds[ni];
+                string desc = nid >= 0 ? $"车道#{nid}" : $"连接器#{(-nid - 1)}";
+                GUI.Label(new Rect(x0 + 10, y, 370, lineH), $"[{i}] {desc}", okStyle);
+            }
+            else
+            {
+                GUI.Label(new Rect(x0 + 10, y, 370, lineH), $"[{i}] ---(路径末端)---", warnStyle);
+            }
+            y += lineH;
+        }
+        y += 4f;
+
+        // ---- 当前车道/连接器详情 ----
+        if (curId >= 0 && worldModel.GlobalLanes.TryGetValue(curId, out Lane curLane))
+        {
+            GUI.Label(new Rect(x0, y, 380, lineH),
+                $"当前车道: ID={curLane.LaneId} Road={curLane.RoadId} Dir={curLane.Direction}",
+                boxStyle);
+            y += lineH;
+            int connCount = (curLane.NextConnectorIds != null) ? curLane.NextConnectorIds.Count : 0;
+            GUI.Label(new Rect(x0, y, 380, lineH),
+                $"下一连接器数: {connCount}",
+                connCount > 0 ? okStyle : warnStyle);
+            y += lineH;
+        }
+        else if (curId < 0 && worldModel.GlobalConnectors.TryGetValue(-curId - 1, out LaneConnector curConn))
+        {
+            GUI.Label(new Rect(x0, y, 380, lineH),
+                $"当前连接器: ID={curConn.ConnectorId} Type={curConn.TurnType} From={curConn.FromLaneId} To={curConn.ToLaneId}",
+                boxStyle);
+            y += lineH;
+        }
+        y += 4f;
+
+        // ---- 速度/状态 ----
+        GUI.Label(new Rect(x0, y, 380, lineH),
+            $"速度: {currentSpeed:F2}m/s ({currentSpeed * 3.6f:F1}km/h) | 锁: {_isTrajectoryLocked}",
+            boxStyle);
+        y += lineH;
+
+        string stateStr = $"纵向状态: {longState} | 驱动状态: {currentState}";
+        GUI.Label(new Rect(x0, y, 380, lineH), stateStr,
+            (longState == LongitudinalState.FreeDrive) ? okStyle :
+            (longState == LongitudinalState.Stopped) ? errStyle : warnStyle);
+        y += lineH;
+
+        // ---- 红绿灯/停止线 ----
+        GUI.Label(new Rect(x0, y, 380, lineH),
+            $"红绿灯: {(redLightAhead ? "红灯/黄灯" : "无/绿灯")} | 停止线距: {(_hasStopLineAhead ? $"{_distToStopLine:F1}m" : "无")}",
+            redLightAhead ? errStyle : okStyle);
+        y += lineH;
+        GUI.Label(new Rect(x0, y, 380, lineH),
+            $"前车距离: {frontDistance:F1}m | 行人危险: {pedestrianDanger}",
+            frontDistance < safeDistance ? warnStyle : okStyle);
+        y += lineH;
+
+        GUI.Label(new Rect(x0, y, 380, lineH),
+            $"恢复计时: {_recoveryTimer:F1}s / {recoveryInterval}s | 位置: ({transform.position.x:F1},{transform.position.z:F1})",
+            boxStyle);
+        y += lineH;
+
+        GUI.Label(new Rect(x0, y, 380, lineH),
+            $"路径总段数: {pathEdgeIds.Count} | hasDest: {_hasDestination}",
+            boxStyle);
     }
 }
 

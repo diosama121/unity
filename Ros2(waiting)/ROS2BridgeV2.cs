@@ -4,9 +4,11 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 
 /// <summary>
-/// ROS2 Bridge (异步防卡死终极版)
+/// ROS2 AEB Bridge — 水论文专用：只做紧急制动决策
+/// Unity发 lidar_points + velocity → ROS2算安全距离 → 回传刹车指令
 /// </summary>
 public class ROS2BridgeV2 : MonoBehaviour
 {
@@ -17,8 +19,16 @@ public class ROS2BridgeV2 : MonoBehaviour
     [Header("Vehicle Components")]
     public SimpleCarController carController;
     public SimpleAutoDrive autoDrive;
+
     [Header("发送频率")]
     public float sendRate = 10f;
+
+    [Header("AEB雷达配置")]
+    public int lidarRayCount = 11;           // 前方扇形射线数（奇数）
+    public float lidarFanAngle = 40f;        // 水平扫描角度
+    public float lidarMaxRange = 50f;        // 最大探测距离
+    public LayerMask lidarLayerMask = ~0;    // 默认检测所有层
+
     [Header("安全与降级策略")]
     public float rosTimeout = 2.0f;
     private float lastReceiveTime = 0f;
@@ -38,11 +48,16 @@ public class ROS2BridgeV2 : MonoBehaviour
     private ConcurrentQueue<byte[]> sendQueue = new ConcurrentQueue<byte[]>();
     private Thread sendThread;
 
+    // LiDAR点云缓存（主线程生成，发送线程消费）
+    private float[] _cachedLidarPoints = new float[0];
+    private readonly object _lidarLock = new object();
+
     void Start()
     {
-        if (gameObject.name.Contains("NPC") || gameObject.name.Contains("Clone"))
+        if (autoDrive == null) autoDrive = GetComponent<SimpleAutoDrive>();
+        if (autoDrive != null && !autoDrive.isPlayerControlled)
         {
-            Debug.Log($"🚫 {gameObject.name} 是 NPC 车辆，已关闭其 ROS2 连接节点。");
+            Debug.Log($"[ROS2Bridge] {gameObject.name} 非主车，跳过ROS2连接");
             this.enabled = false;
             return;
         }
@@ -55,38 +70,18 @@ public class ROS2BridgeV2 : MonoBehaviour
     {
         if (carController == null) carController = GetComponent<SimpleCarController>();
         if (carController == null) carController = GetComponentInChildren<SimpleCarController>();
+        if (autoDrive == null) autoDrive = GetComponent<SimpleAutoDrive>();
 
         if (carController == null)
-        {
-            SimpleCarController[] allCars = FindObjectsOfType<SimpleCarController>();
-            foreach (var car in allCars)
-            {
-                string objName = car.gameObject.name.ToLower();
-                if (!objName.Contains("npc") && !objName.Contains("clone") && !objName.Contains("traffic"))
-                {
-                    carController = car;
-                    break;
-                }
-            }
-        }
-
-        if (autoDrive == null && carController != null)
-            autoDrive = carController.GetComponent<SimpleAutoDrive>();
-
-        if (carController == null)
-        {
-            Debug.LogError("❌ 找不到主车底盘！请确保主车名字中不包含 NPC/Clone。");
-        }
+            Debug.LogError("[ROS2Bridge] 未找到 SimpleCarController！");
         else
-        {
-            Debug.Log($"🎯 ROS2 专属桥接成功！已锁定主车: {carController.gameObject.name}");
-        }
+            Debug.Log($"[ROS2Bridge] 已锁定主车: {carController.gameObject.name}");
     }
 
     void ConnectToROS2()
     {
         string cleanIP = rosIP.Trim();
-        Debug.Log($"🔌 正在后台尝试连接到 ROS2: {cleanIP}:{rosPort}...");
+        Debug.Log($"[ROS2Bridge] 正在后台连接 ROS2 AEB节点 {cleanIP}:{rosPort}...");
 
         connectThread = new Thread(() =>
         {
@@ -101,7 +96,7 @@ public class ROS2BridgeV2 : MonoBehaviour
                 stream = client.GetStream();
                 isConnected = true;
 
-                Debug.Log($"✅ ROS2 连接成功！");
+                Debug.Log("[ROS2Bridge] AEB节点连接成功！");
 
                 receiveThread = new Thread(ReceiveData);
                 receiveThread.IsBackground = true;
@@ -113,7 +108,7 @@ public class ROS2BridgeV2 : MonoBehaviour
             }
             catch (Exception e)
             {
-                Debug.LogWarning($"❌ ROS2 连接失败: {e.Message}");
+                Debug.LogWarning($"[ROS2Bridge] 连接失败: {e.Message}");
                 isConnected = false;
             }
         });
@@ -124,47 +119,49 @@ public class ROS2BridgeV2 : MonoBehaviour
 
     void Update()
     {
+        // 1. 消费ROS2下行指令
         bool receivedThisFrame = false;
         while (commandQueue.TryDequeue(out string jsonData))
         {
             ProcessControlCommand(jsonData);
             receivedThisFrame = true;
         }
-
         if (receivedThisFrame)
-        {
             lastReceiveTime = Time.time;
-        }
 
+        // 2. 超时/断连 → 安全降级
         bool isTimeout = (Time.time - lastReceiveTime > rosTimeout);
-        
         if (useRosControl && (!isConnected || isTimeout))
         {
-            Debug.LogWarning("⚠️ ROS2 连接断开或指令超时！触发安全降级，交还本地 AI 控制...");
+            Debug.LogWarning("[ROS2Bridge] AEB连接超时！交还本地AI控制...");
             useRosControl = false;
             rosLinearVelocity = 0f;
             rosAngularVelocity = 0f;
 
-            if (autoDrive != null && !autoDrive.enabled)
+            if (autoDrive != null)
             {
                 autoDrive.enabled = true;
+                autoDrive.ResetNavigation(); // 降级后触发重新寻路
             }
         }
 
         if (!isConnected) return;
 
+        // 3. 生成LiDAR点云（主线程做Physics，线程安全）
+        GenerateLidarPoints();
+
+        // 4. 发送车辆状态
         if (Time.time - lastSendTime > 1f / sendRate)
         {
             SendVehicleState();
             lastSendTime = Time.time;
         }
 
+        // 5. 应用ROS2控制指令
         if (useRosControl)
         {
             if (autoDrive != null && autoDrive.enabled)
-            {
                 autoDrive.enabled = false;
-            }
 
             if (carController != null)
             {
@@ -172,7 +169,12 @@ public class ROS2BridgeV2 : MonoBehaviour
                 float targetThrottle = Mathf.Clamp(rosLinearVelocity / maxSpd, -1f, 1f);
                 float targetSteering = Mathf.Clamp(-rosAngularVelocity / 1.5f, -1f, 1f);
 
-                carController.ApplyCommand(new VehicleCommand { throttle = targetThrottle, steering = targetSteering });
+                carController.ApplyCommand(new VehicleCommand
+                {
+                    throttle = targetThrottle,
+                    steering = targetSteering,
+                    isBraking = (rosLinearVelocity < 0f)  // ROS2发负速度=刹车
+                });
             }
         }
         else
@@ -184,38 +186,68 @@ public class ROS2BridgeV2 : MonoBehaviour
         }
     }
 
+    // ==========================================
+    // LiDAR 点云生成（前方扇形多射线扫描）
+    // ==========================================
+    void GenerateLidarPoints()
+    {
+        var points = new List<float>();
+        Vector3 origin = transform.position + Vector3.up * 0.5f; // 车顶高度
+        Vector3 fwd = transform.forward;
+
+        float halfAngle = lidarFanAngle * 0.5f;
+        for (int i = 0; i < lidarRayCount; i++)
+        {
+            float angle = (lidarRayCount == 1) ? 0f
+                : -halfAngle + (halfAngle * 2f * i / (lidarRayCount - 1));
+
+            Vector3 dir = Quaternion.Euler(0f, angle, 0f) * fwd;
+
+            if (Physics.Raycast(origin, dir, out RaycastHit hit, lidarMaxRange, lidarLayerMask))
+            {
+                // 转为车辆本地坐标（ROS2侧更方便处理）
+                Vector3 localHit = transform.InverseTransformPoint(hit.point);
+                points.Add(localHit.x);
+                points.Add(localHit.y);
+                points.Add(localHit.z);
+            }
+            // 无命中则不添加该点
+        }
+
+        lock (_lidarLock)
+        {
+            _cachedLidarPoints = points.ToArray();
+        }
+    }
+
+    // ==========================================
+    // 发送车辆状态到ROS2
+    // ==========================================
     void SendVehicleState()
     {
         if (!isConnected || stream == null || !stream.CanWrite) return;
 
         try
         {
+            float[] lidarCopy;
+            lock (_lidarLock)
+            {
+                lidarCopy = (float[])_cachedLidarPoints.Clone();
+            }
+
             var state = new VehicleState
             {
-                position = new float[] { transform.position.x, transform.position.y, transform.position.z },
-                rotation = new float[] { transform.eulerAngles.x, transform.eulerAngles.y, transform.eulerAngles.z },
                 velocity = carController != null ? carController.GetSpeed() : 0f,
                 steering_angle = carController != null ? carController.currentSteeringAngle : 0f,
-                auto_drive_state = (autoDrive != null && autoDrive.enabled) ? autoDrive.GetCurrentState().ToString() : "ROS2_Controlled",
-                lane_id = autoDrive != null ? autoDrive.currentLaneId : -1,
-                stopline_distance = -1f,
-                phase_state = "Uncontrolled",
+                lidar_points = lidarCopy,
+                auto_drive_state = (autoDrive != null && autoDrive.enabled)
+                    ? autoDrive.longState.ToString() : "ROS2_Controlled",
                 timestamp = Time.time
             };
-///
-      //      if (autoDrive != null && WorldModel.Instance != null )//autoDrive.currentDestinationNodeId这里之前有东西的，是个判断的，重构过程中先删一下//
-      //      {
-      //          var stopLine =WorldModel.Instance.GetNearestStopLine(autoDrive.currentDestinationNodeId, transform.position);
-      //         if (stopLine != null)
-      //          {
-//state.stopline_distance = Vector3.Distance(transform.position, stopLine.Position);
-       //             int phaseId = stopLine.AssociatedPhaseId;
-  //                 state.phase_state = WorldModel.Instance.GetPhaseState(phaseId).ToString();
-    //            }
-   //         }
-///
+
             string jsonData = JsonUtility.ToJson(state) + "\n";
             byte[] data = Encoding.UTF8.GetBytes(jsonData);
+
             while (sendQueue.TryDequeue(out _)) { }
             sendQueue.Enqueue(data);
         }
@@ -225,6 +257,9 @@ public class ROS2BridgeV2 : MonoBehaviour
         }
     }
 
+    // ==========================================
+    // 接收线程
+    // ==========================================
     void ReceiveData()
     {
         byte[] buffer = new byte[4096];
@@ -247,7 +282,8 @@ public class ROS2BridgeV2 : MonoBehaviour
                     messageBuffer.Append(data);
 
                     string currentBuffer = messageBuffer.ToString();
-                    string[] messages = currentBuffer.Split(new char[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                    string[] messages = currentBuffer.Split(
+                        new char[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
 
                     for (int i = 0; i < messages.Length; i++)
                     {
@@ -305,61 +341,65 @@ public class ROS2BridgeV2 : MonoBehaviour
             {
                 rosLinearVelocity = cmd.linear_velocity;
                 rosAngularVelocity = cmd.angular_velocity;
-                useRosControl = true;
+                useRosControl = cmd.enable_control;
             }
-            Debug.Log($"🧩 JSON解析结果: 提取到的速度 = {rosLinearVelocity}");
         }
         catch (Exception e)
         {
-            Debug.LogWarning($"JSON 解析异常: {e.Message} | 数据: {jsonData}");
+            Debug.LogWarning($"[ROS2Bridge] JSON解析异常: {e.Message}");
         }
     }
 
-    // ===== 新增 Disconnect 方法 =====
+    // ==========================================
+    // 连接管理
+    // ==========================================
     public void Disconnect()
     {
-        Debug.Log("🔌 ROS2 Bridge 正在断开连接...");
+        Debug.Log("[ROS2Bridge] 断开连接...");
         isConnected = false;
 
-        // 安全终止后台线程（与项目中其他线程终止方式保持一致）
         try
         {
             if (receiveThread != null && receiveThread.IsAlive) receiveThread.Abort();
             if (sendThread != null && sendThread.IsAlive) sendThread.Abort();
             if (connectThread != null && connectThread.IsAlive) connectThread.Abort();
         }
-        catch (System.Exception e)
+        catch (Exception e)
         {
-            Debug.LogWarning($"断开连接时线程终止异常: {e.Message}");
+            Debug.LogWarning($"[ROS2Bridge] 线程终止异常: {e.Message}");
         }
 
-        // 释放网络资源
         if (stream != null) { stream.Close(); stream = null; }
         if (client != null) { client.Close(); client = null; }
 
-        // 重置控制状态
         lastReceiveTime = 0f;
         useRosControl = false;
         rosLinearVelocity = 0f;
         rosAngularVelocity = 0f;
 
-        // 如果当前处于远程控制状态，交还本地 AI
         if (autoDrive != null && !autoDrive.enabled)
         {
             autoDrive.enabled = true;
+            autoDrive.ResetNavigation();
         }
     }
-    // ==============================
 
     public void Reconnect()
     {
-        Debug.Log("🔄 ROS2 Bridge 正在重连...");
+        Debug.Log("[ROS2Bridge] 重连中...");
         isConnected = false;
-        if (receiveThread != null && receiveThread.IsAlive) receiveThread.Abort();
-        if (sendThread != null && sendThread.IsAlive) sendThread.Abort();
-        if (connectThread != null && connectThread.IsAlive) connectThread.Abort();
+
+        try
+        {
+            if (receiveThread != null && receiveThread.IsAlive) receiveThread.Abort();
+            if (sendThread != null && sendThread.IsAlive) sendThread.Abort();
+            if (connectThread != null && connectThread.IsAlive) connectThread.Abort();
+        }
+        catch { }
+
         if (stream != null) { stream.Close(); stream = null; }
         if (client != null) { client.Close(); client = null; }
+
         lastReceiveTime = 0f;
         useRosControl = false;
         rosLinearVelocity = 0f;
@@ -370,33 +410,35 @@ public class ROS2BridgeV2 : MonoBehaviour
     void OnApplicationQuit()
     {
         isConnected = false;
-        if (receiveThread != null && receiveThread.IsAlive) receiveThread.Abort();
-        if (sendThread != null && sendThread.IsAlive) sendThread.Abort();
-        if (connectThread != null && connectThread.IsAlive) connectThread.Abort();
+        try
+        {
+            if (receiveThread != null && receiveThread.IsAlive) receiveThread.Abort();
+            if (sendThread != null && sendThread.IsAlive) sendThread.Abort();
+            if (connectThread != null && connectThread.IsAlive) connectThread.Abort();
+        }
+        catch { }
         if (stream != null) stream.Close();
         if (client != null) client.Close();
     }
 
+    // ==========================================
+    // JSON序列化结构体
+    // ==========================================
     [System.Serializable]
     public class VehicleState
     {
-        public float[] position;
-        public float[] rotation;
-        public float velocity;
-        public float steering_angle;
-        public string auto_drive_state;
-        public float front_obstacle_distance;
-        public float timestamp;
-        public int lane_id;
-        public float stopline_distance;
-        public string phase_state;
+        public float velocity;                   // m/s, ROS2侧 *3.6 转 km/h
+        public float steering_angle;             // 方向盘角度
+        public float[] lidar_points;              // [x,y,z, x,y,z,...] 本地坐标点云
+        public string auto_drive_state;           // 自动驾驶状态
+        public float timestamp;                   // Unity时间戳
     }
 
     [System.Serializable]
     public class ControlCommand
     {
-        public float linear_velocity;
-        public float angular_velocity;
-        public bool enable_control;
+        public float linear_velocity;    // m/s, 负值=倒车/刹车
+        public float angular_velocity;   // rad/s, 正值=左转
+        public bool enable_control;      // true=ROS2接管控制
     }
 }

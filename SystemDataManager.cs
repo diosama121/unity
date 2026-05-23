@@ -28,49 +28,58 @@ public class SystemDataManager : MonoBehaviour
         // ✅ 修复：使用 Application.persistentDataPath 替代 Application.dataPath
         // 避免权限问题，支持全平台
         csvPath = System.IO.Path.Combine(Application.persistentDataPath, 
-            "VehicleTelemetry_V2.0_" + System.DateTime.Now.ToString("yyyyMMdd") + ".csv");
+            "VehicleTelemetry_" + System.DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".csv");
         jsonPath = System.IO.Path.Combine(Application.persistentDataPath, 
             "RoadMapData_V2.0.json");
         
         csvData.Clear();
-        csvData.AppendLine("Timestamp,PosX,PosZ,Speed(km_h),AI_State,Obstacle_Detected,NodeID,NodeType");
+        csvData.AppendLine("Timestamp,PosX,PosZ,Speed(km/h),State,NodeID,NodeType");
         
         if (roadGen == null) roadGen = FindObjectOfType<RoadNetworkGenerator>();
-        
-        Debug.Log("📁 数据导出路径已设置为安全路径：" + Application.persistentDataPath);
     }
 
     void Update()
     {
+        // F9: 开始录制（主车）
         if (Input.GetKeyDown(KeyCode.F9))
         {
-            isRecording = !isRecording;
-            
-            if (isRecording) 
+            if (!isRecording)
             {
-                if (targetCar == null) targetCar = FindObjectOfType<SimpleCarController>();
-                if (targetAI == null) targetAI = FindObjectOfType<SimpleAutoDrive>();
+                // 自动查找主车(isPlayerControlled在SimpleAutoDrive上)
+                var allDrives = FindObjectsOfType<SimpleAutoDrive>();
+                SimpleAutoDrive mainDrive = null;
+                foreach (var d in allDrives)
+                {
+                    if (d.isPlayerControlled) { mainDrive = d; break; }
+                }
+                if (mainDrive != null)
+                {
+                    targetCar = mainDrive.GetComponent<SimpleCarController>();
+                    targetAI = mainDrive;
+                }
 
                 if (targetCar == null)
                 {
-                    Debug.LogError("❌ 找不到主车！数据录制失败。");
-                    isRecording = false;
+                    Debug.LogError("[SysData] F9 录制失败：找不到主车(isPlayerControlled=true)");
                 }
                 else
                 {
-                    Debug.Log("🔴 开始录制车辆数据... (含语义标签)");
+                    isRecording = true;
+                    timer = 0f;
+                    Debug.Log($"[SysData] F9 开始录制主车 {targetCar.name} | 文件: {csvPath}");
                 }
-            }
-            else 
-            {
-                File.WriteAllText(csvPath, csvData.ToString());
-                Debug.Log($"✅ 车辆遥测数据已导出至: {csvPath}");
             }
         }
 
-        if (Input.GetKeyDown(KeyCode.F10)) 
+        // F10: 停止录制 + 导出CSV
+        if (Input.GetKeyDown(KeyCode.F10))
         {
-            ExportRoadMap();
+            if (isRecording)
+            {
+                isRecording = false;
+                File.WriteAllText(csvPath, csvData.ToString());
+                Debug.Log($"[SysData] F10 停止录制,已导出 {csvData.Length} 字节 → {csvPath}");
+            }
         }
 
         if (isRecording && targetCar != null)
@@ -124,9 +133,7 @@ public class SystemDataManager : MonoBehaviour
         }
         
         csvData.AppendLine($"{Time.time:F2},{targetCar.transform.position.x:F2},{targetCar.transform.position.z:F2}," +
-                           $"{speedKmh:F2},{aiState},{hasObs},{nodeID},{nodeType}");
-                           
-        Debug.Log($"正在记录 -> 车速: {speedKmh:F1} km/h | 节点ID: {nodeID} | 类型: {nodeType}");
+                           $"{speedKmh:F2},{aiState},{nodeID},{nodeType}");
     }
 
     void ExportRoadMap()
