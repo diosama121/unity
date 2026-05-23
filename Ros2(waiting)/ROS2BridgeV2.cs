@@ -58,6 +58,12 @@ public class ROS2BridgeV2 : MonoBehaviour
     private float[] _cachedLidarPoints = new float[0];
     private readonly object _lidarLock = new object();
 
+    // ===== ROS2回传的全局状态（来自global_state消息） =====
+    private string _rosAebState = "IDLE";
+    private float _rosTTC = 0f;
+    private float _rosMinDist = 0f;
+    private float _rosSpeedKmh = 0f;
+
     // ===== 屏幕通知 =====
     private float _connectNotifyTimer = 0f;
     private const float connectNotifyDuration = 3f;
@@ -401,6 +407,23 @@ public class ROS2BridgeV2 : MonoBehaviour
         try
         {
             jsonData = jsonData.Trim();
+            if (string.IsNullOrEmpty(jsonData)) return;
+
+            // 区分消息类型：global_state 消息包含 "type" 字段
+            if (jsonData.Contains("\"type\""))
+            {
+                GlobalState state = JsonUtility.FromJson<GlobalState>(jsonData);
+                if (state != null)
+                {
+                    _rosAebState = state.aeb_state ?? "IDLE";
+                    _rosTTC = state.ttc_s;
+                    _rosMinDist = state.min_dist_m;
+                    _rosSpeedKmh = state.speed_kmh;
+                }
+                return;
+            }
+
+            // 控制指令：linear_velocity / angular_velocity / enable_control
             ControlCommand cmd = JsonUtility.FromJson<ControlCommand>(jsonData);
             if (cmd != null)
             {
@@ -507,6 +530,21 @@ public class ROS2BridgeV2 : MonoBehaviour
         public float linear_velocity;
         public float angular_velocity;
         public bool enable_control;
+    }
+
+    [System.Serializable]
+    public class GlobalState
+    {
+        public string type;
+        public string aeb_state;
+        public float ttc_s;
+        public float min_dist_m;
+        public float speed_kmh;
+        public bool aeb;
+        public bool hud;
+        public bool cruise;
+        public bool manual_override;
+        public float tcp_hz;
     }
 
     // ==========================================
