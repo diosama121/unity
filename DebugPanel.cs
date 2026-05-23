@@ -255,11 +255,11 @@ public class DebugPanel : MonoBehaviour
             
             if (newState)
             {
-                Debug.Log("🔴 [DebugPanel] 一键启动数据录制...");
+                Debug.Log(" [DebugPanel] 一键启动数据录制...");
             }
             else
             {
-                Debug.Log("✅ [DebugPanel] 一键停止数据录制，正在导出...");
+                Debug.Log(" [DebugPanel] 一键停止数据录制，正在导出...");
             }
         }
     }
@@ -283,7 +283,7 @@ public class DebugPanel : MonoBehaviour
     {
         if (recordButtonText != null)
         {
-            recordButtonText.text = isRecording ? "🔴 停止录制" : "🎬 开始录制";
+            recordButtonText.text = isRecording ? "停止录制" : " 开始录制";
             recordButtonText.color = isRecording ? Color.red : Color.green;
         }
     }
