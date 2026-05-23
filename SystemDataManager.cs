@@ -2,7 +2,7 @@ using UnityEngine;
 using System.IO;
 using System.Text;
 using System.Collections.Generic;
-
+using IOPath = System.IO.Path;
 /// <summary>
 /// V3.0 数据管理中心 — 一键导出 + 遥测录制
 /// 导出三部分：
@@ -112,7 +112,7 @@ public class SystemDataManager : MonoBehaviour
         _recordTimer = 0f;
 
         string timestamp = System.DateTime.Now.ToString("yyyyMMdd_HHmmss");
-        _csvPath = Path.Combine(Application.persistentDataPath, $"VehicleTelemetry_{timestamp}.csv");
+        _csvPath = IOPath.Combine(Application.persistentDataPath, $"VehicleTelemetry_{timestamp}.csv");
         _csvData.Clear();
         _csvData.AppendLine("Timestamp,PosX,PosZ,Speed(km/h),State,NodeID,NodeType");
 
@@ -126,12 +126,12 @@ public class SystemDataManager : MonoBehaviour
         if (string.IsNullOrEmpty(_csvPath))
         {
             string timestamp = System.DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            _csvPath = Path.Combine(Application.persistentDataPath, $"VehicleTelemetry_{timestamp}.csv");
+            _csvPath =  System.IO.Path.Combine(Application.persistentDataPath, $"VehicleTelemetry_{timestamp}.csv");
         }
         File.WriteAllText(_csvPath, _csvData.ToString());
         Debug.Log($"[SysData] 停止录制, {_csvData.Length} bytes → {_csvPath}");
     }
-
+ 
     /// <summary>切换录制状态（旧DebugPanel兼容）</summary>
     public void ToggleRecording()
     {
@@ -151,7 +151,7 @@ public class SystemDataManager : MonoBehaviour
     {
         RefreshCache();
         string timestamp = System.DateTime.Now.ToString("yyyyMMdd_HHmmss");
-        string exportPath = Path.Combine(Application.persistentDataPath, $"FullReport_{timestamp}.json");
+        string exportPath =  System.IO.Path.Combine(Application.persistentDataPath, $"FullReport_{timestamp}.json");
 
         var world = WorldModel.Instance;
         if (world == null)
@@ -315,7 +315,7 @@ public class SystemDataManager : MonoBehaviour
         var data = new MapData();
         foreach (var node in roadGen.nodes)
             data.nodes.Add(new NodeData { id = node.id, x = node.position.x, y = node.position.y, z = node.position.z });
-        string path = Path.Combine(Application.persistentDataPath, "RoadMapData_V2.0.json");
+        string path =  System.IO.Path.Combine(Application.persistentDataPath, "RoadMapData_V2.0.json");
         File.WriteAllText(path, JsonUtility.ToJson(data, true));
         Debug.Log($"路网数据已导出至: {path}");
     }
