@@ -97,6 +97,16 @@ public class MasterUIManager : MonoBehaviour
         {
             RuntimeInputManager.Instance.OnKeyRebound += OnKeyRebound;
         }
+
+        // ★ ROS2连接状态变更 → UIToggle自动跟随
+        if (ros2Bridge != null)
+        {
+            ros2Bridge.OnConnectionChanged += (connected) =>
+            {
+                if (toggles.TryGetValue("ROS2Bridge", out Toggle t) && t != null)
+                    t.SetIsOnWithoutNotify(connected);
+            };
+        }
     }
 
     void Update()
@@ -1858,7 +1868,7 @@ if (Input.GetKeyDown(KeyCode.R))
 
         SyncToggleValue("SplineGizmos", roadBuilder != null ? roadBuilder.showSplineGizmos : false);
 
-        bool ros2Active = ros2Bridge != null && ros2Bridge.isActiveAndEnabled;
+        bool ros2Active = ros2Bridge != null && ros2Bridge.isConnected;
         SyncToggleValue("ROS2Bridge", ros2Active);
 
         SyncDropdownValue("CityMode", (roadGen != null && roadGen.isCountryside) ? 1 : 0);
@@ -2179,6 +2189,10 @@ if (Input.GetKeyDown(KeyCode.R))
         bool rosCon = ros2Bridge != null && ros2Bridge.isConnected;
         string rosHz = ros2Bridge != null ? ros2Bridge.sendRate.ToString("F0") : "10";
         SetHUDValue("HUDRosStatus", rosCon ? "ON " + rosHz + "Hz" : "OFF");
+
+        // ★ 同步ROS2 Toggle到实际连接状态
+        if (toggles.TryGetValue("ROS2Bridge", out Toggle rosTg) && rosTg != null && rosTg.isOn != rosCon)
+            rosTg.SetIsOnWithoutNotify(rosCon);
         Color rosColor = rosCon ? new Color(0.2f, 0.9f, 0.3f, heartbeatAlpha) : new Color(0.5f, 0.5f, 0.5f);
         if (hudTexts.TryGetValue("HUDRosStatus", out TextMeshProUGUI rosVal) && rosVal != null) rosVal.color = rosColor;
 

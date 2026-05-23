@@ -133,6 +133,9 @@ public class SimpleAutoDrive : MonoBehaviour
     private const float stuckPositionThreshold = 8f;   // 两次卡死位置距离 < 8m 视为同一地点
     private const int maxStuckRetries = 5;              // 同位置超过5次则强制跳转
 
+    // ========== 信息面板开关（U键） ==========
+    private bool _showInfoPanel = true;
+
     // ========== NPC全局注册表（假检测用） ==========
     public static List<SimpleAutoDrive> AllCars = new List<SimpleAutoDrive>();
 
@@ -227,6 +230,10 @@ public class SimpleAutoDrive : MonoBehaviour
     {
         UpdateTrajectoryLine();
         DrawLidarRays();
+
+        // ★ U键：切换信息面板
+        if (Input.GetKeyDown(KeyCode.U))
+            _showInfoPanel = !_showInfoPanel;
 
         if (isPlayerControlled)
         {
@@ -936,6 +943,7 @@ public class SimpleAutoDrive : MonoBehaviour
     void OnGUI()
     {
         if (!isPlayerControlled) return;
+        if (!_showInfoPanel) return;
 
         GUIStyle boxStyle = new GUIStyle(GUI.skin.box);
         boxStyle.fontSize = 14;
