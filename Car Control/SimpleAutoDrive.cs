@@ -72,6 +72,7 @@ public class SimpleAutoDrive : MonoBehaviour
     public bool IsInDilemmaZone          => _dilemmaZoneArbiter?.IsInDilemmaZone ?? false;
     public bool IsDeadlockPerturbating   => _deadlockRecovery?.IsPerturbating ?? false;
     public bool IsYieldingToEmergency    => _emergencyYieldHandler?.IsYielding ?? false;
+    public float PullOverOffset           => _pullOverHandler?.CurrentOffset ?? 0f;
 
     public DriveState currentState
     {
@@ -170,6 +171,7 @@ public class SimpleAutoDrive : MonoBehaviour
     private DeadlockRecovery      _deadlockRecovery;
     private DilemmaZoneArbiter    _dilemmaZoneArbiter;
     private EmergencyYieldHandler _emergencyYieldHandler;
+    private PullOverHandler       _pullOverHandler;
 
     // ==========================================
     // 初始化
@@ -209,6 +211,7 @@ public class SimpleAutoDrive : MonoBehaviour
         _deadlockRecovery      = new DeadlockRecovery();
         _dilemmaZoneArbiter    = new DilemmaZoneArbiter();
         _emergencyYieldHandler = new EmergencyYieldHandler();
+        _pullOverHandler       = new PullOverHandler();
 
         // 防止 TrafficManager 的寻路记忆被清空
         if (pathEdgeIds.Count > 0 && currentTrajectory == null)
@@ -350,6 +353,20 @@ public class SimpleAutoDrive : MonoBehaviour
         _emergencyYieldHandler.Update(transform.position, false, Time.deltaTime);
 
         // ==========================================
+        // 直路让行靠边（PullOverHandler）
+        // 仅在直路且不在路口范围内时允许靠边
+        // ==========================================
+        if (_emergencyYieldHandler.IsYielding && IsOnStraightRoad())
+        {
+            _pullOverHandler.Activate();
+        }
+        else
+        {
+            _pullOverHandler.Deactivate();
+        }
+        _pullOverHandler.Update(Time.deltaTime);
+
+        // ==========================================
         // 黄灯困境区仲裁（论文 §4.2.5）
         // ==========================================
         if (_isYellowLight && hasStopLineAhead)
@@ -440,6 +457,14 @@ public class SimpleAutoDrive : MonoBehaviour
         float moveDist = currentSpeed * Time.deltaTime;
         AdvanceOnEdge(moveDist);
         SnapToCurve();
+
+        // ★ 应用横向偏移（直路让行靠边）
+        if (_pullOverHandler.IsActive && currentTrajectory != null)
+        {
+            Vector3 tangent = currentTrajectory.GetTangentAtDistance(currentDistOnEdge);
+            Vector3 lateralOffset = _pullOverHandler.GetLateralOffset(tangent);
+            transform.position += lateralOffset;
+        }
 
         if (currentTrajectory == null) return;
 
@@ -641,6 +666,28 @@ public class SimpleAutoDrive : MonoBehaviour
         // 3. 旋转直接对齐切线
         Quaternion targetRot = Quaternion.LookRotation(tangent);
         transform.SetPositionAndRotation(pos, targetRot);
+    }
+
+    // ==========================================
+    // 直路判定：仅在 Lane（非 Connector）且远离路口时允许靠边
+    // ==========================================
+    /// <summary>
+    /// 判断当前是否在直路上（非路口区域）。
+    /// 条件：当前边是 Lane（非 Connector）且距停止线 > 15m。
+    /// </summary>
+    bool IsOnStraightRoad()
+    {
+        // 当前边必须是 Lane（正ID），不是 Connector（负ID）
+        if (currentEdgeIndex < 0 || currentEdgeIndex >= pathEdgeIds.Count)
+            return false;
+        int curId = pathEdgeIds[currentEdgeIndex];
+        if (curId < 0) return false; // Connector = 路口区域
+
+        // 远离停止线/路口
+        if (hasStopLineAhead && distToStopLine < 15f)
+            return false;
+
+        return true;
     }
 
     // ==========================================
@@ -920,6 +967,7 @@ public class SimpleAutoDrive : MonoBehaviour
         currentEdgeIndex = 0;
         _subsumptionEngine?.ResetDebounce();
         _deadlockRecovery?.Reset();
+        _pullOverHandler?.Reset();
         LoadCurrentEdge();
     }
 
@@ -975,6 +1023,7 @@ public class SimpleAutoDrive : MonoBehaviour
         longState = LongitudinalState.FreeDrive;
         _subsumptionEngine?.ResetDebounce();
         _deadlockRecovery?.Reset();
+        _pullOverHandler?.Reset();
 
         // 6. 设定起始车道 + 规划路径
         pathEdgeIds.Clear();
@@ -1209,6 +1258,10 @@ public class SimpleAutoDrive : MonoBehaviour
         GUI.Label(new Rect(x0, y, 380, lineH),
             $"前车距离: {frontDistance:F1}m | 行人危险: {pedestrianDanger} | 让行: {_emergencyYieldHandler?.IsYielding ?? false}",
             frontDistance < safeDistance ? warnStyle : okStyle);
+        y += lineH;
+        GUI.Label(new Rect(x0, y, 380, lineH),
+            $"靠边偏移: {_pullOverHandler?.CurrentOffset ?? 0f:F2}m | 靠边中: {_pullOverHandler?.IsActive ?? false} | 直路: {IsOnStraightRoad()}",
+            (_pullOverHandler?.IsActive ?? false) ? warnStyle : okStyle);
         y += lineH;
 
         GUI.Label(new Rect(x0, y, 380, lineH),

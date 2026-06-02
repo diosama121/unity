@@ -66,7 +66,7 @@ public class DeadlockRecovery
             // 扰动中如果移动了，延长一点时间保出困
             if (_perturbationActive && moved > 0.5f)
             {
-                _perturbationTimer = Mathf.Max(_perturbationTimer, _perturbationDuration - 1f);
+                _perturbationTimer = Mathf.Max(_perturbationTimer, perturbationDuration - 1f);
             }
         }
 
