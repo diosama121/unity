@@ -133,6 +133,10 @@ public class SimpleAutoDrive : MonoBehaviour
     private float stoppedTimer;
     private bool  _isYellowLight;            // 当前是否为黄灯（用于困境区仲裁）
 
+    // ========== 停车标志 ==========
+    private float _stopSignTimer = 0f;       // 停车标志已停止计时
+    private const float stopSignDuration = 2f; // 停车标志需停满2秒
+
     // ========== 倒车 ==========
     private float reverseTimer = 0f;
     private const float reverseDuration = 2.5f;
@@ -385,6 +389,11 @@ public class SimpleAutoDrive : MonoBehaviour
         float effectiveCruiseSpeed = targetSpeed;
         if (_emergencyYieldHandler.IsYielding)
             effectiveCruiseSpeed = Mathf.Min(effectiveCruiseSpeed, _emergencyYieldHandler.GetYieldSpeed());
+
+        // ★ 速度限制：读取当前车道的 SpeedLimit (km/h → m/s)
+        float laneSpeedLimit = GetLaneSpeedLimit();
+        if (laneSpeedLimit > 0f)
+            effectiveCruiseSpeed = Mathf.Min(effectiveCruiseSpeed, laneSpeedLimit);
 
         var sensorInput = new SubsumptionEngine.SensorInput
         {
@@ -690,6 +699,23 @@ public class SimpleAutoDrive : MonoBehaviour
         return true;
     }
 
+    /// <summary>
+    /// 获取当前车道的速度限制（m/s），从 WorldModel 读取。
+    /// 返回0表示无限制（或无法获取）。
+    /// </summary>
+    float GetLaneSpeedLimit()
+    {
+        if (worldModel == null) return 0f;
+        if (currentEdgeIndex < 0 || currentEdgeIndex >= pathEdgeIds.Count) return 0f;
+        int curId = pathEdgeIds[currentEdgeIndex];
+        if (curId < 0) return 0f; // Connector 不限速
+
+        if (worldModel.GlobalLanes.TryGetValue(curId, out Lane lane))
+            return lane.SpeedLimit / 3.6f; // km/h → m/s
+
+        return 0f;
+    }
+
     // ==========================================
     // 传感器采样（分支：NPC假检测 / 主车真雷达）
     // ==========================================
@@ -703,6 +729,14 @@ public class SimpleAutoDrive : MonoBehaviour
         // ★ 统一红绿灯检测（都用 WorldModel 相位状态 + 停止线）
         redLightAhead = CheckRedLightUnified();
 
+        // ★ 停车标志检测（无交通灯路口 = StopSign）
+        if (!redLightAhead && CheckStopSign())
+            redLightAhead = true;
+
+        // ★ 环岛入口让行
+        if (!redLightAhead && CheckRoundaboutYield())
+            redLightAhead = true;
+
         if (isPlayerControlled)
         {
             // 主车：真实物理雷达（后续对接ROS2）
@@ -711,8 +745,8 @@ public class SimpleAutoDrive : MonoBehaviour
         }
         else
         {
-            // NPC：假检测（无Physics开销）
-            pedestrianDanger = false;
+            // NPC：真检测行人（用 Physics，性能压力小：行人数量有限）
+            pedestrianDanger = CheckPedestrianDanger();
             frontDistance = CheckFrontVehicleFake();
         }
 
@@ -757,6 +791,93 @@ public class SimpleAutoDrive : MonoBehaviour
         return (state == IntersectionState.RedLight || state == IntersectionState.YellowLight);
     }
 
+    /// <summary>
+    /// 停车标志检测：无交通灯路口(Uncontrolled)视为StopSign。
+    /// 接近停止线时触发 → 停车 → 停满2秒 → 解除。
+    /// </summary>
+    bool CheckStopSign()
+    {
+        if (worldModel == null) return false;
+        RoadNode nearestNode = worldModel.GetNearestNode(transform.position);
+        if (nearestNode == null) return false;
+        if (nearestNode.Type != NodeType.Intersection && nearestNode.Type != NodeType.Merge) return false;
+
+        float distToNode = Vector3.Distance(
+            new Vector3(transform.position.x, 0, transform.position.z),
+            new Vector3(nearestNode.WorldPos.x, 0, nearestNode.WorldPos.z));
+        if (distToNode > 25f) { _stopSignTimer = 0f; return false; }
+
+        // 只对 Uncontrolled 路口（无交通灯）实施 StopSign
+        IntersectionState state = worldModel.GetIntersectionState(nearestNode.Id);
+        if (state != IntersectionState.Uncontrolled) { _stopSignTimer = 0f; return false; }
+
+        // 获取停止线
+        StopLine stopLine = worldModel.GetNearestStopLine(nearestNode.Id, transform.position);
+        float distToLine = stopLine != null
+            ? Vector3.Distance(transform.position, stopLine.Position)
+            : distToNode - 5f;
+
+        // 已越过停止线或太远
+        if (distToLine < stopLinePassedThreshold || distToLine > 12f)
+        {
+            _stopSignTimer = 0f;
+            return false;
+        }
+
+        // 接近停止线 且 车速很低 → 累计停止计时
+        if (distToLine < 8f && currentSpeed < 0.5f)
+        {
+            _stopSignTimer += Time.deltaTime;
+            if (_stopSignTimer >= stopSignDuration)
+            {
+                _stopSignTimer = 0f;
+                return false; // 停够2秒，放行
+            }
+        }
+
+        // 设置停止线信息（供 OnGUI 显示）
+        if (stopLine != null)
+        {
+            hasStopLineAhead = true;
+            distToStopLine = Mathf.Min(distToStopLine, distToLine);
+            nearestStopLinePos = stopLine.Position;
+        }
+
+        return true; // 需继续停止
+    }
+
+    /// <summary>
+    /// 环岛入口让行检测：如果最近路口是环岛，且环岛内有其他车辆，则让行。
+    /// </summary>
+    bool CheckRoundaboutYield()
+    {
+        if (worldModel == null) return false;
+        RoadNode nearestNode = worldModel.GetNearestNode(transform.position);
+        if (nearestNode == null) return false;
+
+        // 只有环岛路口才触发
+        if (nearestNode.Kind != IntersectionKind.Roundabout) return false;
+
+        float distToNode = Vector3.Distance(
+            new Vector3(transform.position.x, 0, transform.position.z),
+            new Vector3(nearestNode.WorldPos.x, 0, nearestNode.WorldPos.z));
+        if (distToNode > 25f) return false; // 太远不检测
+
+        // 检查环岛内是否有其他车辆（距离路口中心 < 20m 且不是自己）
+        AllCars.RemoveAll(c => c == null);
+        foreach (var car in AllCars)
+        {
+            if (car == this || car == null) continue;
+            float carDistToNode = Vector3.Distance(
+                new Vector3(car.transform.position.x, 0, car.transform.position.z),
+                new Vector3(nearestNode.WorldPos.x, 0, nearestNode.WorldPos.z));
+            if (carDistToNode < 20f)
+                return true; // 环岛内有车，让行
+        }
+
+        return false;
+    }
+
     /// <summary> NPC假检测：遍历全局车列表，前向点积判断前方车辆距离 </summary>
     float CheckFrontVehicleFake()
     {
@@ -785,6 +906,20 @@ public class SimpleAutoDrive : MonoBehaviour
             if (dist < minDist) minDist = dist;
         }
         return minDist;
+    }
+
+    /// <summary> NPC真检测：前方3m内是否有行人（Physics.OverlapSphere） </summary>
+    bool CheckPedestrianDanger()
+    {
+        if (pedestrianLayer.value == 0) return false;
+        Vector3 checkPos = transform.position + transform.forward * 1.5f + Vector3.up * 0.5f;
+        Collider[] hits = Physics.OverlapSphere(checkPos, 2.5f, pedestrianLayer);
+        foreach (var hit in hits)
+        {
+            if (!hit.transform.IsChildOf(transform))
+                return true;
+        }
+        return false;
     }
 
     // ==========================================
@@ -1251,12 +1386,13 @@ public class SimpleAutoDrive : MonoBehaviour
 
         // ---- 红绿灯/停止线 ----
         string lightStr = _isYellowLight ? "黄灯" : (redLightAhead ? "红灯" : "无/绿灯");
+        string stopSignStr = _stopSignTimer > 0f ? $" StopSign:{_stopSignTimer:F1}s/{stopSignDuration}s" : "";
         GUI.Label(new Rect(x0, y, 380, lineH),
-            $"红绿灯: {lightStr} | 停止线距: {(hasStopLineAhead ? $"{distToStopLine:F1}m" : "无")} | 困境区: {(_dilemmaZoneArbiter?.IsInDilemmaZone ?? false)}",
+            $"红绿灯: {lightStr}{stopSignStr} | 停止线距: {(hasStopLineAhead ? $"{distToStopLine:F1}m" : "无")} | 困境区: {(_dilemmaZoneArbiter?.IsInDilemmaZone ?? false)}",
             redLightAhead ? errStyle : okStyle);
         y += lineH;
         GUI.Label(new Rect(x0, y, 380, lineH),
-            $"前车距离: {frontDistance:F1}m | 行人危险: {pedestrianDanger} | 让行: {_emergencyYieldHandler?.IsYielding ?? false}",
+            $"限速: {GetLaneSpeedLimit() * 3.6f:F0}km/h | 前车距离: {frontDistance:F1}m | 行人危险: {pedestrianDanger} | 让行: {_emergencyYieldHandler?.IsYielding ?? false}",
             frontDistance < safeDistance ? warnStyle : okStyle);
         y += lineH;
         GUI.Label(new Rect(x0, y, 380, lineH),

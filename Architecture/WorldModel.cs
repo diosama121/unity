@@ -3,7 +3,7 @@ using UnityEngine;
 using System.Linq;
 
 public enum NodeType { Endpoint, Straight, Merge, Intersection }
-public enum IntersectionState { Uncontrolled, GreenLight, RedLight, YellowLight }
+public enum IntersectionState { Uncontrolled, GreenLight, RedLight, YellowLight, StopSign }
 
 [System.Serializable]
 public partial class RoadNode

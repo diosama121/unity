@@ -253,7 +253,7 @@ public class PedestrianSpawner : MonoBehaviour
     }
 
     /// <summary>
-    /// 更新所有行人的漫游移动（★ V2.0：优先沿道路方向）
+    /// 更新所有行人的漫游移动（★ V2.0：优先沿道路方向 + V3.0：车辆避让）
     /// </summary>
     private void UpdatePedestrians()
     {
@@ -266,43 +266,58 @@ public class PedestrianSpawner : MonoBehaviour
                 continue;
             }
 
+            Vector3 pedPos = ped.gameObject.transform.position;
+
+            // ★ V3.0：检测附近车辆，如果有则避让
+            Vector3? escapeDir = GetVehicleAvoidanceDirection(pedPos);
+            bool isFleeing = escapeDir.HasValue;
+
             ped.directionTimer -= Time.deltaTime;
-            if (ped.directionTimer <= 0f)
+            if (ped.directionTimer <= 0f || isFleeing)
             {
-                ped.directionTimer = directionChangeInterval * Random.Range(0.7f, 1.5f);
+                ped.directionTimer = (isFleeing ? 0.3f : directionChangeInterval * Random.Range(0.7f, 1.5f));
 
-                Vector3 toOrigin = (ped.spawnOrigin - ped.gameObject.transform.position);
-                toOrigin.y = 0f;
-                float distToOrigin = toOrigin.magnitude;
-
-                Vector3 randomDir = new Vector3(Random.Range(-1f, 1f), 0f, Random.Range(-1f, 1f)).normalized;
-
-                // ★ 偏向道路方向（60% 沿路走，增加真实感）
-                if (Random.value < 0.6f && ped.roadTangent.sqrMagnitude > 0.01f)
+                if (isFleeing)
                 {
-                    float sign = Random.value > 0.5f ? 1f : -1f;
-                    randomDir = (ped.roadTangent * sign + randomDir * 0.4f).normalized;
-                }
-
-                if (distToOrigin > roamRadius * 0.7f)
-                {
-                    float bias = Mathf.Clamp01(distToOrigin / roamRadius);
-                    ped.currentDirection = (toOrigin.normalized * bias + randomDir * (1f - bias)).normalized;
+                    // 逃逸模式：远离最近车辆
+                    ped.currentDirection = escapeDir.Value;
                 }
                 else
                 {
-                    ped.currentDirection = randomDir;
+                    Vector3 toOrigin = (ped.spawnOrigin - pedPos);
+                    toOrigin.y = 0f;
+                    float distToOrigin = toOrigin.magnitude;
+
+                    Vector3 randomDir = new Vector3(Random.Range(-1f, 1f), 0f, Random.Range(-1f, 1f)).normalized;
+
+                    if (Random.value < 0.6f && ped.roadTangent.sqrMagnitude > 0.01f)
+                    {
+                        float sign = Random.value > 0.5f ? 1f : -1f;
+                        randomDir = (ped.roadTangent * sign + randomDir * 0.4f).normalized;
+                    }
+
+                    if (distToOrigin > roamRadius * 0.7f)
+                    {
+                        float bias = Mathf.Clamp01(distToOrigin / roamRadius);
+                        ped.currentDirection = (toOrigin.normalized * bias + randomDir * (1f - bias)).normalized;
+                    }
+                    else
+                    {
+                        ped.currentDirection = randomDir;
+                    }
                 }
             }
 
-            Vector3 newPos = ped.gameObject.transform.position + ped.currentDirection * ped.speed * Time.deltaTime;
+            float activeSpeed = isFleeing ? ped.speed * 2.5f : ped.speed;
+            Vector3 newPos = pedPos + ped.currentDirection * activeSpeed * Time.deltaTime;
 
-            // 限制在漫游范围内
+            // 限制在漫游范围内（逃逸时放宽）
             Vector3 toOriginCheck = newPos - ped.spawnOrigin;
             toOriginCheck.y = 0f;
-            if (toOriginCheck.magnitude > roamRadius)
+            float maxRange = isFleeing ? roamRadius * 1.5f : roamRadius;
+            if (toOriginCheck.magnitude > maxRange)
             {
-                newPos = ped.spawnOrigin + toOriginCheck.normalized * roamRadius;
+                newPos = ped.spawnOrigin + toOriginCheck.normalized * maxRange;
                 ped.currentDirection = -toOriginCheck.normalized;
                 ped.directionTimer = directionChangeInterval * 0.5f;
             }
@@ -333,6 +348,35 @@ public class PedestrianSpawner : MonoBehaviour
         }
         pedestrians.Clear();
         Debug.Log("[PedestrianSpawner] 所有行人已清除。");
+    }
+
+    /// <summary>
+    /// ★ V3.0：检测附近车辆，返回逃逸方向。无车辆返回null。
+    /// </summary>
+    private Vector3? GetVehicleAvoidanceDirection(Vector3 pedPos)
+    {
+        float detectionRadius = 5f;
+        Vector3 bestEscape = Vector3.zero;
+        bool foundVehicle = false;
+
+        foreach (var car in SimpleAutoDrive.AllCars)
+        {
+            if (car == null) continue;
+            Vector3 carPos = car.transform.position;
+            carPos.y = pedPos.y;
+            float dist = Vector3.Distance(pedPos, carPos);
+            if (dist > detectionRadius) continue;
+
+            foundVehicle = true;
+            Vector3 away = (pedPos - carPos).normalized;
+            away.y = 0f;
+
+            float weight = 1f - (dist / detectionRadius);
+            bestEscape += away * weight;
+        }
+
+        if (!foundVehicle) return null;
+        return bestEscape.normalized;
     }
 
     void OnDestroy()

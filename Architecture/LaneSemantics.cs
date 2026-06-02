@@ -12,7 +12,11 @@ public class Lane
     public int LaneId;
     public int RoadId;
     public CatmullRomSpline CenterSpline;
+    /// <summary>车道方向</summary>
     public LaneDirection Direction;
+    /// <summary>速度限制 (km/h)</summary>
+    public float SpeedLimit = 50f;
+    /// <summary>左侧车道（逆向车道的左侧即路中央），-1表示无</summary>
     public int LeftLaneId = -1;
     public int RightLaneId = -1;
     public List<int> NextConnectorIds = new List<int>();
