@@ -16,10 +16,7 @@ public class SimpleAutoDrive : MonoBehaviour
     public float targetSpeed        = 8f;
     public float safeDistance       = 4f;
     public float emergencyBrakeDist = 3.5f;
-    public float safeFollowSpeed    = 10f;
-    public bool  dynamicLookAhead   = true;
-    public float lookAheadMin       = 3f;
-    public float lookAheadMax       = 12f;
+    // [已移除] lookAheadMin/Max/safeFollowSpeed/dynamicLookAhead — 旧PID转向参数，现由SnapToCurve接管
 
     [Header("传感器设置")]
     public float sensorForwardOffset = 4f;
@@ -134,8 +131,9 @@ public class SimpleAutoDrive : MonoBehaviour
     private bool  _isYellowLight;            // 当前是否为黄灯（用于困境区仲裁）
 
     // ========== 停车标志 ==========
-    private float _stopSignTimer = 0f;       // 停车标志已停止计时
-    private const float stopSignDuration = 2f; // 停车标志需停满2秒
+    private float _stopSignTimer = 0f;          // 停车标志已停止计时
+    private bool  _stopSignReleased = false;     // ★ 已放行标志，防止停满2秒后立即重新触发
+    private const float stopSignDuration = 2f;   // 停车标志需停满2秒
 
     // ========== 倒车 ==========
     private float reverseTimer = 0f;
@@ -821,8 +819,12 @@ public class SimpleAutoDrive : MonoBehaviour
         if (distToLine < stopLinePassedThreshold || distToLine > 12f)
         {
             _stopSignTimer = 0f;
+            _stopSignReleased = false; // ★ 已越过停止线，重置放行状态
             return false;
         }
+
+        // ★ 已放行则不再拦截，直到越过停止线
+        if (_stopSignReleased) return false;
 
         // 接近停止线 且 车速很低 → 累计停止计时
         if (distToLine < 8f && currentSpeed < 0.5f)
@@ -831,6 +833,7 @@ public class SimpleAutoDrive : MonoBehaviour
             if (_stopSignTimer >= stopSignDuration)
             {
                 _stopSignTimer = 0f;
+                _stopSignReleased = true; // ★ 标记已放行，防止下一帧立即重新触发
                 return false; // 停够2秒，放行
             }
         }

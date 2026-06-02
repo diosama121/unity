@@ -226,33 +226,6 @@ public class PedestrianSpawner : MonoBehaviour
     }
 
     /// <summary>
-    /// 获取随机道路节点附近的位置（乡村模式兜底）
-    /// </summary>
-    private Vector3? GetRandomRoadNodePosition()
-    {
-        if (roadGen == null || roadGen.nodes == null || roadGen.nodes.Count == 0)
-            return null;
-
-        var nodes = roadGen.nodes;
-        for (int i = 0; i < 10; i++)
-        {
-            int idx = Random.Range(0, nodes.Count);
-            var node = nodes[idx];
-            if (node == null) continue;
-
-            Vector3 pos = node.position;
-            pos.x += Random.Range(-6f, 6f); // 更大偏移，尽量离开路中心
-            pos.z += Random.Range(-6f, 6f);
-
-            if (WorldModel.Instance != null)
-                pos.y = WorldModel.Instance.GetUnifiedHeight(pos.x, pos.z);
-
-            return pos;
-        }
-        return null;
-    }
-
-    /// <summary>
     /// 更新所有行人的漫游移动（★ V2.0：优先沿道路方向 + V3.0：车辆避让）
     /// </summary>
     private void UpdatePedestrians()

@@ -316,18 +316,6 @@ public class SystemDataManager : MonoBehaviour
         _csvData.AppendLine($"{Time.time:F2},{carPos.x:F2},{carPos.z:F2},{speedKmh:F2},{aiState},{nodeID},{nodeType}");
     }
 
-    [System.Obsolete("请使用 ExportFullReport() 一键导出")]
-    void ExportRoadMap()
-    {
-        if (roadGen == null || roadGen.nodes.Count == 0) return;
-        var data = new MapData();
-        foreach (var node in roadGen.nodes)
-            data.nodes.Add(new NodeData { id = node.id, x = node.position.x, y = node.position.y, z = node.position.z });
-        string path =  System.IO.Path.Combine(Application.persistentDataPath, "RoadMapData_V2.0.json");
-        File.WriteAllText(path, JsonUtility.ToJson(data, true));
-        Debug.Log($"路网数据已导出至: {path}");
-    }
-
     // ============================================================
     // JSON 数据结构
     // ============================================================
@@ -414,7 +402,6 @@ public class SystemDataManager : MonoBehaviour
         public int connectorCount;
         public int edgeCount;
     }
-
-    [System.Serializable] public class MapData { public List<NodeData> nodes = new List<NodeData>(); }
-    [System.Serializable] public class NodeData { public int id; public float x, y, z; }
 }
+
+ 

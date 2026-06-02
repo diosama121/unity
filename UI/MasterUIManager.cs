@@ -29,8 +29,6 @@ public class MasterUIManager : MonoBehaviour
     private RoadNetworkGenerator roadGen;
     private ProceduralRoadBuilder roadBuilder;
 
-    private bool isRebinding = false;
-
     private Canvas mainCanvas;
     private GameObject topBar;
     private GameObject leftPanel;
@@ -107,95 +105,99 @@ public class MasterUIManager : MonoBehaviour
                     t.SetIsOnWithoutNotify(connected);
             };
         }
+
+        // ★ 启动提示：3秒后显示按键帮助
+        Invoke(nameof(ShowStartupHint), 3f);
+    }
+
+    void ShowStartupHint()
+    {
+        if (thoughtStreamText != null)
+            AppendThoughtLine("按 H 键查看所有快捷键帮助");
     }
 
     void Update()
     {
         heartbeatAlpha = 0.5f + Mathf.Sin(Time.time * 4f) * 0.5f;
 
+        // ★ [F1] 极简模式：一键切换全部面板（左侧数据+右侧参数+思维流+DebugPanel）
         if (Input.GetKeyDown(KeyCode.F1))
         {
             ToggleMinimalMode();
         }
-if (Input.GetKeyDown(KeyCode.R))
-            {
-                SimpleCarController[] allCars = FindObjectsOfType<SimpleCarController>();
-                int resetCount = 0;
-                foreach (var c in allCars)
-                {
-                    if (c != null)
-                    {
-                        c.ResetPosition();
-                        resetCount++;
-                    }
-                }
-                if (thoughtStreamText != null) AppendThoughtLine($"R键：已将 {resetCount} 辆车重置到安全路面");
-            }
+        // ★ R键已统一由 CameraController 处理（重置NPC到最近路口），此处不再重复绑定
 
         if (RuntimeInputManager.Instance == null) return;
 
-        if (!isRebinding)
+        // [ESC] 隐藏/显示所有 UI 窗口
+        if (Input.GetKeyDown(KeyCode.Escape))
         {
-            // [ESC] 隐藏/显示所有 UI 窗口
-            if (Input.GetKeyDown(KeyCode.Escape))
-            {
-                bool anyActive = (leftPanel != null && leftPanel.activeSelf) ||
-                                 (rightPanel != null && rightPanel.activeSelf) ||
-                                 (thoughtStreamPanel != null && thoughtStreamPanel.activeSelf) ||
-                                 (topBar != null && topBar.activeSelf);
-                if (leftPanel != null) leftPanel.SetActive(!anyActive);
-                if (rightPanel != null) rightPanel.SetActive(!anyActive);
-                if (thoughtStreamPanel != null) thoughtStreamPanel.SetActive(!anyActive);
-                if (topBar != null) topBar.SetActive(!anyActive);
-            }
-
-            // [F1] 开关左侧数据和日志
-            if (Input.GetKeyDown(KeyCode.F1))
-            {
-                bool newState = leftPanel != null && !leftPanel.activeSelf;
-                if (leftPanel != null) leftPanel.SetActive(newState);
-                if (thoughtStreamPanel != null) thoughtStreamPanel.SetActive(newState);
-            }
-
-            // [F2] 开关右侧参数设置
-            if (Input.GetKeyDown(KeyCode.F2))
-            {
-                if (rightPanel != null) rightPanel.SetActive(!rightPanel.activeSelf);
-            }
-
-            // [T] 切换自动驾驶/手动驾驶
-            if (Input.GetKeyDown(KeyCode.T) && carController != null)
-            {
-                if (autoDrive != null) autoDrive.isPlayerControlled = !autoDrive.isPlayerControlled;
-                if (thoughtStreamText != null) AppendThoughtLine("已切换驾驶模式: " + ((autoDrive != null && !autoDrive.isPlayerControlled) ? "自动" : "手动"));
-            }
-
-            // [N] 重新导航 (重置状态)
-            if (Input.GetKeyDown(KeyCode.N) && autoDrive != null)
-            {
-                autoDrive.currentState = SimpleAutoDrive.DriveState.Cruising;
-                if (thoughtStreamText != null) AppendThoughtLine("手动触发：导航状态重置");
-            }
-
-            if (Input.GetKeyDown(KeyCode.Equals) || Input.GetKeyDown(KeyCode.KeypadPlus))
-            {
-                float[] scales = { 0f, 1f, 2f, 5f };
-                int cur = Mathf.Approximately(Time.timeScale, 0f) ? 0 : (Mathf.Approximately(Time.timeScale, 2f) ? 2 : (Mathf.Approximately(Time.timeScale, 5f) ? 3 : 1));
-                int next = Mathf.Min(cur + 1, 3);
-                Time.timeScale = scales[next];
-                if (timeSlider != null) timeSlider.SetValueWithoutNotify(next);
-                SyncDropdownValue("TimeMode", next);
-            }
-            if (Input.GetKeyDown(KeyCode.Minus) || Input.GetKeyDown(KeyCode.KeypadMinus))
-            {
-                float[] scales = { 0f, 1f, 2f, 5f };
-                int cur = Mathf.Approximately(Time.timeScale, 0f) ? 0 : (Mathf.Approximately(Time.timeScale, 2f) ? 2 : (Mathf.Approximately(Time.timeScale, 5f) ? 3 : 1));
-                int prev = Mathf.Max(cur - 1, 0);
-                Time.timeScale = scales[prev];
-                if (timeSlider != null) timeSlider.SetValueWithoutNotify(prev);
-                SyncDropdownValue("TimeMode", prev);
-            }
+            bool anyActive = (leftPanel != null && leftPanel.activeSelf) ||
+                             (rightPanel != null && rightPanel.activeSelf) ||
+                             (thoughtStreamPanel != null && thoughtStreamPanel.activeSelf) ||
+                             (topBar != null && topBar.activeSelf);
+            if (leftPanel != null) leftPanel.SetActive(!anyActive);
+            if (rightPanel != null) rightPanel.SetActive(!anyActive);
+            if (thoughtStreamPanel != null) thoughtStreamPanel.SetActive(!anyActive);
+            if (topBar != null) topBar.SetActive(!anyActive);
         }
+
+        // [F2] 开关右侧参数设置
+        if (Input.GetKeyDown(KeyCode.F2))
+        {
+            if (rightPanel != null) rightPanel.SetActive(!rightPanel.activeSelf);
+        }
+
+        // [T] 切换自动驾驶/手动驾驶
+        if (Input.GetKeyDown(KeyCode.T) && carController != null)
+        {
+            if (autoDrive != null) autoDrive.isPlayerControlled = !autoDrive.isPlayerControlled;
+            if (thoughtStreamText != null) AppendThoughtLine("已切换驾驶模式: " + ((autoDrive != null && !autoDrive.isPlayerControlled) ? "自动" : "手动"));
+        }
+
+        // [N] 重新导航 (重置状态)
+        if (Input.GetKeyDown(KeyCode.N) && autoDrive != null)
+        {
+            autoDrive.currentState = SimpleAutoDrive.DriveState.Cruising;
+            if (thoughtStreamText != null) AppendThoughtLine("手动触发：导航状态重置");
+        }
+
+        if (Input.GetKeyDown(KeyCode.Equals) || Input.GetKeyDown(KeyCode.KeypadPlus))
+        {
+            float[] scales = { 0f, 1f, 2f, 5f };
+            int cur = Mathf.Approximately(Time.timeScale, 0f) ? 0 : (Mathf.Approximately(Time.timeScale, 2f) ? 2 : (Mathf.Approximately(Time.timeScale, 5f) ? 3 : 1));
+            int next = Mathf.Min(cur + 1, 3);
+            Time.timeScale = scales[next];
+            if (timeSlider != null) timeSlider.SetValueWithoutNotify(next);
+            SyncDropdownValue("TimeMode", next);
+        }
+        if (Input.GetKeyDown(KeyCode.Minus) || Input.GetKeyDown(KeyCode.KeypadMinus))
+        {
+            float[] scales = { 0f, 1f, 2f, 5f };
+            int cur = Mathf.Approximately(Time.timeScale, 0f) ? 0 : (Mathf.Approximately(Time.timeScale, 2f) ? 2 : (Mathf.Approximately(Time.timeScale, 5f) ? 3 : 1));
+            int prev = Mathf.Max(cur - 1, 0);
+            Time.timeScale = scales[prev];
+            if (timeSlider != null) timeSlider.SetValueWithoutNotify(prev);
+            SyncDropdownValue("TimeMode", prev);
+        }
+
+        // [H] 显示按键帮助
+        if (Input.GetKeyDown(KeyCode.H))
+        {
+            ShowKeyHints();
+        }
+        if (Input.GetKeyDown(KeyCode.F5))
+        {
+            // ★ F5：重置所有车辆到安全位置（替代原来冲突的R键）
+            SimpleCarController[] allCars = FindObjectsOfType<SimpleCarController>();
+            int resetCount = 0;
+            foreach (var c in allCars)
+            {
+                if (c != null) { c.ResetPosition(); resetCount++; }
+            }
+            if (thoughtStreamText != null) AppendThoughtLine($"F5：已将 {resetCount} 辆车重置到安全路面");
+        }
+
         if (isTORFlashing)
         {
             torFlashTimer += Time.deltaTime;
@@ -376,6 +378,44 @@ if (Input.GetKeyDown(KeyCode.R))
         torFlashDuration = duration;
     }
 
+    /// <summary>
+    /// ★ 按键帮助：输出所有快捷键到思维流
+    /// </summary>
+    void ShowKeyHints()
+    {
+        string[] hints = {
+            "===== 快捷键帮助 =====",
+            "【车辆控制】",
+            "T       - 切换自动/手动驾驶",
+            "N       - 重置导航状态",
+            "WASD    - 手动驾驶（主车模式）",
+            "Space   - 手动刹车",
+            "鼠标左键 - 点击车辆接管控制",
+            "【相机】",
+            "C       - 切换跟随/自由视角",
+            "Tab     - 切换跟随目标车辆",
+            "右键拖动 - 自由视角旋转",
+            "E/Q     - 自由视角上升/下降",
+            "【世界】",
+            "R       - 重置所有NPC到最近路口",
+            "F5      - 重置所有车辆到安全位置",
+            "【面板】",
+            "U       - 切换车辆信息面板",
+            "H       - 显示本帮助",
+            "F1      - 极简模式：一键切换全部面板",
+            "F2      - 切换右侧参数面板",
+            "Esc     - 显示/隐藏全部UI",
+            "【数据】",
+            "F9      - 开始录制遥测",
+            "F10     - 停止录制",
+            "F11     - 一键导出完整报告",
+            "+/-     - 调整时间缩放",
+            "========================"
+        };
+        foreach (var line in hints)
+            AppendThoughtLine(line);
+    }
+
     public void AppendThoughtLine(string line)
     {
         thoughtLines.Add(Time.time.ToString("F1") + "s > " + line);
@@ -395,7 +435,10 @@ if (Input.GetKeyDown(KeyCode.R))
     void ToggleMinimalMode()
     {
         isMinimalMode = !isMinimalMode;
+        // ★ F1 一键切换全部面板（左侧数据 + 右侧参数 + 思维流 + DebugPanel）
+        if (leftPanel != null) leftPanel.SetActive(!isMinimalMode);
         if (rightPanel != null) rightPanel.SetActive(!isMinimalMode);
+        if (thoughtStreamPanel != null) thoughtStreamPanel.SetActive(!isMinimalMode);
         DebugPanel dbg = FindObjectOfType<DebugPanel>();
         if (dbg != null)
         {
@@ -1301,7 +1344,8 @@ if (Input.GetKeyDown(KeyCode.R))
 
         RegisterInputField(UIPanelBuilder.CreateInputRow(foldContent, "NPCMaxSpeedInput", "NPC Max Speed", "30", InputField.ContentType.DecimalNumber), "NPCMaxSpeed");
         RegisterInputField(UIPanelBuilder.CreateInputRow(foldContent, "NPCSafeDistInput", "Safe Distance", "8", InputField.ContentType.DecimalNumber), "NPCSafeDist");
-        RegisterInputField(UIPanelBuilder.CreateInputRow(foldContent, "NPCLookAheadInput", "Look Ahead T", "0.02", InputField.ContentType.DecimalNumber), "NPCLookAhead");
+
+        // ★ 注：LookAheadT 参数已移除（转向由SnapToCurve接管），对应UI控件已注销
 
         GameObject spawnBtn = UIPanelBuilder.CreateButton(foldContent, "SpawnNPCsBtn", "生成NPC");
         Button spawnButton = spawnBtn.GetComponent<Button>();
@@ -1895,8 +1939,6 @@ if (Input.GetKeyDown(KeyCode.R))
         SyncInputFieldValue("NPCCount", trafficManager != null ? trafficManager.npcCount.ToString() : "3");
         SyncInputFieldValue("NPCMaxSpeed", carController != null ? carController.maxSpeed.ToString("F0") : "30");
         SyncInputFieldValue("NPCSafeDist", autoDrive != null ? autoDrive.safeDistance.ToString("F0") : "8");
-        // [注释] lookAheadT 已移除，改用 lookAheadMin/lookAheadMax
-        // SyncInputFieldValue("NPCLookAhead", autoDrive != null ? autoDrive.lookAheadT.ToString("F3") : "0.020");
 
         SyncToggleValue("SplineGizmos", roadBuilder != null ? roadBuilder.showSplineGizmos : false);
 
@@ -1982,17 +2024,7 @@ if (Input.GetKeyDown(KeyCode.R))
                 }
             }
         });
-        BindInputFieldEvent("NPCLookAhead", (v) =>
-        {
-            if (float.TryParse(v, out float f) && trafficManager != null)
-            {
-                foreach (var npc in trafficManager.ActiveNPCs)
-                {
-                    // [注释] lookAheadT 已移除
-                    // if (npc != null) npc.lookAheadT = f;
-                }
-            }
-        });
+        // ★ 注：NPCLookAhead 绑定已移除（lookAheadT参数已废弃）
 
         BindToggleEvent("GenCity", (on) => { if (roadBuilder != null) roadBuilder.generateCity = on; });
         BindToggleEvent("TrafficLights", (on) =>
@@ -2144,7 +2176,6 @@ if (Input.GetKeyDown(KeyCode.R))
         SyncInputFieldValue("NPCCount", "3");
         SyncInputFieldValue("NPCMaxSpeed", "30");
         SyncInputFieldValue("NPCSafeDist", "8");
-        SyncInputFieldValue("NPCLookAhead", "0.020");
 
         SyncToggleValue("GenCity", true);
         SyncToggleValue("TrafficLights", true);
