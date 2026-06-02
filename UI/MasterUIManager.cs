@@ -2203,6 +2203,10 @@ if (Input.GetKeyDown(KeyCode.R))
         SetHUDValue("HUDState", autoDrive != null ? autoDrive.currentState.ToString() : "N/A");
         SetHUDValue("HUDLaneId", autoDrive != null ? autoDrive.currentLaneId.ToString() : "N/A");
         SetHUDValue("HUDYielding", autoDrive != null ? (autoDrive.isYielding ? "是 <<<" : "否") : "N/A");
+        SetHUDValue("HUDSubsumptionLayer", autoDrive != null ? $"L{autoDrive.SubsumptionActiveLayer}" : "N/A");
+        SetHUDValue("HUDDeadlock", autoDrive != null ? (autoDrive.IsDeadlockPerturbating ? "脱困中!" : "正常") : "N/A");
+        SetHUDValue("HUDDilemmaZone", autoDrive != null ? (autoDrive.IsInDilemmaZone ? "困境区!" : "正常") : "N/A");
+        SetHUDValue("HUDYieldEmergency", autoDrive != null ? (autoDrive.IsYieldingToEmergency ? "让行中!" : "正常") : "N/A");
 
         if (carController != null)
         {
@@ -2217,6 +2221,8 @@ if (Input.GetKeyDown(KeyCode.R))
         SetHUDValue("HUDFPS", Mathf.RoundToInt(fpsValue).ToString());
         int vCount = trafficManager != null ? trafficManager.ActiveNPCs.Count : 0;
         SetHUDValue("HUDVehicleCount", vCount.ToString());
+        int pCount = FindObjectOfType<PedestrianSpawner>()?.ActivePedestrianCount ?? 0;
+        SetHUDValue("HUDPedestrianCount", pCount.ToString());
 
         bool rosCon = ros2Bridge != null && ros2Bridge.isConnected;
         string rosHz = ros2Bridge != null ? ros2Bridge.sendRate.ToString("F0") : "10";

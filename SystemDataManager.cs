@@ -2,7 +2,6 @@ using UnityEngine;
 using System.IO;
 using System.Text;
 using System.Collections.Generic;
-using IOPath = System.IO.Path;
 /// <summary>
 /// V3.0 数据管理中心 — 一键导出 + 遥测录制
 /// 导出三部分：
@@ -32,6 +31,7 @@ public class SystemDataManager : MonoBehaviour
     private MasterUIManager _uiManager;
     private ROS2BridgeV2 _ros2Bridge;
     private CameraController _cameraController;
+    private PedestrianSpawner _pedestrianSpawner;
 
     void Awake()
     {
@@ -54,6 +54,7 @@ public class SystemDataManager : MonoBehaviour
         _uiManager = FindObjectOfType<MasterUIManager>();
         _ros2Bridge = FindObjectOfType<ROS2BridgeV2>();
         _cameraController = FindObjectOfType<CameraController>();
+        _pedestrianSpawner = FindObjectOfType<PedestrianSpawner>();
     }
 
     void Update()
@@ -112,7 +113,7 @@ public class SystemDataManager : MonoBehaviour
         _recordTimer = 0f;
 
         string timestamp = System.DateTime.Now.ToString("yyyyMMdd_HHmmss");
-        _csvPath = IOPath.Combine(Application.persistentDataPath, $"VehicleTelemetry_{timestamp}.csv");
+        _csvPath = System.IO.Path.Combine(Application.persistentDataPath, $"VehicleTelemetry_{timestamp}.csv");
         _csvData.Clear();
         _csvData.AppendLine("Timestamp,PosX,PosZ,Speed(km/h),State,NodeID,NodeType");
 
@@ -169,6 +170,7 @@ public class SystemDataManager : MonoBehaviour
             stopLineJunctionCount = world.GlobalStopLines?.Count ?? 0,
             npcVehicleCount = _trafficManager?.ActiveNPCs?.Count ?? FindObjectsOfType<SimpleAutoDrive>().Length - 1,
             totalSimpleAutoDrives = FindObjectsOfType<SimpleAutoDrive>().Length,
+            pedestrianCount = _pedestrianSpawner?.ActivePedestrianCount ?? 0,
             timeScale = Time.timeScale,
             fps = Mathf.RoundToInt(1f / Time.unscaledDeltaTime),
         };
@@ -211,6 +213,11 @@ public class SystemDataManager : MonoBehaviour
                 pathEdgeCount = mainDrive.pathEdgeIds?.Count ?? 0,
                 // 高程
                 groundHeight = world.GetUnifiedHeight(mainDrive.transform.position.x, mainDrive.transform.position.z),
+                // ★ 辅助类状态
+                subsumptionLayer = mainDrive.SubsumptionActiveLayer,
+                isInDilemmaZone = mainDrive.IsInDilemmaZone,
+                isDeadlockPerturbating = mainDrive.IsDeadlockPerturbating,
+                isYieldingToEmergency = mainDrive.IsYieldingToEmergency,
             };
         }
 
@@ -267,6 +274,7 @@ public class SystemDataManager : MonoBehaviour
         if (_uiManager == null) _uiManager = FindObjectOfType<MasterUIManager>();
         if (_ros2Bridge == null) _ros2Bridge = FindObjectOfType<ROS2BridgeV2>();
         if (_cameraController == null) _cameraController = FindObjectOfType<CameraController>();
+        if (_pedestrianSpawner == null) _pedestrianSpawner = FindObjectOfType<PedestrianSpawner>();
     }
 
     SimpleAutoDrive FindMainCar()
@@ -344,6 +352,7 @@ public class SystemDataManager : MonoBehaviour
         public int stopLineJunctionCount;
         public int npcVehicleCount;
         public int totalSimpleAutoDrives;
+        public int pedestrianCount;
         public float timeScale;
         public int fps;
     }
@@ -380,6 +389,11 @@ public class SystemDataManager : MonoBehaviour
         public int pathEdgeCount;
         // 高程
         public float groundHeight;
+        // ★ 辅助类状态
+        public int subsumptionLayer;
+        public bool isInDilemmaZone;
+        public bool isDeadlockPerturbating;
+        public bool isYieldingToEmergency;
     }
 
     [System.Serializable]

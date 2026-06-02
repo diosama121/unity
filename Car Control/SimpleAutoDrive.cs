@@ -20,7 +20,8 @@ public class SimpleAutoDrive : MonoBehaviour
     public bool  dynamicLookAhead   = true;
     public float lookAheadMin       = 3f;
     public float lookAheadMax       = 12f;
- [Header("传感器设置")]
+
+    [Header("传感器设置")]
     public float sensorForwardOffset = 4f;
     public LayerMask obstacleLayers;     // Vehicle + Pedestrian
     public LayerMask pedestrianLayer;    // Pedestrian only
@@ -33,7 +34,7 @@ public class SimpleAutoDrive : MonoBehaviour
     [Header("状态机")]
     public bool isPlayerControlled = false; 
     public LongitudinalState longState = LongitudinalState.FreeDrive;
- public bool reverseComplete = false;
+    public bool reverseComplete = false;
     public float currentT
     {
         get => (currentEdgeLength > 0f) ? currentDistOnEdge / currentEdgeLength : 0f;
@@ -65,6 +66,12 @@ public class SimpleAutoDrive : MonoBehaviour
     }
     public bool isYielding       => longState == LongitudinalState.Yield;
     public bool obstacleDetected => frontDistance < safeDistance;
+
+    // ★ 辅助类状态暴露（供 SystemDataManager 导出）
+    public int  SubsumptionActiveLayer   => _subsumptionEngine?.ActiveLayer ?? 0;
+    public bool IsInDilemmaZone          => _dilemmaZoneArbiter?.IsInDilemmaZone ?? false;
+    public bool IsDeadlockPerturbating   => _deadlockRecovery?.IsPerturbating ?? false;
+    public bool IsYieldingToEmergency    => _emergencyYieldHandler?.IsYielding ?? false;
 
     public DriveState currentState
     {
@@ -123,24 +130,19 @@ public class SimpleAutoDrive : MonoBehaviour
     public bool  redLightAhead { get; private set; }
     private bool  pedestrianDanger;
     private float stoppedTimer;
+    private bool  _isYellowLight;            // 当前是否为黄灯（用于困境区仲裁）
 
     // ========== 倒车 ==========
     private float reverseTimer = 0f;
     private const float reverseDuration = 2.5f;
 
-    // ========== 僵死恢复 ==========
+    // ========== 僵死恢复（轨迹为空时重试） ==========
     private float _recoveryTimer = 0f;
-    private const float recoveryInterval = 2f;    // 轨迹为空后每隔2秒重试一次
+    private const float recoveryInterval = 2f;
 
     // ========== 手动模式状态 ==========
     private bool _wasPlayerControlled = false;
     private float _manualSpeed = 0f;
-
-    // ========== 死循环检测（同位置反复卡死） ==========
-    private int _stuckCount = 0;
-    private Vector3 _lastStuckPosition;
-    private const float stuckPositionThreshold = 8f;   // 两次卡死位置距离 < 8m 视为同一地点
-    private const int maxStuckRetries = 5;              // 同位置超过5次则强制跳转
 
     // ========== 信息面板开关（U键） ==========
     private bool _showInfoPanel = true;
@@ -151,10 +153,10 @@ public class SimpleAutoDrive : MonoBehaviour
     // ========== 红绿灯/交规 ==========
     private TrafficLightManager _trafficLightManager;
     [Header("红绿灯交规")]
-    public float redLightStopDistance = 18f;     // 距停止线多远开始减速
-    public float stopLinePassedThreshold = -2f;  // 超过停止线2m后不再强制停车(防路口内锁死)
-    
-    // ★ 公开给 SpecialSituations 读取
+    public float redLightStopDistance = 18f;
+    public float stopLinePassedThreshold = -2f;
+
+    // ★ 公开给辅助类读取
     public float distToStopLine { get; private set; }
     public bool  hasStopLineAhead { get; private set; }
     public Vector3 nearestStopLinePos { get; private set; }
@@ -162,13 +164,22 @@ public class SimpleAutoDrive : MonoBehaviour
     private WorldModel worldModel => WorldModel.Instance;
 
     // ==========================================
+    // 辅助类实例（包容式架构 + 死锁脱困 + 黄灯仲裁 + 紧急让行）
+    // ==========================================
+    private SubsumptionEngine     _subsumptionEngine;
+    private DeadlockRecovery      _deadlockRecovery;
+    private DilemmaZoneArbiter    _dilemmaZoneArbiter;
+    private EmergencyYieldHandler _emergencyYieldHandler;
+
+    // ==========================================
     // 初始化
     // ==========================================
- void Start()
+    void Start()
     {
         carController = GetComponent<SimpleCarController>();
         if (pathPlanner == null) pathPlanner = FindObjectOfType<PathPlanner>();
-        // 【修复3】：剥离一切刚体动力学，剥夺 Unity Solver 的控制权
+
+        // 剥离一切刚体动力学，剥夺 Unity Solver 的控制权
         Rigidbody rb = GetComponent<Rigidbody>();
         if (rb != null)
         {
@@ -193,6 +204,12 @@ public class SimpleAutoDrive : MonoBehaviour
             trajectoryPoints[i] = transform.position;
         trajectoryLine.SetPositions(trajectoryPoints);
 
+        // 初始化辅助类
+        _subsumptionEngine     = new SubsumptionEngine();
+        _deadlockRecovery      = new DeadlockRecovery();
+        _dilemmaZoneArbiter    = new DilemmaZoneArbiter();
+        _emergencyYieldHandler = new EmergencyYieldHandler();
+
         // 防止 TrafficManager 的寻路记忆被清空
         if (pathEdgeIds.Count > 0 && currentTrajectory == null)
             StartPath();
@@ -214,7 +231,6 @@ public class SimpleAutoDrive : MonoBehaviour
         if (mask.value == 0) return maxDist;
 
         float step = 0.5f;
-        // 把起始侦测点推到车头之外，防止扫到自己的包围盒导致死锁
         float startD = sensorForwardOffset > 0 ? sensorForwardOffset : 2.5f; 
         
         for (float d = startD; d < maxDist; d += step)
@@ -235,9 +251,9 @@ public class SimpleAutoDrive : MonoBehaviour
     }
 
     // ==========================================
-    // 每帧更新：纯曲线滑动 + 纵向状态机
+    // 每帧更新：包容式架构纵向控制 + 辅助类调度
     // ==========================================
-   void Update()
+    void Update()
     {
         UpdateTrajectoryLine();
         DrawLidarRays();
@@ -254,6 +270,9 @@ public class SimpleAutoDrive : MonoBehaviour
                 _wasPlayerControlled = true;
                 _manualSpeed = carController.currentSpeed; // 继承当前速度
                 carController.manualControl = true;
+                // 重置辅助类状态
+                _subsumptionEngine.ResetDebounce();
+                _deadlockRecovery.Reset();
                 Debug.Log($"[SimpleAutoDrive] {name} → 手动驾驶模式");
             }
 
@@ -268,14 +287,13 @@ public class SimpleAutoDrive : MonoBehaviour
             }
             else
             {
-                float targetSpeed = throttleInput * manualDriveSpeed;
-                _manualSpeed = Mathf.MoveTowards(_manualSpeed, targetSpeed, manualAccel * Time.deltaTime);
+                float targetManualSpeed = throttleInput * manualDriveSpeed;
+                _manualSpeed = Mathf.MoveTowards(_manualSpeed, targetManualSpeed, manualAccel * Time.deltaTime);
             }
 
             // 位移
             transform.position += transform.forward * (_manualSpeed * Time.deltaTime);
-
-            // 转向（速度无关！）
+            // 转向（速度无关）
             float turnAmount = steerInput * manualTurnRate * Time.deltaTime;
             transform.Rotate(0f, turnAmount, 0f);
 
@@ -283,7 +301,6 @@ public class SimpleAutoDrive : MonoBehaviour
             carController.currentSpeed = _manualSpeed;
             carController.currentSteeringAngle = steerInput * carController.maxSteeringAngle;
 
-            // 贴地由 SimpleCarController.Update(manualControl=true) 完成
             return;
         }
         else if (_wasPlayerControlled)
@@ -295,54 +312,138 @@ public class SimpleAutoDrive : MonoBehaviour
             MergeBackToTraffic();
         }
 
+        // ==========================================
+        // ★ 轨迹为空 → 死锁恢复（DeadlockRecovery接管）
+        // ==========================================
         if (currentTrajectory == null || currentEdgeLength <= 0)
         {
-            _recoveryTimer += Time.deltaTime;
-            if (_recoveryTimer > recoveryInterval)
+            _deadlockRecovery.Update(transform.position, Time.deltaTime);
+
+            if (_deadlockRecovery.NeedsForceRepath)
             {
-                _recoveryTimer = 0f;
-
-                // ★ 死循环检测：同位置反复卡死(如死路↔路口来回跑)
-                float distFromLast = Vector3.Distance(transform.position, _lastStuckPosition);
-                if (distFromLast < stuckPositionThreshold)
-                    _stuckCount++;
-                else
+                Debug.LogWarning($"[SimpleAutoDrive] {name} 死锁脱困Stage2：强制重规划");
+                _deadlockRecovery.Reset();
+                ForceNewDestination();
+            }
+            else
+            {
+                _recoveryTimer += Time.deltaTime;
+                if (_recoveryTimer > recoveryInterval)
                 {
-                    _stuckCount = 1;
-                    _lastStuckPosition = transform.position;
-                }
-
-                if (_stuckCount > maxStuckRetries)
-                {
-                    Debug.LogWarning($"[SimpleAutoDrive] {name} 同位置卡死{_stuckCount}次，强制跳转新地点");
-                    _stuckCount = 0;
-                    ForceNewDestination();
-                }
-                else
-                {
+                    _recoveryTimer = 0f;
                     RequestNewPath();
                 }
             }
             return;
         }
         _recoveryTimer = 0f;
-        _stuckCount = 0; // 轨迹正常，清零死循环计数
+        _deadlockRecovery.Reset(); // 轨迹正常，重置死锁检测
 
+        // ==========================================
+        // 传感器采样
+        // ==========================================
         UpdateSensors();
-        (float targetSpd, bool brakeHard) = GetLongitudinalCommand();
 
+        // ==========================================
+        // 紧急车辆让行检测（论文 §5.4 TF-2）
+        // ==========================================
+        _emergencyYieldHandler.Update(transform.position, false, Time.deltaTime);
+
+        // ==========================================
+        // 黄灯困境区仲裁（论文 §4.2.5）
+        // ==========================================
+        if (_isYellowLight && hasStopLineAhead)
+        {
+            bool shouldBrake = _dilemmaZoneArbiter.Evaluate(distToStopLine, currentSpeed, maxDeceleration);
+            if (!shouldBrake)
+            {
+                // 困境区仲裁判定可通过 → 覆盖红灯标志，让L1不接管
+                redLightAhead = false;
+            }
+        }
+
+        // ==========================================
+        // 包容式架构纵向控制（论文 §4.2.1）
+        // ==========================================
+        float effectiveCruiseSpeed = targetSpeed;
+        if (_emergencyYieldHandler.IsYielding)
+            effectiveCruiseSpeed = Mathf.Min(effectiveCruiseSpeed, _emergencyYieldHandler.GetYieldSpeed());
+
+        var sensorInput = new SubsumptionEngine.SensorInput
+        {
+            currentSpeed       = currentSpeed,
+            maxSpeed           = carController.maxSpeed,
+            maxAcceleration    = maxAcceleration,
+            maxDeceleration    = maxDeceleration,
+            frontDistance      = frontDistance,
+            safeDistance       = safeDistance,
+            emergencyBrakeDist = emergencyBrakeDist,
+            frontSpeed         = frontSpeed,
+            redLightAhead      = redLightAhead,
+            pedestrianDanger   = pedestrianDanger,
+            distToStopLine     = distToStopLine,
+            targetCruiseSpeed  = effectiveCruiseSpeed
+        };
+
+        var layerOutput = _subsumptionEngine.Resolve(sensorInput, Time.deltaTime);
+        longState = _subsumptionEngine.ActiveState;
+
+        float targetSpd = layerOutput.targetSpeed;
+        bool  brakeHard = layerOutput.isHardBrake;
+
+        // ==========================================
+        // 停止超时 → 倒车脱困（保留在此处管理）
+        // ==========================================
+        if (longState == LongitudinalState.Stopped)
+        {
+            stoppedTimer += Time.deltaTime;
+            if (stoppedTimer > 10f)
+            {
+                stoppedTimer = 0f;
+                reverseTimer = 0f;
+                reverseComplete = false;
+                longState = LongitudinalState.Reverse;
+                Debug.Log($"[SimpleAutoDrive] {name} 停止超时10s → 倒车脱困");
+            }
+        }
+        else
+        {
+            stoppedTimer = 0f;
+        }
+
+        // ==========================================
+        // 倒车逻辑
+        // ==========================================
+        if (longState == LongitudinalState.Reverse)
+        {
+            reverseTimer += Time.deltaTime;
+            if (reverseTimer > reverseDuration)
+            {
+                longState = LongitudinalState.Stopped;
+                stoppedTimer = 0f;
+                targetSpd = 0f;
+                brakeHard = false;
+            }
+            else
+            {
+                targetSpd = -2f;
+                brakeHard = false;
+            }
+        }
+
+        // ==========================================
+        // 速度平滑 + 位移
+        // ==========================================
         float accel = brakeHard ? maxDeceleration : (targetSpd < currentSpeed ? normalDeceleration : maxAcceleration);
         currentSpeed = Mathf.MoveTowards(currentSpeed, targetSpd, accel * Time.deltaTime);
 
         float moveDist = currentSpeed * Time.deltaTime;
         AdvanceOnEdge(moveDist);
-
-        // ==== 焊死在离散折线上的核心吸附 ====
         SnapToCurve();
 
-        if (currentTrajectory == null) return; // AdvanceOnEdge/RequestNewPath 可能已将轨迹清空
+        if (currentTrajectory == null) return;
 
-        // 下发命令仅用于视觉表现（车轮转动/尾灯），物理位移已被 SnapToCurve 彻底接管
+        // 下发命令（仅用于视觉表现：车轮转动 / 尾灯）
         carController.ApplyCommand(new VehicleCommand
         {
             throttle  = currentSpeed / Mathf.Max(carController.maxSpeed, 0.1f),
@@ -357,6 +458,8 @@ public class SimpleAutoDrive : MonoBehaviour
     public void SetPath(List<int> edgeIds, float startDistance = 0f)
     {
         pathEdgeIds = edgeIds ?? new List<int>();
+        // 路径变更时重置死锁恢复
+        _deadlockRecovery?.Reset();
         StartPath(startDistance);
     }
 
@@ -419,7 +522,7 @@ public class SimpleAutoDrive : MonoBehaviour
     // ==========================================
     // 沿边推进与切换
     // ==========================================
-   void AdvanceOnEdge(float distance)
+    void AdvanceOnEdge(float distance)
     {
         if (currentEdgeLength <= 0) return;
 
@@ -440,7 +543,7 @@ public class SimpleAutoDrive : MonoBehaviour
                         currentEdgeIndex++;
                         LoadCurrentEdge();
 
-                        // ★ 中间边切换失败(轨迹空)→整条路径已损毁,走全图重寻路
+                        // 中间边切换失败(轨迹空)→整条路径已损毁,走全图重寻路
                         if (currentTrajectory == null || currentEdgeLength <= 0f)
                         {
                             Debug.LogWarning($"[SimpleAutoDrive] {name} 边切换失败 idx={currentEdgeIndex},触发重寻路");
@@ -504,9 +607,10 @@ public class SimpleAutoDrive : MonoBehaviour
             }
         }
         currentDistOnEdge = Mathf.Clamp(currentDistOnEdge, 0f, currentEdgeLength);
-        // ★ 裁剪已走过的边，防止路径无限增长(idx=82崩溃)
+        // 裁剪已走过的边，防止路径无限增长(idx=82崩溃)
         TrimPassedEdges();
     }
+
     void TrimPassedEdges()
     {
         if (currentEdgeIndex > 10 && currentEdgeIndex < pathEdgeIds.Count)
@@ -516,7 +620,8 @@ public class SimpleAutoDrive : MonoBehaviour
             currentEdgeIndex = 0;
         }
     }
- void SnapToCurve()
+
+    void SnapToCurve()
     {
         if (currentTrajectory == null) return;
         
@@ -533,74 +638,9 @@ public class SimpleAutoDrive : MonoBehaviour
         if (longState == LongitudinalState.Reverse)
             tangent = -tangent;
 
-        // 3. 旋转直接对齐切线 —— 折线方向是确定性的，Slerp 滞后反而导致弯道抽搐
+        // 3. 旋转直接对齐切线
         Quaternion targetRot = Quaternion.LookRotation(tangent);
-
         transform.SetPositionAndRotation(pos, targetRot);
-    }
-
-    // ==========================================
-    // 纵向状态机
-    // ==========================================
-    (float targetSpeed, bool brakeHard) GetLongitudinalCommand()
-    {
-        switch (longState)
-        {
-            case LongitudinalState.FreeDrive:
-                if (frontDistance < emergencyBrakeDist || pedestrianDanger)
-                    longState = LongitudinalState.Brake;
-                else if (frontDistance < safeDistance)
-                    longState = LongitudinalState.FollowCar;
-                return (targetSpeed, false);
-
-            case LongitudinalState.FollowCar:
-                if (frontDistance < emergencyBrakeDist)
-                    longState = LongitudinalState.Brake;
-                else if (frontDistance > safeDistance + 5f)
-                    longState = LongitudinalState.FreeDrive;
-                return (Mathf.Min(frontSpeed, safeFollowSpeed), false);
-
-            case LongitudinalState.Brake:
-                if (Mathf.Abs(currentSpeed) < 0.1f && frontDistance < 0.5f)
-                    longState = LongitudinalState.Stopped;
-                else if (!pedestrianDanger && frontDistance > safeDistance + 2f)
-                    longState = LongitudinalState.FreeDrive;
-                return (0f, true);
-
-            case LongitudinalState.Stopped:
-                stoppedTimer += Time.deltaTime;
-                if (!redLightAhead && frontDistance > safeDistance + 2f)
-                {
-                    stoppedTimer = 0f;
-                    longState = LongitudinalState.FreeDrive;
-                }
-                else if (stoppedTimer > 10f) // 堵塞超时 → 倒车脱困
-                {
-                    stoppedTimer = 0f;
-                    reverseTimer = 0f;
-                    reverseComplete = false;
-                    longState = LongitudinalState.Reverse;
-                }
-                return (0f, true);
-
-            case LongitudinalState.Reverse:
-                reverseTimer += Time.deltaTime;
-                if (reverseTimer > reverseDuration)
-                {
-                    longState = LongitudinalState.Stopped;
-                    stoppedTimer = 0f; // 倒车后重新等满 10s 再尝试前进
-                    return (0f, false);
-                }
-                return (-2f, false);
-
-            case LongitudinalState.Yield:
-                if (frontDistance > safeDistance + 3f)
-                    longState = LongitudinalState.FreeDrive;
-                return (Mathf.Min(currentSpeed, safeFollowSpeed * 0.5f), false);
-
-            default:
-                return (0f, false);
-        }
     }
 
     // ==========================================
@@ -611,6 +651,7 @@ public class SimpleAutoDrive : MonoBehaviour
         frontSpeed = 0f;
         hasStopLineAhead = false;
         distToStopLine = 999f;
+        _isYellowLight = false;
 
         // ★ 统一红绿灯检测（都用 WorldModel 相位状态 + 停止线）
         redLightAhead = CheckRedLightUnified();
@@ -661,6 +702,10 @@ public class SimpleAutoDrive : MonoBehaviour
         IntersectionState state = stopLine != null && stopLine.AssociatedPhaseId >= 0
             ? worldModel.GetPhaseState(stopLine.AssociatedPhaseId)
             : worldModel.GetIntersectionState(nearestNode.Id);
+
+        // ★ 标记黄灯状态（供DilemmaZoneArbiter使用）
+        if (state == IntersectionState.YellowLight)
+            _isYellowLight = true;
 
         return (state == IntersectionState.RedLight || state == IntersectionState.YellowLight);
     }
@@ -716,7 +761,7 @@ public class SimpleAutoDrive : MonoBehaviour
                     currentEdgeIndex++;
                     LoadCurrentEdge();
 
-                    // ★ 防止僵尸状态：connector或lane轨迹烧录失败必须回滚
+                    // 防止僵尸状态：connector或lane轨迹烧录失败必须回滚
                     if (currentTrajectory == null || currentEdgeLength <= 0f)
                     {
                         pathEdgeIds.RemoveRange(pathEdgeIds.Count - 2, 2);
@@ -738,7 +783,7 @@ public class SimpleAutoDrive : MonoBehaviour
     // ==========================================
     // 自动路径规划（仅在初始或彻底迷路时调用）
     // ==========================================
-   void RequestNewPath()
+    void RequestNewPath()
     {
         // 轨迹锁死状态下，绝对禁止重新寻路
         if (_isTrajectoryLocked && currentTrajectory != null) return;
@@ -747,7 +792,6 @@ public class SimpleAutoDrive : MonoBehaviour
 
         // 优先用方向过滤找到同向车道
         int startLaneId = worldModel.FindNearestLane(transform.position, transform.forward);
-        // ★ 兜底：方向过滤失败(如死路尽头车头对着墙)，退化为纯空间最近
         if (startLaneId < 0)
             startLaneId = worldModel.FindNearestLane(transform.position);
 
@@ -771,8 +815,7 @@ public class SimpleAutoDrive : MonoBehaviour
             }
         }
 
-        // 兜底：按车辆当前位置重新锚定到最近车道(不依赖currentTrajectory状态)
-        // 注意：AdvanceOnEdge已把currentTrajectory置null，不能检查它
+        // 兜底：按车辆当前位置重新锚定到最近车道
         {
             int laneId = worldModel.FindNearestLane(transform.position, transform.forward);
             if (laneId < 0)
@@ -813,7 +856,7 @@ public class SimpleAutoDrive : MonoBehaviour
             RoadNode node = worldModel.GetNode(randId);
             if (node == null || node.NeighborIds == null || node.NeighborIds.Count <= 1) continue;
             float d = Vector3.Distance(transform.position, node.WorldPos);
-            if (d < 50f) continue; // 至少50米外
+            if (d < 50f) continue;
             if (d > bestDist)
             {
                 bestDist = d;
@@ -875,6 +918,8 @@ public class SimpleAutoDrive : MonoBehaviour
         currentSpeed = 0f;
         currentDistOnEdge = 0f;
         currentEdgeIndex = 0;
+        _subsumptionEngine?.ResetDebounce();
+        _deadlockRecovery?.Reset();
         LoadCurrentEdge();
     }
 
@@ -915,9 +960,10 @@ public class SimpleAutoDrive : MonoBehaviour
         snappedPos.y = worldModel.GetUnifiedHeight(snappedPos.x, snappedPos.z) + 0.15f;
         transform.position = snappedPos;
 
-        // 4. 对齐车道方向
+        // 4. 对齐车道方向 ★ 修复：将距离(米)转为归一化t(0-1)再查切线
         float distOnLane = lane.CenterSpline.GetDistanceAtPoint(snappedPos);
-        Vector3 tangent = lane.CenterSpline.GetTangent(distOnLane);
+        float normalizedT = lane.CenterSpline.GetTFromLength(distOnLane);
+        Vector3 tangent = lane.CenterSpline.GetTangent(normalizedT);
         if (tangent.sqrMagnitude > 0.001f)
             transform.rotation = Quaternion.LookRotation(tangent);
 
@@ -927,6 +973,8 @@ public class SimpleAutoDrive : MonoBehaviour
         currentSpeed = 0f;
         currentDistOnEdge = 0f;
         longState = LongitudinalState.FreeDrive;
+        _subsumptionEngine?.ResetDebounce();
+        _deadlockRecovery?.Reset();
 
         // 6. 设定起始车道 + 规划路径
         pathEdgeIds.Clear();
@@ -1070,7 +1118,7 @@ public class SimpleAutoDrive : MonoBehaviour
         okStyle.normal.textColor = Color.green;
 
         float panelW = 420f;
-        float panelH = 400f;
+        float panelH = 420f;
         Rect panelRect = new Rect(10, 10, panelW, panelH);
         GUI.Box(panelRect, $"[{name}] 实时状态", boxStyle);
 
@@ -1146,19 +1194,20 @@ public class SimpleAutoDrive : MonoBehaviour
             boxStyle);
         y += lineH;
 
-        string stateStr = $"纵向状态: {longState} | 驱动状态: {currentState}";
+        string stateStr = $"纵向状态: {longState} | 包容层: L{_subsumptionEngine?.ActiveLayer ?? 0} | 驱动: {currentState}";
         GUI.Label(new Rect(x0, y, 380, lineH), stateStr,
             (longState == LongitudinalState.FreeDrive) ? okStyle :
             (longState == LongitudinalState.Stopped) ? errStyle : warnStyle);
         y += lineH;
 
         // ---- 红绿灯/停止线 ----
+        string lightStr = _isYellowLight ? "黄灯" : (redLightAhead ? "红灯" : "无/绿灯");
         GUI.Label(new Rect(x0, y, 380, lineH),
-            $"红绿灯: {(redLightAhead ? "红灯/黄灯" : "无/绿灯")} | 停止线距: {(hasStopLineAhead ? $"{distToStopLine:F1}m" : "无")}",
+            $"红绿灯: {lightStr} | 停止线距: {(hasStopLineAhead ? $"{distToStopLine:F1}m" : "无")} | 困境区: {(_dilemmaZoneArbiter?.IsInDilemmaZone ?? false)}",
             redLightAhead ? errStyle : okStyle);
         y += lineH;
         GUI.Label(new Rect(x0, y, 380, lineH),
-            $"前车距离: {frontDistance:F1}m | 行人危险: {pedestrianDanger}",
+            $"前车距离: {frontDistance:F1}m | 行人危险: {pedestrianDanger} | 让行: {_emergencyYieldHandler?.IsYielding ?? false}",
             frontDistance < safeDistance ? warnStyle : okStyle);
         y += lineH;
 
@@ -1172,5 +1221,3 @@ public class SimpleAutoDrive : MonoBehaviour
             boxStyle);
     }
 }
-
-

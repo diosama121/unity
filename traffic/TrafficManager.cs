@@ -23,6 +23,8 @@ public class TrafficManager : MonoBehaviour
     private float lastFps = 60f;
 
     private List<SimpleAutoDrive> npcVehicles = new List<SimpleAutoDrive>();
+    /// <summary>当前活跃的紧急车辆（救护车），供 EmergencyYieldHandler 使用</summary>
+    [HideInInspector] public SimpleAutoDrive activeEmergencyVehicle;
     public IReadOnlyList<SimpleAutoDrive> ActiveNPCs => npcVehicles;
     private RoadNetworkGenerator roadGen;
     private PathPlanner pathPlanner;
@@ -341,6 +343,7 @@ public class TrafficManager : MonoBehaviour
         }
 
         npcVehicles.Add(autoDrive);
+        activeEmergencyVehicle = autoDrive; // 注册为活跃紧急车辆，供让行系统使用
         Debug.Log("TrafficManager: 紧急车辆已生成");
         return evObj;
     }

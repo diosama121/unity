@@ -186,9 +186,12 @@ public class CameraController : MonoBehaviour
         transform.position += moveDir * currentSpeed * Time.deltaTime;
 
         // V2.0 语义地形高度约束
-        Vector2 currentXZ = new Vector2(transform.position.x, transform.position.z);
-        float terrainHeight = WorldModel.Instance.GetTerrainHeight(currentXZ);
-        transform.position = new Vector3(transform.position.x, terrainHeight + 1f, transform.position.z);
+        if (WorldModel.Instance != null)
+        {
+            Vector2 currentXZ = new Vector2(transform.position.x, transform.position.z);
+            float terrainHeight = WorldModel.Instance.GetTerrainHeight(currentXZ);
+            transform.position = new Vector3(transform.position.x, terrainHeight + 1f, transform.position.z);
+        }
     }
 
     /// <summary>
@@ -208,9 +211,12 @@ public class CameraController : MonoBehaviour
         Vector3 targetPosition = target.position + currentRotation * followOffset;
 
         // V2.0 语义地形高度适配
-        Vector2 targetXZ = new Vector2(targetPosition.x, targetPosition.z);
-        float terrainHeight = WorldModel.Instance.GetTerrainHeight(targetXZ);
-        targetPosition.y = terrainHeight + followOffset.y;
+        if (WorldModel.Instance != null)
+        {
+            Vector2 targetXZ = new Vector2(targetPosition.x, targetPosition.z);
+            float terrainHeight = WorldModel.Instance.GetTerrainHeight(targetXZ);
+            targetPosition.y = terrainHeight + followOffset.y;
+        }
 
         // 3. 平滑移动
         transform.position = Vector3.SmoothDamp(transform.position, targetPosition, ref velocity, followSmoothTime);
