@@ -18,6 +18,7 @@ public enum ROS2MessageType
     vehicle_state,       // Unity → ROS2: 车辆状态+LiDAR点云
     traffic_lights,      // Unity → ROS2: 红绿灯相位状态
     pedestrian_state,    // Unity → ROS2: 行人位置/速度
+    emergency_vehicle,   // Unity → ROS2: 紧急车辆状态
     control_command,     // ROS2 → Unity: 控制指令(AEB等)
     global_state,        // ROS2 → Unity: 全局状态(TTC/AEB)
     heartbeat            // 双向: 心跳保活
@@ -107,6 +108,19 @@ public class ROS2GlobalState : ROS2BaseMessage
     public bool cruise;
     public bool manual_override;
     public float tcp_hz;
+}
+
+// ============================================================
+// Unity → ROS2: 紧急车辆状态
+// ============================================================
+[System.Serializable]
+public class ROS2EmergencyVehicleState : ROS2BaseMessage
+{
+    public bool active;
+    public float x;
+    public float z;
+    public float speed;
+    public float heading;
 }
 
 // ============================================================

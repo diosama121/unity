@@ -837,7 +837,9 @@ public class MasterUIManager : MonoBehaviour
         hudTexts["HUDTimeScale"] = CreateHUDLabel(hudPanel, "时间倍率", "x1", font);
         hudTexts["HUDFPS"] = CreateHUDLabel(hudPanel, "帧率", "0", font);
         hudTexts["HUDVehicleCount"] = CreateHUDLabel(hudPanel, "车辆数", "0", font);
+        hudTexts["HUDPedestrianCount"] = CreateHUDLabel(hudPanel, "行人数", "0", font);
         hudTexts["HUDRosStatus"] = CreateHUDLabel(hudPanel, "ROS2连接", "OFF", font);
+        hudTexts["HUDRosLatency"] = CreateHUDLabel(hudPanel, "ROS2延迟", "-- ms", font);
         hudTexts["HUDNodeCount"] = CreateHUDLabel(hudPanel, "路网节点数", "0", font);
         hudTexts["HUDGroundY"] = CreateHUDLabel(hudPanel, "基准高程", "0.00 m", font);
 
@@ -2258,6 +2260,12 @@ public class MasterUIManager : MonoBehaviour
         bool rosCon = ros2Bridge != null && ros2Bridge.isConnected;
         string rosHz = ros2Bridge != null ? ros2Bridge.sendRate.ToString("F0") : "10";
         SetHUDValue("HUDRosStatus", rosCon ? "ON " + rosHz + "Hz" : "OFF");
+
+        // ★ ROS2 往返延迟
+        if (rosCon && ros2Bridge.Ros2LatencyMs > 0f)
+            SetHUDValue("HUDRosLatency", ros2Bridge.Ros2LatencyMs.ToString("F1") + " ms");
+        else
+            SetHUDValue("HUDRosLatency", "-- ms");
 
         // ★ 同步ROS2 Toggle到实际连接状态
         if (toggles.TryGetValue("ROS2Bridge", out Toggle rosTg) && rosTg != null && rosTg.isOn != rosCon)

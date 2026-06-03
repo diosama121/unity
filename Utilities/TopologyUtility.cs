@@ -177,14 +177,14 @@ public static class TopologyUtility
 
                         foreach (int neighborId in mergedNode.Neighbors)
                         {
-                            GraphNode neighbor = result.Find(n => n.Id == neighborId);
-                            if (neighbor.Id == neighborId)
-                            {
-                                neighbor.Neighbors.Remove(result[i].Id);
-                                neighbor.Neighbors.Remove(result[j].Id);
-                                if (!neighbor.Neighbors.Contains(mergedNode.Id))
-                                    neighbor.Neighbors.Add(mergedNode.Id);
-                            }
+                            int ni = result.FindIndex(n => n.Id == neighborId);
+                            if (ni < 0) continue;
+                            GraphNode neighbor = result[ni];
+                            neighbor.Neighbors.Remove(result[i].Id);
+                            neighbor.Neighbors.Remove(result[j].Id);
+                            if (!neighbor.Neighbors.Contains(mergedNode.Id))
+                                neighbor.Neighbors.Add(mergedNode.Id);
+                            result[ni] = neighbor; // struct写回
                         }
 
                         result.RemoveAt(j);

@@ -78,10 +78,22 @@ public class ROS2BridgeV2 : MonoBehaviour
     // ===== 心跳保活 =====
     private float _heartbeatTimer = 0f;
     private const float heartbeatInterval = 1f;
+    private float _lastHeartbeatSentTime = 0f;
+    private float _ros2LatencyMs = 0f;
+    public float Ros2LatencyMs => _ros2LatencyMs;
+
+    // ===== 红绿灯/行人/紧急车辆定时发送 =====
+    private float _trafficLightSendTimer = 0f;
+    private const float trafficLightSendInterval = 1f;
+    private float _pedestrianSendTimer = 0f;
+    private const float pedestrianSendInterval = 0.5f;
+    private float _emergencyVehicleSendTimer = 0f;
+    private const float emergencyVehicleSendInterval = 0.5f;
 
     // ===== 外部组件引用（红绿灯/行人上报） =====
     private TrafficLightManager _trafficLightManager = null;
     private PedestrianSpawner _pedestrianSpawner = null;
+    private TrafficManager _trafficManager = null;
 
     // 主车切换检测
     private GameObject _lastMainCar = null;
@@ -92,6 +104,7 @@ public class ROS2BridgeV2 : MonoBehaviour
     {
         _trafficLightManager = FindObjectOfType<TrafficLightManager>();
         _pedestrianSpawner = FindObjectOfType<PedestrianSpawner>();
+        _trafficManager = FindObjectOfType<TrafficManager>();
         ConnectToROS2();
     }
 
@@ -248,6 +261,30 @@ public class ROS2BridgeV2 : MonoBehaviour
         {
             _heartbeatTimer = 0f;
             SendHeartbeat();
+        }
+
+        // ★ 红绿灯相位上报（每1秒）
+        _trafficLightSendTimer += Time.deltaTime;
+        if (_trafficLightSendTimer >= trafficLightSendInterval)
+        {
+            _trafficLightSendTimer = 0f;
+            SendTrafficLights();
+        }
+
+        // ★ 行人数据上报（每0.5秒）
+        _pedestrianSendTimer += Time.deltaTime;
+        if (_pedestrianSendTimer >= pedestrianSendInterval)
+        {
+            _pedestrianSendTimer = 0f;
+            SendPedestrianState();
+        }
+
+        // ★ 紧急车辆状态上报（每0.5秒）
+        _emergencyVehicleSendTimer += Time.deltaTime;
+        if (_emergencyVehicleSendTimer >= emergencyVehicleSendInterval)
+        {
+            _emergencyVehicleSendTimer = 0f;
+            SendEmergencyVehicleState();
         }
 
         // 5. ★ ROS2 AEB → SpecialSituations（统一控制流，不再直接操控车辆）
@@ -472,8 +509,10 @@ public class ROS2BridgeV2 : MonoBehaviour
                     break;
 
                 case "heartbeat":
-                    // 心跳响应：更新最后接收时间
+                    // 心跳响应：更新最后接收时间 + 计算往返延迟
                     lastReceiveTime = Time.time;
+                    if (_lastHeartbeatSentTime > 0f && Time.time > _lastHeartbeatSentTime)
+                        _ros2LatencyMs = (Time.time - _lastHeartbeatSentTime) * 1000f;
                     break;
 
                 default:
@@ -598,6 +637,7 @@ public class ROS2BridgeV2 : MonoBehaviour
         if (!isConnected || stream == null || !stream.CanWrite) return;
         try
         {
+            _lastHeartbeatSentTime = Time.time;
             var hb = new ROS2Heartbeat { msg_type = "heartbeat", timestamp = Time.time };
             string json = JsonUtility.ToJson(hb) + "\n";
             byte[] data = Encoding.UTF8.GetBytes(json);
@@ -684,6 +724,36 @@ public class ROS2BridgeV2 : MonoBehaviour
             };
 
             string json = JsonUtility.ToJson(pedMsg) + "\n";
+            byte[] data = Encoding.UTF8.GetBytes(json);
+            sendQueue.Enqueue(data);
+        }
+        catch { }
+    }
+
+    // ==========================================
+    // 发送紧急车辆状态到ROS2
+    // ==========================================
+    public void SendEmergencyVehicleState()
+    {
+        if (!isConnected || stream == null || !stream.CanWrite) return;
+        if (_trafficManager == null) return;
+
+        try
+        {
+            var ev = _trafficManager.activeEmergencyVehicle;
+            if (ev == null) return;
+
+            var evMsg = new ROS2EmergencyVehicleState
+            {
+                msg_type = "emergency_vehicle",
+                active = true,
+                x = ev.transform.position.x,
+                z = ev.transform.position.z,
+                speed = ev.currentSpeed,
+                heading = ev.transform.eulerAngles.y
+            };
+
+            string json = JsonUtility.ToJson(evMsg) + "\n";
             byte[] data = Encoding.UTF8.GetBytes(json);
             sendQueue.Enqueue(data);
         }

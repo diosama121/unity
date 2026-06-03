@@ -147,6 +147,10 @@ class UnityAEBBridge(Node):
 
         self._last_sent_global_state = {}
 
+        # 全局状态定时发送间隔（变化量每间隔发送一次，避免每帧都发）
+        self._last_global_state_time = 0.0
+        self._global_state_interval = 0.5  # 秒
+
         # =====================================================
         # 启动TCP服务器
         # =====================================================
@@ -299,9 +303,31 @@ class UnityAEBBridge(Node):
             state = json.loads(data)
 
             # -------------------------------------------------
-            # ROS2发布
+            # ★ 消息路由：根据 msg_type 分发
             # -------------------------------------------------
 
+            msg_type = state.get('msg_type', '')
+
+            # 心跳：只回传时间戳，不污染车辆状态
+            if msg_type == 'heartbeat':
+                self._send_json({
+                    'msg_type': 'heartbeat',
+                    'timestamp': state.get('timestamp', time.time())
+                })
+                return
+
+            # 新消息类型：暂不处理，只发ROS2 Topic
+            if msg_type in ('traffic_lights', 'pedestrian_state', 'emergency_vehicle'):
+                ros_msg      = String()
+                ros_msg.data = data
+                self.state_publisher.publish(ros_msg)
+                return
+
+            # -------------------------------------------------
+            # 以下是车辆状态消息（vehicle_state 或无 msg_type）
+            # -------------------------------------------------
+
+            # ROS2发布
             ros_msg      = String()
             ros_msg.data = data
             self.state_publisher.publish(ros_msg)
@@ -342,6 +368,8 @@ class UnityAEBBridge(Node):
 
             speed_ms       = max(self.current_speed / 3.6, 0.01)
             self.current_ttc = self.min_distance / speed_ms
+            if self.current_ttc > 999.0:
+                self.current_ttc = 999.0
 
             # -------------------------------------------------
             # AEB状态机
@@ -394,7 +422,7 @@ class UnityAEBBridge(Node):
             self.send_control_to_unity()
 
             # -------------------------------------------------
-            # 全局状态同步（AEB状态变化时立刻推送）
+            # 全局状态同步（AEB状态变化时立刻推送，否则定时推送）
             # -------------------------------------------------
 
             if self.aeb_state != prev_aeb_state:
@@ -517,7 +545,7 @@ class UnityAEBBridge(Node):
         """
         向 Unity 发送全局状态包。
         force=True  → 无论状态是否改变都立刻发
-        force=False → 只有状态与上次不同才发（节省带宽）
+        force=False → 定时发送（节省带宽），且状态变化时发送
         """
 
         if not self.is_connected or self.client_socket is None:
@@ -525,10 +553,17 @@ class UnityAEBBridge(Node):
 
         state = self._build_global_state()
 
+        # 定时发送：每 _global_state_interval 秒发一次
+        now = time.time()
+        if not force and now - self._last_global_state_time < self._global_state_interval:
+            return
+
+        # 非强制模式下，状态没变就不发
         if not force and state == self._last_sent_global_state:
             return
 
         self._last_sent_global_state = state.copy()
+        self._last_global_state_time = now
 
         try:
             self._send_json(state)

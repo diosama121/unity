@@ -89,7 +89,10 @@ public class TrafficLightController : MonoBehaviour
             case "Green": if (greenLight != null) greenLight.enabled = true; break;
         }
 
+        // 仅在Editor模式下输出日志，避免运行时刷屏
+#if UNITY_EDITOR
         Debug.Log($"红绿灯状态切换为：{state}");
+#endif
     }
 
     /// <summary>
