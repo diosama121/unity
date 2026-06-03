@@ -75,6 +75,14 @@ public class ROS2BridgeV2 : MonoBehaviour
     // ★ 统一控制流：ROS2 AEB → SpecialSituations → SimpleAutoDrive → SubsumptionEngine
     private SpecialSituations _specialSituations = null;
 
+    // ===== 心跳保活 =====
+    private float _heartbeatTimer = 0f;
+    private const float heartbeatInterval = 1f;
+
+    // ===== 外部组件引用（红绿灯/行人上报） =====
+    private TrafficLightManager _trafficLightManager = null;
+    private PedestrianSpawner _pedestrianSpawner = null;
+
     // 主车切换检测
     private GameObject _lastMainCar = null;
     private bool _firstDataSent = false;
@@ -82,6 +90,8 @@ public class ROS2BridgeV2 : MonoBehaviour
 
     void Start()
     {
+        _trafficLightManager = FindObjectOfType<TrafficLightManager>();
+        _pedestrianSpawner = FindObjectOfType<PedestrianSpawner>();
         ConnectToROS2();
     }
 
@@ -232,6 +242,14 @@ public class ROS2BridgeV2 : MonoBehaviour
             lastSendTime = Time.time;
         }
 
+        // ★ 心跳保活（每1秒）
+        _heartbeatTimer += Time.deltaTime;
+        if (_heartbeatTimer >= heartbeatInterval)
+        {
+            _heartbeatTimer = 0f;
+            SendHeartbeat();
+        }
+
         // 5. ★ ROS2 AEB → SpecialSituations（统一控制流，不再直接操控车辆）
         if (_rosAebState == "BRAKING" && rosLinearVelocity < 0f)
         {
@@ -297,8 +315,9 @@ public class ROS2BridgeV2 : MonoBehaviour
                 lidarCopy = (float[])_cachedLidarPoints.Clone();
             }
 
-            var state = new VehicleState
+            var state = new ROS2VehicleState
             {
+                msg_type = "vehicle_state",
                 velocity = _carController.GetSpeed(),
                 steering_angle = _carController.currentSteeringAngle,
                 lidar_points = lidarCopy,
@@ -310,7 +329,6 @@ public class ROS2BridgeV2 : MonoBehaviour
             string jsonData = JsonUtility.ToJson(state) + "\n";
             byte[] data = Encoding.UTF8.GetBytes(jsonData);
 
-            while (sendQueue.TryDequeue(out _)) { }
             sendQueue.Enqueue(data);
 
             if (!_firstDataSent)
@@ -421,32 +439,81 @@ public class ROS2BridgeV2 : MonoBehaviour
             jsonData = jsonData.Trim();
             if (string.IsNullOrEmpty(jsonData)) return;
 
-            // 区分消息类型：global_state 消息包含 "type" 字段
-            if (jsonData.Contains("\"type\""))
+            // ★ 先解析基础消息获取 msg_type
+            ROS2BaseMessage baseMsg = JsonUtility.FromJson<ROS2BaseMessage>(jsonData);
+            if (baseMsg == null || string.IsNullOrEmpty(baseMsg.msg_type))
             {
-                GlobalState state = JsonUtility.FromJson<GlobalState>(jsonData);
-                if (state != null)
-                {
-                    _rosAebState = state.aeb_state ?? "IDLE";
-                    _rosTTC = state.ttc_s;
-                    _rosMinDist = state.min_dist_m;
-                    _rosSpeedKmh = state.speed_kmh;
-                }
+                // 兼容旧协议：无 msg_type 字段，用 contains 判断
+                ProcessLegacyMessage(jsonData);
                 return;
             }
 
-            // 控制指令：linear_velocity / angular_velocity / enable_control
-            ControlCommand cmd = JsonUtility.FromJson<ControlCommand>(jsonData);
-            if (cmd != null)
+            switch (baseMsg.msg_type)
             {
-                rosLinearVelocity = cmd.linear_velocity;
-                rosAngularVelocity = cmd.angular_velocity;
-                useRosControl = cmd.enable_control;
+                case "control_command":
+                    ROS2ControlCommand cmd = JsonUtility.FromJson<ROS2ControlCommand>(jsonData);
+                    if (cmd != null)
+                    {
+                        rosLinearVelocity = cmd.linear_velocity;
+                        rosAngularVelocity = cmd.angular_velocity;
+                        useRosControl = cmd.enable_control;
+                    }
+                    break;
+
+                case "global_state":
+                    ROS2GlobalState state = JsonUtility.FromJson<ROS2GlobalState>(jsonData);
+                    if (state != null)
+                    {
+                        _rosAebState = state.aeb_state ?? "IDLE";
+                        _rosTTC = state.ttc_s;
+                        _rosMinDist = state.min_dist_m;
+                        _rosSpeedKmh = state.speed_kmh;
+                    }
+                    break;
+
+                case "heartbeat":
+                    // 心跳响应：更新最后接收时间
+                    lastReceiveTime = Time.time;
+                    break;
+
+                default:
+                    // 未知消息类型，尝试兼容旧协议
+                    ProcessLegacyMessage(jsonData);
+                    break;
             }
         }
         catch (Exception e)
         {
             Debug.LogWarning($"[ROS2Bridge] JSON解析异常: {e.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 兼容旧协议（无 msg_type 字段的消息）
+    /// </summary>
+    void ProcessLegacyMessage(string jsonData)
+    {
+        // 旧版 global_state 消息包含 "type" 字段
+        if (jsonData.Contains("\"type\""))
+        {
+            GlobalState state = JsonUtility.FromJson<GlobalState>(jsonData);
+            if (state != null)
+            {
+                _rosAebState = state.aeb_state ?? "IDLE";
+                _rosTTC = state.ttc_s;
+                _rosMinDist = state.min_dist_m;
+                _rosSpeedKmh = state.speed_kmh;
+            }
+            return;
+        }
+
+        // 旧版控制指令：linear_velocity / angular_velocity / enable_control
+        ControlCommand cmd = JsonUtility.FromJson<ControlCommand>(jsonData);
+        if (cmd != null)
+        {
+            rosLinearVelocity = cmd.linear_velocity;
+            rosAngularVelocity = cmd.angular_velocity;
+            useRosControl = cmd.enable_control;
         }
     }
 
@@ -524,40 +591,106 @@ public class ROS2BridgeV2 : MonoBehaviour
     }
 
     // ==========================================
-    // JSON序列化结构体
+    // 发送心跳
     // ==========================================
-    [System.Serializable]
-    public class VehicleState
+    void SendHeartbeat()
     {
-        public float velocity;
-        public float steering_angle;
-        public float[] lidar_points;
-        public string auto_drive_state;
-        public float timestamp;
+        if (!isConnected || stream == null || !stream.CanWrite) return;
+        try
+        {
+            var hb = new ROS2Heartbeat { msg_type = "heartbeat", timestamp = Time.time };
+            string json = JsonUtility.ToJson(hb) + "\n";
+            byte[] data = Encoding.UTF8.GetBytes(json);
+            sendQueue.Enqueue(data);
+        }
+        catch { }
     }
 
-    [System.Serializable]
-    public class ControlCommand
+    // ==========================================
+    // 发送红绿灯相位状态到ROS2
+    // ==========================================
+    public void SendTrafficLights()
     {
-        public float linear_velocity;
-        public float angular_velocity;
-        public bool enable_control;
+        if (!isConnected || stream == null || !stream.CanWrite) return;
+        if (_trafficLightManager == null) return;
+
+        try
+        {
+            var instances = _trafficLightManager.GetTrafficLightInstances();
+            if (instances == null || instances.Count == 0) return;
+
+            var phases = new System.Collections.Generic.List<ROS2TrafficLightPhase>();
+            foreach (var tl in instances)
+            {
+                if (tl == null || tl.controller == null) continue;
+                string state = tl.controller.GetCurrentState();
+                phases.Add(new ROS2TrafficLightPhase
+                {
+                    node_id = tl.nodeId,
+                    phase_id = tl.phaseId,
+                    state = state
+                });
+            }
+
+            if (phases.Count == 0) return;
+
+            var tlMsg = new ROS2TrafficLights
+            {
+                msg_type = "traffic_lights",
+                phases = phases.ToArray()
+            };
+
+            string json = JsonUtility.ToJson(tlMsg) + "\n";
+            byte[] data = Encoding.UTF8.GetBytes(json);
+            sendQueue.Enqueue(data);
+        }
+        catch { }
     }
 
-    [System.Serializable]
-    public class GlobalState
+    // ==========================================
+    // 发送行人检测数据到ROS2
+    // ==========================================
+    public void SendPedestrianState()
     {
-        public string type;
-        public string aeb_state;
-        public float ttc_s;
-        public float min_dist_m;
-        public float speed_kmh;
-        public bool aeb;
-        public bool hud;
-        public bool cruise;
-        public bool manual_override;
-        public float tcp_hz;
+        if (!isConnected || stream == null || !stream.CanWrite) return;
+        if (_pedestrianSpawner == null) return;
+
+        try
+        {
+            var pedestrians = _pedestrianSpawner.GetActivePedestrians();
+            if (pedestrians == null || pedestrians.Length == 0) return;
+
+            var pedList = new System.Collections.Generic.List<ROS2Pedestrian>();
+            for (int i = 0; i < pedestrians.Length; i++)
+            {
+                var ped = pedestrians[i];
+                if (ped == null) continue;
+                pedList.Add(new ROS2Pedestrian
+                {
+                    id = i,
+                    x = ped.transform.position.x,
+                    z = ped.transform.position.z,
+                    vx = 0f,
+                    vz = 0f
+                });
+            }
+
+            if (pedList.Count == 0) return;
+
+            var pedMsg = new ROS2PedestrianState
+            {
+                msg_type = "pedestrian_state",
+                pedestrians = pedList.ToArray()
+            };
+
+            string json = JsonUtility.ToJson(pedMsg) + "\n";
+            byte[] data = Encoding.UTF8.GetBytes(json);
+            sendQueue.Enqueue(data);
+        }
+        catch { }
     }
+
+    // 旧版结构体已迁移至 ROS2Messages.cs
 
     // ==========================================
     // 屏幕通知

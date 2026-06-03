@@ -70,6 +70,16 @@ public class PedestrianSpawner : MonoBehaviour
     /// <summary>当前活跃行人数量（供数据导出）</summary>
     public int ActivePedestrianCount => pedestrians.Count;
 
+    /// <summary>获取所有活跃行人GameObject（供ROS2上报）</summary>
+    public GameObject[] GetActivePedestrians()
+    {
+        pedestrians.RemoveAll(p => p == null || p.gameObject == null);
+        var result = new GameObject[pedestrians.Count];
+        for (int i = 0; i < pedestrians.Count; i++)
+            result[i] = pedestrians[i].gameObject;
+        return result;
+    }
+
     void Start()
     {
         roadGen = FindObjectOfType<RoadNetworkGenerator>();
@@ -114,7 +124,7 @@ public class PedestrianSpawner : MonoBehaviour
         if (pedestrians.Count >= maxPedestrians) return;
         if (Random.value > spawnChance) return;
 
-        Vector3? spawnPos = GetSidewalkPosition();
+        Vector3? spawnPos = GetSidewalkPosition(out Vector3 roadTangent);
         if (!spawnPos.HasValue) return;
 
         Vector3 pos = spawnPos.Value;
@@ -141,7 +151,6 @@ public class PedestrianSpawner : MonoBehaviour
         }
 
         // 初始方向优先沿道路方向
-        Vector3 roadTangent = Random.value > 0.5f ? Vector3.forward : Vector3.right;
         Vector3 initDir = roadTangent.normalized;
         if (Random.value > 0.7f) initDir = -initDir; // 30%概率反向走
 
@@ -162,8 +171,9 @@ public class PedestrianSpawner : MonoBehaviour
     /// ★ V2.0：从 WorldModel 车道数据计算人行道位置
     /// 策略：随机选车道 → 取中心线随机点 → 沿垂直方向偏移到人行道
     /// </summary>
-    private Vector3? GetSidewalkPosition()
+    private Vector3? GetSidewalkPosition(out Vector3 roadTangent)
     {
+        roadTangent = Vector3.forward; // 默认值
         WorldModel wm = WorldModel.Instance;
         if (wm == null || wm.GlobalLanes == null || wm.GlobalLanes.Count == 0)
             return null;
@@ -187,6 +197,7 @@ public class PedestrianSpawner : MonoBehaviour
         // 获取车道切线方向
         Vector3 tangent = lane.CenterSpline.GetTangent(t);
         if (tangent.sqrMagnitude < 0.001f) tangent = Vector3.forward;
+        roadTangent = tangent.normalized; // ★ 传出给调用方
 
         // 计算垂直方向（人行道偏移方向）
         Vector3 perpendicular = Vector3.Cross(Vector3.up, tangent).normalized;
@@ -194,19 +205,16 @@ public class PedestrianSpawner : MonoBehaviour
         // ★ 判断偏移方向：优先偏移到无相邻车道的一侧
         if (lane.LeftLaneId < 0 && lane.RightLaneId >= 0)
         {
-            // 仅右侧有相邻车道 → 人行道在左侧
             perpendicular = -perpendicular;
         }
         else if (lane.RightLaneId < 0 && lane.LeftLaneId >= 0)
         {
-            // 仅左侧有相邻车道 → 人行道在右侧（保持perpendicular）
+            // 保持perpendicular
         }
         else if (lane.LeftLaneId >= 0 && lane.RightLaneId >= 0)
         {
-            // 两侧都有车道（中间车道）→ 跳过，不生成
             return null;
         }
-        // 两侧都没车道（孤立车道）→ 随机选一侧
         else if (Random.value > 0.5f)
         {
             perpendicular = -perpendicular;
@@ -219,9 +227,6 @@ public class PedestrianSpawner : MonoBehaviour
         if (wm != null)
             sidewalkPos.y = wm.GetUnifiedHeight(sidewalkPos.x, sidewalkPos.z);
 
-        // ★ 返回人行道位置和切线方向（供初始朝向用）
-        // 使用out参数模式不方便，这里直接在调用方传入... 
-        // 实际上面tangent信息通过其他方式传递，这里暂时不处理
         return sidewalkPos;
     }
 

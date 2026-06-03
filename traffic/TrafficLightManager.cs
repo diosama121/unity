@@ -221,6 +221,12 @@ public class TrafficLightManager : MonoBehaviour
 {
     return trafficLights.Select(t => t.gameObject).ToList();
 }
+
+/// <summary>获取所有红绿灯实例数据（供ROS2上报）</summary>
+public List<TrafficLightInstance> GetTrafficLightInstances()
+{
+    return new List<TrafficLightInstance>(trafficLights);
+}
    void PlaceTrafficLightAtNode(RoadNetworkGenerator.WaypointNode node, int directionIndex)
     {
         int neighborId = node.neighbors[directionIndex];
