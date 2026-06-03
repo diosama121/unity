@@ -72,6 +72,9 @@ public class ROS2BridgeV2 : MonoBehaviour
     private const float aebWarningDuration = 2f;
     private bool _aebActive = false;
 
+    // ★ 统一控制流：ROS2 AEB → SpecialSituations → SimpleAutoDrive → SubsumptionEngine
+    private SpecialSituations _specialSituations = null;
+
     // 主车切换检测
     private GameObject _lastMainCar = null;
     private bool _firstDataSent = false;
@@ -114,6 +117,7 @@ public class ROS2BridgeV2 : MonoBehaviour
             _carController = main.GetComponent<SimpleCarController>();
             _autoDrive = main;
             _carTransform = main.transform;
+            _specialSituations = main.GetComponent<SpecialSituations>();
             Debug.Log($"[ROS2Bridge] 主车切换 → {main.name}");
         }
     }
@@ -228,39 +232,19 @@ public class ROS2BridgeV2 : MonoBehaviour
             lastSendTime = Time.time;
         }
 
-        // 5. 应用ROS2控制指令
-        if (useRosControl)
+        // 5. ★ ROS2 AEB → SpecialSituations（统一控制流，不再直接操控车辆）
+        if (_rosAebState == "BRAKING" && rosLinearVelocity < 0f)
         {
-            if (_autoDrive != null && _autoDrive.enabled)
-                _autoDrive.enabled = false;
-
-            bool isBraking = (rosLinearVelocity < 0f);
-            if (_carController != null)
-            {
-                float maxSpd = _carController.maxSpeed > 0 ? _carController.maxSpeed : 20f;
-                float targetThrottle = Mathf.Clamp(rosLinearVelocity / maxSpd, -1f, 1f);
-                float targetSteering = Mathf.Clamp(-rosAngularVelocity / 1.5f, -1f, 1f);
-
-                _carController.ApplyCommand(new VehicleCommand
-                {
-                    throttle = targetThrottle,
-                    steering = targetSteering,
-                    isBraking = isBraking
-                });
-            }
-
-            if (isBraking)
-            {
-                _aebActive = true;
-                _aebWarningTimer = aebWarningDuration;
-            }
+            if (_specialSituations != null)
+                _specialSituations.TriggerExternalAEB(true);
+            _aebActive = true;
+            _aebWarningTimer = aebWarningDuration;
         }
-        else
+        else if (_aebActive)
         {
-            if (_autoDrive != null && !_autoDrive.enabled)
-            {
-                _autoDrive.enabled = true;
-            }
+            if (_specialSituations != null)
+                _specialSituations.TriggerExternalAEB(false);
+            _aebActive = false;
         }
     }
 
@@ -493,11 +477,9 @@ public class ROS2BridgeV2 : MonoBehaviour
         rosLinearVelocity = 0f;
         rosAngularVelocity = 0f;
 
-        if (_autoDrive != null && !_autoDrive.enabled)
-        {
-            _autoDrive.enabled = true;
-            _autoDrive.ResetNavigation();
-        }
+        // ★ 断开时清除AEB状态
+        if (_specialSituations != null) _specialSituations.TriggerExternalAEB(false);
+        _aebActive = false;
 
         _lastMainCar = null;
         _firstDataSent = false;

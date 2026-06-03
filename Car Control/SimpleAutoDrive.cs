@@ -174,6 +174,7 @@ public class SimpleAutoDrive : MonoBehaviour
     private DilemmaZoneArbiter    _dilemmaZoneArbiter;
     private EmergencyYieldHandler _emergencyYieldHandler;
     private PullOverHandler       _pullOverHandler;
+    private SpecialSituations     _specialSituations; // ★ ROS2 AEB 外部中断
 
     // ==========================================
     // 初始化
@@ -214,6 +215,7 @@ public class SimpleAutoDrive : MonoBehaviour
         _dilemmaZoneArbiter    = new DilemmaZoneArbiter();
         _emergencyYieldHandler = new EmergencyYieldHandler();
         _pullOverHandler       = new PullOverHandler();
+        _specialSituations     = GetComponent<SpecialSituations>(); // ★ ROS2 AEB
 
         // 防止 TrafficManager 的寻路记忆被清空
         if (pathEdgeIds.Count > 0 && currentTrajectory == null)
@@ -414,6 +416,14 @@ public class SimpleAutoDrive : MonoBehaviour
 
         float targetSpd = layerOutput.targetSpeed;
         bool  brakeHard = layerOutput.isHardBrake;
+
+        // ★ 外部AEB（ROS2）优先级最高，覆盖包容式架构
+        var extCmd = _specialSituations?.Handle();
+        if (extCmd.HasValue)
+        {
+            brakeHard = extCmd.Value.isBraking;
+            targetSpd = 0f;
+        }
 
         // ==========================================
         // 停止超时 → 倒车脱困（保留在此处管理）
@@ -1385,6 +1395,13 @@ public class SimpleAutoDrive : MonoBehaviour
         GUI.Label(new Rect(x0, y, 380, lineH), stateStr,
             (longState == LongitudinalState.FreeDrive) ? okStyle :
             (longState == LongitudinalState.Stopped) ? errStyle : warnStyle);
+        y += lineH;
+
+        // ★ ROS2 AEB 状态
+        bool aebActive = _specialSituations != null && _specialSituations.IsExternalAEBActive();
+        GUI.Label(new Rect(x0, y, 380, lineH),
+            $"ROS2 AEB: {(aebActive ? "★ 紧急制动中 ★" : "待命")}",
+            aebActive ? errStyle : okStyle);
         y += lineH;
 
         // ---- 红绿灯/停止线 ----
