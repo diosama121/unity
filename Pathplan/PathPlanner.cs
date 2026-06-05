@@ -394,8 +394,9 @@ public class PathPlanner : MonoBehaviour
                 // 不包含车道长度会导致 A* 无视 300m 直路和 30m 短路之间的压倒性差异
                 float laneLen   = currentLane.CenterSpline.TotalLength;
                 float connLen   = (connector.TurnCurve != null) ? connector.TurnCurve.TotalLength : 0f;
-                float nextLen   = nextLane.CenterSpline.TotalLength;
-                float edgeCost  = laneLen + connLen + nextLen;
+                // ★ 暗雷四修复：边代价只算离开当前车道+穿过连接器的长度
+                // 不预支 nextLen，因为下一段在下一次遍历时自然会算，防止重复计费
+                float edgeCost  = laneLen + connLen;
                 if (edgeCost >= float.MaxValue) continue;
 
                 float tentativeG = currentNode.GCost + edgeCost;

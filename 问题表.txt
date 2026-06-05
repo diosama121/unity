@@ -1,151 +1,146 @@
-看了你附带的 问题表.txt，发现你已经修复了“红绿灯空间绑架（路权免死金牌）”、“U-Turn彩虹桥”、“雷达吃土”等几个恶性 Bug，执行力很强。
+这几份新代码的信息量很大，特别是包容式小脑（SubsumptionEngine）和 ROS2 桥接层。顺着执行流仔细盘了一下逻辑，你这里的架构骨架搭得很漂亮，但细节里藏着4个非常致命的逻辑死角（暗雷）。
 
-顺着你目前搭建的这套“基于离散烘焙曲线 (BakedTrajectory) 的轨道车架构”，我仔细扒了 SimpleAutoDrive.cs 和 SimpleCarController.cs 的底层逻辑。你提到“车辆运行不太对”，在当前的源码里，存在四个极其致命的逻辑冲突（暗雷）。
+如果不修，你的车会在跟车时“疯狂磕头”，路上的 NPC 会越跑越少，断网时主车甚至会“永久瘫痪”。
 
-如果不修，车子跑起来不仅会疯狂抽搐，死锁脱困功能也完全是个摆设。
+以下是具体的 Bug 定位和修复方案：
 
-💣 致命暗雷一：位移与贴地的“神仙打架”（车身疯狂抽搐的元凶）
-病因：
-你在 SimpleAutoDrive.cs 的 SnapToCurve() 里面，严格按照样条线 (Spline) 的切线算出了车身旋转，并且强制设定了高度：pos.y = baseY + 0.15f;
-但是！在 SimpleCarController.cs 的 Update() 里，哪怕它是 NPC，它也会执行这段代码：
-
-C#
-if (isNPC || manualControl) {
-    ApplyGroundAlignment(); // <--- 灾难在这里
-    return;
-}
-ApplyGroundAlignment() 干了什么？它把高度强制改成了 baseY + npcSuspensionHeight (默认0.5f)，并且根据地形网格的法线重新算了一遍旋转并覆盖了 transform.rotation。
-后果： 你的车每一帧都在被两个脚本“夺舍”。上一帧按曲线对齐（高度0.15），下一帧被地形法线强扭（高度0.5）。肉眼看过去，车子在路口和上下坡时会疯狂高频上下震动，并且转弯时车头会像抽筋一样摆动。
-
-💣 致命暗雷二：主车的“双倍速度与幽灵位移”
-病因：
-还是 SimpleCarController.cs 的 Update，对于主车（isNPC = false）且在自动驾驶状态（manualControl = false）时，它绕过了上面的 return，继续往下执行：
+💣 暗雷一：L2跟车层的“磕头式追尾” (永远停不下来的车)
+病因源头：
+在 SubsumptionEngine.cs 的 ComputeL2 (跟车避障层) 中，你写了这么一句：
 
 C#
-float moveStep = currentSpeed * Time.deltaTime;
-transform.position += transform.forward * moveStep;
-而主车上的 SimpleAutoDrive 已经在 AdvanceOnEdge(moveDist) 里推动了距离，并调用了 SnapToCurve() 更新了坐标。
-后果：
-主车进入自动驾驶时，每一帧被向前推进了两次（一次沿着曲线，一次顺着车头直行）。主车会以两倍速狂飙，且在弯道会因为直行向量的叠加，被硬生生推离预定轨道！
+float targetSpd = Mathf.Lerp(0f, s.frontSpeed, distRatio);
+targetSpd = Mathf.Max(targetSpd, 1f); // 最低 1m/s，不跟停
+致命后果：
+这句 最低 1m/s，不跟停 是一个巨大的逻辑漏洞。当且仅当红绿灯（L1）未触发时，如果前车停死在路边，你的车会进入 L2 跟车。但因为它最低只能减速到 1m/s，它会持续以 1m/s 的速度往前蠕动，直到触发 L3 (AEB 紧急制动，距离 < 3.5m)。
+触发 AEB 后，车子猛烈急刹停下；一旦停下，距离可能大于 3.5m，控制权又交还给 L2；L2 发现前车，又输出 1m/s 往前蠕动……
+结果就是你的车会在前车屁股后面疯狂“磕头”（急刹-蠕动-急刹-蠕动），永远无法安稳停下。
 
-💣 致命暗雷三：“仰卧起坐”式死锁（永远无法重新寻路）
-病因：
-看 SimpleAutoDrive.cs 里的倒车逻辑：
-
-C#
-if (reverseTimer > reverseDuration) {
-    longState = LongitudinalState.Stopped; // 倒车结束，变回停止
-}
-结合前面的逻辑：停止超过 10 秒 -> 倒车 2.5 秒 -> 变回停止 -> 再等 10 秒 -> 倒车 2.5 秒……
-后果：
-它形成了一个完美的无限死循环！更致命的是，你辛辛苦苦写的 _deadlockRecovery.Update() 只有在 currentTrajectory == null 时才会执行。而陷入这个死循环的车辆，其轨迹永远不为空。所以这辆车会永远在原地“仰卧起坐”，直到世界末日也不会触发强制重寻路。
-
-💣 致命暗雷四：自断退路的路径裁剪
-病因：
-TrimPassedEdges() 只要走过 10 个边，就把前面的边全删了，并且把 currentEdgeIndex 设为 0。
-后果：
-当车子触发了上面的倒车逻辑（需要向后退避）时，一旦退到了当前边的起点（currentDistOnEdge = 0），它需要 currentEdgeIndex-- 退回上一条边。但因为前面的边被你删了（currentEdgeIndex 已经是 0 了），车子会像撞到一堵空气墙一样，再也退不动了。
-🛠️ 终极修复方案
-把以下代码替换到对应的文件里，系统会瞬间丝滑流畅。
-
-1. 根治执行层争夺权 (修改 SimpleCarController.cs)
-彻底剥夺 SimpleCarController 在自动驾驶模式下的运动干涉权，将身心完全交给轨道引擎。
-找到 SimpleCarController.cs 的 Update()，替换为：
+解药：
+彻底删掉那个 1f 的下限，允许 L2 随前车完全刹停：
 
 C#
-void Update()
-{
-    // ★ 修复：查询大脑是否正在进行轨道接管
-    SimpleAutoDrive autoDrive = GetComponent<SimpleAutoDrive>();
-    bool isDrivenBySpline = (autoDrive != null && !autoDrive.isPlayerControlled && autoDrive.currentEdgeLength > 0f);
-
-    // 如果正被轨道引擎接管，底盘变身纯木偶，不做任何位移和贴地计算！(解决抽搐和双倍速)
-    if (isDrivenBySpline) return; 
-
-    if (isNPC || manualControl)
-    {
-        ApplyGroundAlignment();
-        return;
-    }
-
-    // 1. 位移
-    float moveStep = currentSpeed * Time.deltaTime;
-    transform.position += transform.forward * moveStep;
-
-    // 2. 转向
-    if (Mathf.Abs(currentSpeed) > 0.01f)
-    {
-        float turnAmount = currentSteeringAngle * (currentSpeed / maxSpeed) * Time.deltaTime;
-        transform.Rotate(0f, turnAmount, 0f);
-    }
-
-    // 3. 贴地
-    ApplyGroundAlignment();
-}
-2. 打破死锁循环，激活僵死恢复 (修改 SimpleAutoDrive.cs)
-找到 Update() 里处理倒车的这一块代码，增加对僵死状态的强制打破：
+float targetSpd = Mathf.Lerp(0f, s.frontSpeed, distRatio);
+// 删除 targetSpd = Mathf.Max(targetSpd, 1f); 
+💣 暗雷二：断网导致的“永久高位截瘫”
+病因源头：
+在 ROS2BridgeV2.cs 的 Update() 方法中，超时和断连的处理逻辑存在严重的执行顺序漏洞。
 
 C#
-        // ==========================================
-        // 倒车逻辑 (修复死锁循环)
-        // ==========================================
-        if (longState == LongitudinalState.Reverse)
+// 2. 超时/断连 -> 移交本地 AI
+if (useRosControl && (!isConnected || isTimeout)) { ... }
+
+// 如果没连接，直接 return (截断了后续所有代码！)
+if (!isConnected) return; 
+
+// 5. 解除 AEB 的逻辑在这里...
+if (_aebActive) { _specialSituations.TriggerExternalAEB(false); ... }
+致命后果：
+假设 ROS2 传来了 BRAKING 指令，主车的 AEB 被激活。此时突然网络波动或者 ROS2 节点崩溃，isConnected 变为 false。
+下一帧进入 Update，代码走到 if (!isConnected) return; 就直接退出了！下方用来解除 AEB TriggerExternalAEB(false) 的代码永远不会被执行。
+结果你的主车会被死死锁在原地（刹车焊死），直到你重启游戏。
+
+解药：
+在断线降级逻辑中，强制清空 AEB 状态：
+
+C#
+        // 2. 超时/断连 -> 安全降级
+        bool isTimeout = (Time.time - lastReceiveTime > rosTimeout);
+        if (!isConnected || isTimeout)
         {
-            reverseTimer += Time.deltaTime;
-            if (reverseTimer > reverseDuration)
+            if (useRosControl)
             {
-                longState = LongitudinalState.Stopped;
-                stoppedTimer = 0f;
-                targetSpd = 0f;
-                brakeHard = false;
-                
-                // ★ 修复：倒车结束后，依然被堵死？直接清空轨迹，强行触发 _deadlockRecovery！
-                if (frontDistance < safeDistance) 
-                {
-                    Debug.LogWarning($"[SimpleAutoDrive] {name} 倒车后仍受阻，摧毁当前轨迹，移交死锁脱困层");
-                    currentTrajectory = null; 
-                    currentEdgeLength = 0f;
-                    _isTrajectoryLocked = false;
-                }
+                Debug.LogWarning("[ROS2Bridge] AEB连接超时！交还本地AI控制...");
+                useRosControl = false;
+                rosLinearVelocity = 0f;
+                rosAngularVelocity = 0f;
+                if (_autoDrive != null) { _autoDrive.enabled = true; _autoDrive.ResetNavigation(); }
             }
-            else
+
+            // ★ 修复：断网时必须强行释放本地的被锁死的AEB状态
+            if (_aebActive) 
             {
-                targetSpd = -2f;
-                brakeHard = false;
+                if (_specialSituations != null) _specialSituations.TriggerExternalAEB(false);
+                _aebActive = false;
             }
         }
-3. 修复退路被断的裁剪逻辑 (修改 SimpleAutoDrive.cs)
-在 TrimPassedEdges() 里，至少给车辆保留几条历史退路，不要一刀切到 0：
+        if (!isConnected) return;
+💣 暗雷三：NPC 的“慢性灭绝” (越跑越少的幽灵车)
+病因源头：
+在 TrafficManager.cs 的 RecycleFinishedNPCs() 中，你处理到达终点的 NPC 的逻辑过于粗暴：
 
 C#
-    void TrimPassedEdges()
-    {
-        // ★ 修复：至少保留最近走过的 3 条边作为倒车缓冲，防止退到死胡同
-        if (currentEdgeIndex > 15 && currentEdgeIndex < pathEdgeIds.Count)
-        {
-            int retainCount = 3; 
-            int removeCount = currentEdgeIndex - retainCount;
-            if (removeCount > 0)
-            {
-                pathEdgeIds.RemoveRange(0, removeCount);
-                currentEdgeIndex = retainCount; 
-            }
-        }
-    }
-这三刀切下去，你的车队才会真正变成严谨的“轨道电车”，不会在路口抽搐，遇到堵死也会正常触发你写的强制跳跃 ForceNewDestination 逻辑了。你可以跑起来试试看！
-****注意：上述代码仅作为参考，如果你有更好的实现，可以不按这个来。
-首当其冲的是 “上坡秒变瞎子”的追尾惨案。
-在 SimpleAutoDrive 的 CheckFrontVehicleFake 里面，NPC车为了省性能用了个简化的数学雷达。算前车距离时，把目标向量的 Y 轴强行抹零了（toOther.y = 0），这是对的。偏偏它忘了把自己的车头向量 myFwd 也压平。
-车子一旦开上斜坡，车头是指向天的，拿一个指天的向量去和水平向量算点积（Dot），数值立马暴跌，根本过不了 0.7f 的判定线。只要有坡度，NPC 的假雷达就彻底失效，前车就算停在鼻子上它也看不见，直接全速撞上去。算点积前必须把 myFwd 也压扁重归一化。
+if (RespawnNPCOnNewLane(npc, npcObj, controller)) {
+    // 成功重生，保持列表
+} else {
+    // 无法重生，销毁
+    npcVehicles.RemoveAt(i);
+    Destroy(npcObj);
+}
+结合 RespawnNPCOnNewLane 里的 Physics.CheckSphere（防止重生时与其他车重叠）：
+致命后果：
+当城里车比较多时，CheckSphere 很容易碰巧检测到周围有车，导致重生失败并返回 false。此时，你直接把这辆本该循环利用的 NPC 连根拔起 Destroy 掉了！
+仿真运行半个小时后，随着这些“偶然失败”不断累积，你的马路会慢慢变成死城，最后可能一辆车都不剩。
 
-另外一个是 切回自动驾驶直接变成“智障”。
-玩家手动开完车按键切回自动，走的是 MergeBackToTraffic。这方法前半截写得挺好，找车道、吸附、算进度都没问题。结果临门一脚，先把 _isTrajectoryLocked 强行设成 true，紧接着下一行去调 RequestNewPath()。
-进寻路函数一看，第一行就是“如果轨迹锁死直接 return”。车子其实根本没拿到去目的地的路书，脑子里只有当前这一截几十米的车道，走到尽头后要不卡死，要不就只能靠拓扑瞎转悠了。调用寻路前绝对不能提前上锁。
+解药：
+不要 Destroy，重生失败就让它在这一帧先“隐身”或者原地呆着，下一帧继续尝试重生。
 
-还有一个是 路口重定位的“空间跃迁”。
-在 WorldModel 的 FindNearestLane 里，如果外部调用没传车头方向，它会走捷径去查 KDTree。坏就坏在构建这棵空间树的时候，采样点全是从 GlobalLanes（直行道）里抽的，一根 GlobalConnectors（路口转弯线）都没放进去。
-要是车子在路口正中央发生碰撞需要重定位，调用这个无方向的接口，它根本感知不到脚下的转弯线，会被直接瞬移吸附到几十米外的直行车道上。路口范围内的 KDTree 采样是个严重盲区。
+C#
+if (RespawnNPCOnNewLane(npc, npcObj, controller)) {
+    // 成功
+} else {
+    // ★ 修复：重生失败不要销毁，跳过本次处理，等下一次 schedulingCheckInterval 再试
+    // (可以顺手把它设为 kinematic 或者停止状态防止在这 2 秒内撞车)
+}
+💣 暗雷四：A* 寻路的“重叠计费” (喜欢绕远路的导航)
+病因源头：
+在 PathPlanner.cs 的 PlanEdgePath 里，你在计算边代价（EdgeCost）时，对车道长度进行了重复叠加：
 
-最后提一嘴 环岛的无解死锁。
-CheckRoundaboutYield 的逻辑太糙了，只要环岛中心 20 米内有别的车，无脑踩刹车让行。如果有两辆或者四辆车同时到达不同的入口，它们会互相把对方框在 20 米的警戒线里，大家一起停下，谁也不敢动。怎么着也得加个方向判断，如果那辆车已经过了你的路口，或者是在朝环岛外开，就不能再傻等了。
-上面是第二轮问题。
+C#
+float edgeCost = laneLen + connLen + nextLen;
+float tentativeG = currentNode.GCost + edgeCost;
+致命后果：
+假设路径是：车道A -> 路口1 -> 车道B -> 路口2 -> 车道C。
+当你从 A 算到 B 时，G 包含了 A长 + 路口1长 + B长。
+当你从 B 算到 C 时，G 等于之前的 G 加上 B长 + 路口2长 + C长。
+B 的长度被算了两遍！ 如果你经过 5 个十字路口，中间车道的长度会被成倍放大。这会导致 A* 算法极度“厌恶”穿过路口，宁愿让车去绕外环那些单条巨长的远路，也不愿意走近道。
+
+解药：
+节点转移的代价只算“当前段”，不预支下一段（因为下一段在下一次遍历时自然会算）：
+
+C#
+// ★ 修复：边代价只算离开当前车道并穿过连接器的长度，到达 nextLane 的端点即可
+float edgeCost = laneLen + connLen; 
+这 4 个问题改掉之后，Unity 侧的车流循环、底层防碰撞和防断连机制才算是真正具备了“不眠不休跑 24 小时压测”的能力。
+老哥，在找新问题之前，我得先提醒一句：你最新传上来的这份代码，并没有包含上一轮我给你指出的那 4 个暗雷的修复。 比如 SubsumptionEngine.cs 里的 1m/s 磕头追尾下限、TrafficManager.cs 里的直接 Destroy、以及 PathPlanner.cs 里的车道长度重复计算（laneLen + connLen + nextLen），这些旧代码都还在。记得把上一轮的补丁打到你的实际工程里。
+
+抛开旧问题不谈，顺着你这份新代码，特别是新加的 ROS2 桥接和架构交互，我又找出了 2 个会导致系统崩溃的新雷。查完这俩雷，我再详细给你拆解你这套非常硬核的 A* 实现。
+
+💣 新雷一：ROS2 激光雷达的点云“空间坍缩”（会导致 Python 端彻底瞎掉）
+问题位置： ROS2BridgeV2.cs 的 GenerateLidarPoints()。
+病因：
+你在做射线检测时，只有当 Physics.Raycast 扫到东西时，才把 x, y, z 塞进 points 列表。
+如果一根射线打向天空或者没有命中，你什么都没加！
+致命后果：
+假设你的 LiDAR 有 11 根射线。第 0 根没命中，第 1 根命中了。
+发给 Python 端的数组长度变短了，Python 拿到这串数字，会默认这是第 0 根射线的数据！这会导致整个雷达扫描画面在 Python 端发生严重的“角度偏移和数据错位”，ROS2 算出来的 TTC（碰撞时间）和避障方向完全是歪的。
+解药： 必须保证数组长度恒定。没命中时，要塞入一个最大距离的点：
+
+C#
+if (Physics.Raycast(origin, dir, out RaycastHit hit, lidarMaxRange, lidarLayerMask)) {
+    Vector3 localHit = _carTransform.InverseTransformPoint(hit.point);
+    points.Add(localHit.x); points.Add(localHit.y); points.Add(localHit.z);
+} else {
+    // ★ 修复：未命中时，必须填充最大距离的假点，保住数组的索引顺序！
+    Vector3 maxPoint = _carTransform.InverseTransformPoint(origin + dir * lidarMaxRange);
+    points.Add(maxPoint.x); points.Add(maxPoint.y); points.Add(maxPoint.z);
+}
+💣 新雷二：ROS2 接管权与本地玩家控制权的“精神分裂”
+问题位置： ROS2BridgeV2.cs 中的 FindMainCar() 和 Update()。
+病因：
+在 FindMainCar 里，如果没有主车，你会强行把一辆 NPC 变成主车：main.isPlayerControlled = true;。
+这会触发 SimpleAutoDrive 的逻辑：它一看到 isPlayerControlled 是 true，就会立刻设置 carController.manualControl = true，把自己变成键盘遥控的玩具车。
+紧接着，在同一帧的 ROS2BridgeV2.Update 下方，你为了让 ROS2 下发指令，又强行写了 _carController.manualControl = false;。
+致命后果：
+这两个脚本每一帧都在疯狂互殴。底盘 manualControl 状态每半毫秒切换一次，ROS2 发过来的油门指令会被 Unity 本地的键盘输入（哪怕是 0）不断覆盖，车子会剧烈抽搐甚至失控。
+解药： 在 FindMainCar 里，绝对不要去动 isPlayerControlled。如果你想让 ROS2 选一辆车接管，只需要给 SimpleAutoDrive 新加一个专门的布尔值（比如 isROSControlled），或者直接禁用 SimpleAutoDrive 即可。

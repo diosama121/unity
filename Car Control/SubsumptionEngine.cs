@@ -176,7 +176,7 @@ public class SubsumptionEngine
         // 匹配前车速度，保持安全距离
         float distRatio = Mathf.Clamp01(s.frontDistance / s.safeDistance);
         float targetSpd = Mathf.Lerp(0f, s.frontSpeed, distRatio);
-        targetSpd = Mathf.Max(targetSpd, 1f); // 最低 1m/s，不跟停
+        // ★ 暗雷一修复：删除最低1m/s下限，允许L2随前车完全刹停，防止"磕头式追尾"
 
         float speedDiff = targetSpd - s.currentSpeed;
         float throttle = Mathf.Clamp(speedDiff / Mathf.Max(s.maxSpeed, 1f), -0.5f, 1f);

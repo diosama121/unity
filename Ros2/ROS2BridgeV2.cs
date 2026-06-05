@@ -124,11 +124,11 @@ public class ROS2BridgeV2 : MonoBehaviour
             }
         }
 
-        // ★ ROS2 接管时，如果没有主车，自动选第一辆可用的车
+        // ★ 新雷二修复：ROS2接管时不设 isPlayerControlled，避免与SimpleAutoDrive手动模式互殴
+        // 取而代之：直接禁用 SimpleAutoDrive 并接管底盘（下方 Update 中已处理）
         if (main == null && useRosControl && all.Length > 0)
         {
             main = all[0];
-            main.isPlayerControlled = true;
             Debug.Log($"[ROS2Bridge] ROS2接管 → 自动选定主车: {main.name}");
         }
 
@@ -254,6 +254,16 @@ public class ROS2BridgeV2 : MonoBehaviour
             }
         }
 
+        // ★ 暗雷二修复：断网时必须强行释放被锁死的AEB状态，放在 if (!isConnected) return 之前
+        if (!isConnected || isTimeout)
+        {
+            if (_aebActive)
+            {
+                if (_specialSituations != null) _specialSituations.TriggerExternalAEB(false);
+                _aebActive = false;
+            }
+        }
+
         if (!isConnected) return;
 
         // 没有主车就不干活
@@ -362,6 +372,14 @@ public class ROS2BridgeV2 : MonoBehaviour
                 points.Add(localHit.x);
                 points.Add(localHit.y);
                 points.Add(localHit.z);
+            }
+            else
+            {
+                // ★ 新雷一修复：未命中时填充最大距离假点，保证数组长度恒定，防止Python端角度错位
+                Vector3 maxPoint = _carTransform.InverseTransformPoint(origin + dir * lidarMaxRange);
+                points.Add(maxPoint.x);
+                points.Add(maxPoint.y);
+                points.Add(maxPoint.z);
             }
         }
 

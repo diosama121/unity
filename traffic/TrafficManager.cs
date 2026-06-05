@@ -136,9 +136,8 @@ public class TrafficManager : MonoBehaviour
                 }
                 else
                 {
-                    // 无法重生，销毁
-                    npcVehicles.RemoveAt(i);
-                    Destroy(npcObj);
+                    // ★ 暗雷三修复：重生失败不销毁，等下一轮 schedulingCheckInterval 再试
+                    // 防止 CheckSphere 偶然碰撞导致NPC越跑越少
                 }
             }
         }
