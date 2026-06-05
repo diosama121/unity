@@ -1,0 +1,472 @@
+================================================================================
+                    项目流程全貌 —— 从世界生成到运行时
+================================================================================
+
+====================================
+第一部分：世界生成管线 (WorldGen Pipeline)
+====================================
+
+阶段一：清理现场与画草图
+--------------------------------------------------------------------------------
+  万物伊始，先得有一张扁平的图纸。
+
+  WorldModel.cs : TriggerWorldGeneration()
+  ➔ 辅助函数 : GlobalSplineCache.Clear() 等 (清理上一局的旧数据)
+  ➔ RoadNetworkGenerator.cs : Generate() (用算法生成一堆只有x和z坐标的原始节点，连成平面网格)
+      - 双循环遍历 gridWidth × gridHeight 生成节点
+      - 每个节点加随机偏移 (randomOffset)，边缘节点不偏移保矩形
+      - 乡村模式加 PerlinNoise 高度
+      - MergeClusteredNodes() 合并过近节点
+      - 四邻接法连边：右/下邻居，随机挖空 (connectionRemoveRate)，乡村按坡度过滤
+      - 输出: nodes[] (WaypointNode), edges[], roadSegments[]
+
+阶段二：盖地基
+--------------------------------------------------------------------------------
+  草图有了，得铺在一块有高低起伏的地上，这就是之前你发现必须提前执行的那一步。
+
+  ➔ WorldModel.cs : CalculateWorldBounds() (把刚才的草图框起来，算个最大边界)
+  ➔ TerrainGridSystem.cs : Initialize(bounds) (根据边界生成一张高度网格，后面谁要Y轴坐标都得找它)
+      - bounds.Expand(100f) 放一圈缓冲区
+      - GenerateHeightMap(bounds): 用 PerlinNoise 生成 _heightMap[,]，按 cellSize 采样
+      - 城市平整融合: urbanBlendRadius 内向 urbanFlatHeight 过渡
+      - GenerateTerrainMesh(): 把高度图烘成 3D Mesh，挂 MeshFilter 渲染
+      - 后续 SampleHeight(x,z) 通过双线性插值查询任意点地形高度
+
+阶段三：把草图按到地基上 (核心图论生成)
+--------------------------------------------------------------------------------
+  这步最重，开始给那堆扁平的节点赋予真实世界的三维属性了。
+
+  ➔ WorldModel.cs : IngestAndPrecomputeGraph()
+  ➔ 辅助函数 : GetUnifiedHeight() ➔ 调取 TerrainGridSystem.cs : SampleHeight() (给节点赋上真实Y坐标)
+  ➔ 辅助函数 : ClassifyNode() (数一下有几个邻居，判定是死胡同、直路还是十字路口)
+      - 1个邻居: DeadEnd
+      - 2个邻居: StraightRoad
+      - 3个邻居: T_Junction
+      - 4个邻居: Crossroad
+      - 更多: MultiWay
+  ➔ 辅助逻辑 : 算 IntersectionRadius (找最远邻居，把路口的退缩半径定下来，Clamp 6-20m)
+  ➔ 辅助逻辑 : PolarSortedNeighbors 按极角排序邻居，算 AngleToNextNeighbor (相邻邻居夹角)
+  ➔ 辅助函数 : CalculateNodeTangent() (计算网格挤出时的基准法线方向)
+  ➔ KDTree.cs : 初始化 _spatialIndex (把所有节点塞进空间树，方便以后靠坐标寻址)
+
+阶段四：扯面条 (生成数学车道)
+--------------------------------------------------------------------------------
+  节点是骨头，现在要在骨头之间拉上"面条"，也就是车道。
+
+  ➔ WorldModel.cs : GenerateAndRegisterLanes()
+  ➔ RoadMathUtility.cs : GetRoadSpline() (算出两个节点之间的马路中心线)
+      - 用 CatmullRom 曲线连接 nodeA 和 nodeB
+      - 考虑节点 Tangent 做切线对齐
+      - 按 stepDist 采样，存入 GlobalSplineCache[edgeKey]
+  ➔ RoadMathUtility.cs : GenerateLanePathsFromCenter() (根据路宽，把中心线往两边平移，劈出左右车道)
+      - 返回 (fwdPath, revPath) 两个方向的车道采样点
+      - 沿中心线法线方向偏移 roadWidth/2 得到左右车道中心线
+  ➔ CatmullRomSpline.cs : new CatmullRomSpline() (把劈出来的点连成绝对平滑的数学曲线，存进 GlobalLanes)
+      - 内置 GetPoint(t), GetTangent(t), TotalLength, GetPointAtDistance(d)
+  ➔ 辅助函数 : RebuildLaneSpatialIndex() ➔ KDTree.cs (把车道上的采样点也塞进一棵新的空间树)
+      - 每条车道每隔 2m 采样一个点塞进 KDTree
+      - 用于 FindNearestLane() 快速查最近车道
+
+阶段五：在路口打结 (生成连接器)
+--------------------------------------------------------------------------------
+  直行车道在路口边缘断了，这步负责在路口肚子里画转弯的引导线。
+
+  ➔ WorldModel.cs : GenerateConnectors()
+  ➔ 辅助逻辑 : 建立 nodeIncomingLanes / nodeOutgoingLanes 字典
+      - 用 RoadId 和 LaneDirection 精确分配车道到节点（消灭15m空间搜索的随机性）
+      - Forward: spline 走 firstNode → secondNode
+      - Reverse: spline 走 secondNode → firstNode
+  ➔ 辅助函数 : BuildConnector() (算出入口和出口的夹角，用 Hermite 曲线捏出左转、右转、直行的连接器)
+      - 入口取 entry.CenterSpline 末端，出口取 exit.CenterSpline 起点
+      - 计算 SignedAngle(inDir, outDir) 判断转向类型
+      - 用 Hermite 插值生成平滑连接曲线
+      - U型掉头 (>150°) 跳过，走专用 U-turn 兜底
+  ➔ 辅助函数 : BuildUTurnConnector() (专门处理死胡同，画个半圆掉头接回去)
+      - 无合法出口时，在 entry 车道末端画半圆 U-turn 回到同路段反向车道
+  (生成的连接器全部存进 GlobalConnectors，ID 为负数以区分车道)
+
+阶段六：刷一层皮 (生成3D网格)
+--------------------------------------------------------------------------------
+  逻辑轨道全铺完了，该搞点玩家肉眼能看见的东西了。
+
+  ➔ ProceduralRoadBuilder.cs : BuildRoads()
+      - 遍历所有 GlobalSplineCache 中的中心线曲线
+      - 沿曲线按 meshResolution 采样，向两侧挤出 roadWidth 宽度的路面
+      - 在路口处做 Intersection 交叉面
+      - 用 TriangulationUtility 做三角剖分生成 Mesh
+      - 用 RoadUVProjector 贴 UV 纹理
+      - 用 RoadMeshCombiner 合并相近 Mesh，减少 DrawCall
+      - 输出: 有宽度的柏油路面 3D Mesh
+
+阶段七：画线与挂灯
+--------------------------------------------------------------------------------
+  路面干了，画停止线，挂红绿灯。
+
+  ➔ WorldModel.cs : GenerateStopLines()
+  ➔ 辅助函数 : 找 IntersectionRadius 算出停止线位置
+      - stopPos = junctionPos - approachDir.normalized * (IntersectionRadius + 5.0f)
+      - 关联 phaseId: nodeId*10 + (NS方向?0:1)
+      - 存入 GlobalStopLines 列表
+  ➔ TrafficLightManager.cs : PlaceTrafficLights()
+      - 遍历每个路口节点的每个来车方向
+      - 计算停止线位置: node.position + facingDir * (IntersectionRadius + 5.0f)
+      - 在停止线右侧路边生成红绿灯实体模型（红绿黄三个球体）
+      - 创建 TrafficLightController 组件控制相位切换
+
+阶段八：放人
+--------------------------------------------------------------------------------
+  场景搭完，最后一步就是往沙盒里倒活物。
+
+  ➔ TrafficManager.cs : ResetSpawnState() (清空上个世代的残骸)
+  ➔ TrafficManager.cs : SpawnNPCsOnLanes() (读取 GlobalLanes，在随机位置把 NPC 汽车刷出来)
+      - 收集所有长度 > 10m 的车道
+      - 随机选车道，随机取进度 T (0.1~0.9，避开首尾)
+      - 防重叠检测: Physics.CheckSphere(spawnPos, 4.0m, npcSpawnBlockMask)
+      - 计算朝向: 取 T+0.02 的前方点做切线
+      - 实例化 NPC 预制体，设置 SimpleAutoDrive 组件
+      - 生成后直接让 NPC 在车道上自动驾驶
+
+
+====================================
+第二部分：运行时管线 (Runtime Pipeline)
+====================================
+
+我们随便盯住路面上的一辆车，把它每一帧（Update）脑子里转的念头扒出来看一遍。
+这段运行期主要集中在 SimpleAutoDrive（大脑）和 SubsumptionEngine（决策小脑）里。
+
+阶段一：唤醒与找路 (起步)
+--------------------------------------------------------------------------------
+  车刚落地，脑子里没方向，得先要个路书。
+
+  ➔ SimpleAutoDrive.cs : Start() (车子醒来，发现轨迹是空的)
+  ➔ SimpleAutoDrive.cs : RequestNewPath() (往四周看一眼，看看自己在哪里)
+      - 优先用当前车道 pathEdgeIds[currentEdgeIndex] 作为起点（防闪现）
+      - 兜底: WorldModel.Instance.FindNearestLane()
+      - 随机选目标车道，加方向权重优先前进方向
+  ➔ WorldModel.cs : FindNearestLane() (找脚下最近的直行车道，把起步位置定下来)
+      - 有方向参数: 走 FindNearestLaneBruteForce() 带方向点积校验
+      - 无方向参数: 走 KDTree 空间索引快速查询
+  ➔ PathPlanner.cs : PlanEdgePath() (拿起点车道和终点车道，在图论网格里扒出一条路线)
+      - 基于 A* 算法做车道级路径规划
+      - 状态空间: 边 = LaneId 或 ConnectorId (负数)
+      - 启发函数: 终点车道中心线中点距离
+      - 输出: List<int> = 一长串车道和连接器 ID 序列
+  ➔ SimpleAutoDrive.cs : StartPath() (拿到路线，把脚下第一段切出来)
+      - 从 PathPlanner 返回的边序列中取出第一段
+      - 用 BakedTrajectory 把数学曲线烤成离散折线 (间距 0.5m)
+      - 设置 _isTrajectoryLocked = true
+      - 车辆吸附到轨迹起点
+
+阶段二：张望四周 (感知)
+--------------------------------------------------------------------------------
+  车动起来了，一路上都在收集周边的情报。
+
+  ➔ SimpleAutoDrive.cs : UpdateSensors() (情报打包中心)
+  ➔ 辅助函数 : CheckRedLightUnified() (查红绿灯)
+      - 找 WorldModel.GlobalStopLines 要眼前的停止线
+      - 通过 TrafficLightController 查相位红绿状态
+      - 判断是否越过停止线: Vector3.Dot(车头方向, 指向停止线) < -0.1
+      - 没过停止线 + 红灯 → 返回 true (需要刹车)
+      - 已越过停止线 → 掏出免死金牌无视它
+  ➔ 辅助函数 : CheckStopSign() (没灯的路口看停字牌)
+      - 同样用点积判断车辆相对停止线位置
+      - 算算车速和距离，得在原地停够读秒
+  ➔ 辅助函数 : CheckFrontVehicleFake() (NPC 为了省力气)
+      - 直接从 TrafficManager 的车队列表里遍历
+      - 算前向夹角和距离，判断是否有人挡路
+  ➔ 辅助函数 : SampleFrontDistance() (主车自己跑的时候)
+      - 老老实实打一圈物理射线出去测距
+      - 用于真人驾驶时的前车检测
+
+阶段三：本能反应 (决策)
+--------------------------------------------------------------------------------
+  情况收全了，扔给底层的包容式架构去定油门和刹车。
+
+  ➔ SubsumptionEngine.cs : Resolve() (分层做主意，上层压制下层)
+
+  4层架构按优先级从高到低：
+
+  L3 紧急制动 (A3)
+      - 激活条件: frontDistance < emergencyBrakeDist 或 pedestrianDanger
+      - 输出: 全力刹车 (isHardBrake=true), targetSpeed=0
+      - 优先级最高，A3激活时底下全屏蔽
+
+  L2 跟车避障 (A2)
+      - 激活条件: frontDistance < safeDistance
+      - 输出: 平滑减速跟随前车，targetSpeed = 前车速度
+      - A2激活时L1/L0屏蔽
+
+  L1 交通规则 (A1)
+      - 激活条件: redLightAhead=true
+      - 输出: 物理解法 v²=2ad 计算所需刹车力
+      - A1激活时L0屏蔽
+
+  L0 基础巡航 (A0≡1)
+      - 永远激活，兜底层
+      - 输出: 按 targetCruiseSpeed 算油门，超速时刹车
+
+  布尔仲裁矩阵: O = Σ ok · Ak · Π(1 - Aj) for j > k
+
+  时间窗防抖:
+      - 升维（切入高危层）: 零延迟，立即响应
+      - 降维（退出高危层）: 0.5s 防抖，防止状态抖动
+
+阶段四：意外情况仲裁 (兜底)
+--------------------------------------------------------------------------------
+  总有些常规流程处理不了的麻烦。
+
+  ➔ SpecialSituations.cs : Handle() (外部事件网关)
+      - 优先级最高: ROS2 AEB 触发 (_externalAebActive)
+      - 手动强制刹车 (_forceBrakeActive)
+      - 返回 VehicleCommand 时直接覆盖 SubsumptionEngine 输出
+      - 返回 null 时走正常包容式架构
+
+  ➔ DilemmaZoneArbiter.cs : Evaluate() (黄灯困境区)
+      - 公式 2-14: 安全停止临界距离 Xs = v·τ + v²/(2·a_max)
+      - 公式 2-15: 安全清空临界距离 Xc = v·T_yellow + ½·a_max·T_yellow² - W_intersection
+      - d > Xs → 足够远，安全制动
+      - d < Xc → 足够近，保持通过
+      - Xc ≤ d ≤ Xs → 困境区，转入制动保护自身
+
+  ➔ DeadlockRecovery.cs : Update() (僵死脱困)
+      两阶段策略:
+      - Stage 1: 停留 > 10s，注入高斯随机扰动 (微扰退火)
+          - 转向扰动 σ=0.3, 速度扰动 σ=0.2, 持续 3s
+      - Stage 2: 8m 范围内卡死超 5 次，强制重规划
+          - NeedsForceRepath = true → 摧毁当前轨迹，重新寻路
+
+阶段五：按着头走 (执行)
+--------------------------------------------------------------------------------
+  主意全定好了，最后一步就是动身子，这块是纯纯的"轨道电车"逻辑。
+
+  ➔ SimpleAutoDrive.cs : AdvanceOnEdge() (按刚才算好的车速，在当前的样条线上往前推一段距离)
+      - currentDistOnEdge += speed * dt
+      - 如果推到尽头 (currentDistOnEdge >= currentEdgeLength):
+          - 保存切换前位置 preSwitchPos
+          - pathEdgeIds 索引+1，切到下一段边
+          - LoadCurrentEdge() 加载新轨迹
+          - 防闪现: 检查新旧轨迹连接点 gap > 2m → 触发重寻路
+          - 如果路径到头了 → ExtendPathSeamlessly() 延伸路径
+  ➔ ExtendPathSeamlessly() (路径延伸，类似上面阶段五的Connector选择逻辑)
+      - 查当前车道的 NextConnectorIds
+      - 随机选一个连接器 → 后面接对应出口车道
+      - 检查连接点间隙 > 2m → 回滚
+  ➔ SimpleAutoDrive.cs : SnapToCurve() (别管底盘原来朝哪)
+      - 拿 currentDistOnEdge 去 BakedTrajectory 查绝对坐标和切线方向
+      - 把车身硬设在这个点上: transform.position = point, transform.rotation = LookRotation(tangent)
+  ➔ SimpleCarController.cs : ApplyCommand() (车其实在上一行已经移过去了)
+      - 这里只是顺便告诉底盘一声
+      - 转转车轮 (wheel visual)
+      - 亮亮尾灯 (brake lights)
+      - 做个样子
+
+
+====================================
+第三部分：跨界传话 (ROS2 通讯链路)
+====================================
+
+Unity 侧 (C#)
+--------------------------------------------------------------------------------
+  ROS2BridgeV2.cs —— 挂 World 上，动态追踪主车 (isPlayerControlled=true 的车)
+
+  启动:
+  ➔ Start() → ConnectToROS2()
+      - 后台线程建 TCP Socket 连接 ROS2 节点 (IP:10086)
+      - 启动 sendThread 和 receiveThread
+
+  每帧 Update():
+  ➔ FindMainCar() (动态追踪主车，支持 T 键随时切换)
+  ➔ 消费 commandQueue 中的 ROS2 下行指令
+  ➔ ProcessControlCommand(jsonData) 解析刹车/油门/转向指令
+  ➔ 超时降级: rosTimeout(2s) 无数据 → 交还本地 AI 控制
+  ➔ GenerateLidarPoints() 生成扇形 LiDAR 点云 (11根射线, 40°张角, 50m范围)
+  ➔ SendVehicleState() 发送车辆状态:
+      - msg_type: "vehicle_state"
+      - velocity, steering_angle, lidar_points[], auto_drive_state, timestamp
+  ➔ SendHeartbeat() 心跳包 (每1秒)
+  ➔ SendTrafficLights() 红绿灯相位上报 (每1秒)
+  ➔ SendPedestrianState() 行人状态上报 (每0.5秒)
+  ➔ SendEmergencyVehicleState() 紧急车辆状态上报 (每0.5秒)
+
+  ROS2 → Unity 控制路径:
+  ROS2BridgeV2.ProcessControlCommand()
+  ➔ 解析 linear_velocity, angular_velocity, enable_control
+  ➔ 设置 SpecialSituations._externalAebActive (AEB 触发)
+  ➔ 或直接设置 _carController 的油门/转向
+
+Python 侧 (ROS2 节点)
+--------------------------------------------------------------------------------
+  unity_aeb_brain.py —— ROS2 Node: unity_aeb_bridge
+
+  启动:
+  ➔ __init__()
+      - 创建 ROS2 Publisher: /unity/vehicle_state (String)
+      - 创建 ROS2 Subscriber: /cmd_vel (Twist) —— 接 teleop_twist_keyboard
+      - 初始化 TCP Server: 0.0.0.0:10086
+      - 启动 keyboard_input_loop 线程 (无回显模式切换)
+      - 启动 accept_connections 线程
+
+  接收 Unity 数据:
+  ➔ receive_data() 主循环
+      - TCP recv → buffer → 按 \n 拆包
+      - process_unity_data(json) 分发
+
+  消息路由 (process_unity_data):
+  ➔ msg_type == 'heartbeat' → 回传时间戳
+  ➔ msg_type == 'traffic_lights' / 'pedestrian_state' / 'emergency_vehicle' → 发布到 ROS2 Topic
+  ➔ msg_type == 'vehicle_state' (或无 msg_type):
+      - 发布到 ROS2 Topic: /unity/vehicle_state
+      - 解析 LiDAR 点云，计算最近障碍距离 min_distance
+      - TTC 计算: TTC = min_distance / speed_ms
+      - AEB 状态机:
+          - TTC < brake_ttc(1.5s) → BRAKING, control_mode = "AEB"
+          - TTC < warning_ttc(3.0s) → WARNING
+          - 否则 → SAFE
+      - send_control_to_unity() 下发控制指令
+          - AEB 模式: linear_velocity = -3.0 (全速倒车制动)
+          - 巡航模式: linear_velocity = cruise_speed(8.0)
+          - 手动模式: 读取 teleop 输入
+      - _push_global_state() 定时推送全局状态同步包
+
+  全局状态同步包 (global_state):
+  {
+    "type": "global_state",
+    "aeb": bool,          // AEB 是否启用
+    "aeb_state": str,     // SAFE / WARNING / BRAKING
+    "hud": bool,          // HUD 显示
+    "cruise": bool,       // 巡航开启
+    "manual_override": bool, // 人工接管
+    "speed_kmh": float,   // 当前速度 km/h
+    "min_dist_m": float,  // 最近障碍距离 m
+    "ttc_s": float,       // TTC 秒
+    "tcp_hz": int         // TCP 频率
+  }
+
+  键盘快捷键 (无回显模式):
+      a = 开启 AEB
+      m = 关闭 AEB（纯人工驾驶）
+      c = 一键巡航 (8.0 m/s)
+      x = 取消巡航
+      h = 开关 HUD 显示
+      q = 退出 Bridge
+
+  ROS2 遥操作:
+  ➔ /cmd_vel 订阅 (Twist)
+      - cmd_callback() 读取 linear.x (限制 -3~8) 和 angular.z
+      - 非 AEB 模式下直接用于车辆控制
+
+
+====================================
+第四部分：跑分与监视 (UI 遥测)
+====================================
+
+底层跑通了总得让人看见。应对答辩演示，画面绝不能卡顿。
+
+  ➔ MasterUIManager.cs : 每帧去各个模块抓取运行状态
+      - HUD 面板: 速度、纵向状态、红绿灯相位、方向盘角度、前车距离、行人数
+      - 左面板: 模块参数设置 (城市/乡村/地形/交通/相机)
+      - 右面板: 控制面板 (运行时切换、生成、重置)
+      - 顶栏: 时间显示、系统状态
+      - 小地图: 实时车辆位置
+      - TOR 覆盖层: 接管请求闪烁
+      - 思维流面板: 实时决策日志 (max 8 行)
+
+  ➔ UIPanelBuilder.cs : 拿着 TextMeshPro 往屏幕上糊
+      - 零装箱架构: 用 StringBuilder 缓存 + List<TMP_Text> 直设
+      - 避开字符串拼接产生的内存垃圾
+      - GC 不会狂飙，底层的物理判定和雷达扫描频率稳如老狗
+
+  ➔ DebugPanel.cs : 调试面板 (F1 切换)
+
+
+====================================
+第五部分：制造混乱 (动态交通流)
+====================================
+
+马路上光有主车按规矩开太冷清。
+
+  ➔ TrafficManager.cs : 算好路网里的空位，批量往车道上扔 NPC 汽车
+      - SpawnNPCsOnLanes(): 在 GlobalLanes 中随机选车道，随机位置生成
+      - 每个 NPC 带 SimpleAutoDrive 组件，自动在车道上巡航
+      - 支持 normalNpcPrefabs[] 多种预制体随机轮换
+      - 生成后自动上路，给主车上上强度
+
+  ➔ PedestrianSpawner.cs : 纯粹的混乱制造者
+      - 在路边随机往马路上塞假人 (Cube)
+      - 从 GlobalLanes 选车道，沿垂直方向偏移 sidewalkOffset(4.5m) 到人行道
+      - 漫游逻辑: 沿道路方向移动，定时随机改变方向
+      - roamRadius(20m) 限制活动范围
+      - 专门用来试探系统紧急制动的极限
+
+
+====================================
+第六部分：文件索引 (完整文件清单)
+====================================
+
+【核心架构】
+  Architecture/WorldModel.cs              — 世界模型单例，管理路网图、车道、连接器、停止线
+  Architecture/RoadDataStructures.cs      — 数据结构定义 (RoadNode, Lane, LaneConnector, StopLine)
+  Architecture/LaneSemantics.cs           — 车道语义 (LaneDirection, IntersectionKind 等)
+
+【路网生成】
+  RoadNetworkGenerator.cs                 — 随机路网生成器 (网格+拓扑)
+  TerrainGridSystem.cs                    — 地形高度网格系统 (PerlinNoise + 双线性采样)
+  ProceduralRoadBuilder.cs                — 3D 路面 Mesh 生成 (挤出+三角剖分)
+
+【路径规划】
+  Pathplan/PathPlanner.cs                 — A* 车道级路径规划
+  Pathplan/BakedTrajectory.cs             — 轨迹烘焙 (离散折线, 距离查询)
+  Pathplan/CatmullRomSpline.cs            — Catmull-Rom 样条曲线
+
+【车辆控制】
+  Car Control/SimpleAutoDrive.cs          — 自动驾驶大脑 (感知/决策/执行主循环)
+  Car Control/SimpleCarController.cs      — 底层车辆物理 (油门/刹车/转向/悬挂)
+  Car Control/SubsumptionEngine.cs        — 包容式架构纵向控制 (L0-L3)
+  Car Control/SpecialSituations.cs        — 外部事件网关 (ROS2 AEB / UI 强制刹车)
+  Car Control/DeadlockRecovery.cs         — 死锁脱困 (微扰退火 + 强制重规划)
+  Car Control/DilemmaZoneArbiter.cs       — 黄灯困境仲裁 (Xs/Xc 临界距离)
+  Car Control/EmergencyYieldHandler.cs    — 紧急车辆让行
+  Car Control/PullOverHandler.cs          — 靠边停车
+
+【交通系统】
+  traffic/TrafficManager.cs               — 交通流管理 (NPC 批量生成/销毁)
+  traffic/TrafficLightManager.cs          — 红绿灯生成与相位管理
+  traffic/TrafficLightController.cs       — 单个红绿灯控制器 (红绿黄切换)
+
+【行人系统】
+  Car Control/PedestrianSpawner.cs        — 行人生成与漫游
+
+【ROS2 通讯】
+  Ros2/ROS2BridgeV2.cs                    — TCP 通讯桥接 (Unity ⇄ Python)
+  Ros2/ROS2Messages.cs                    — 消息结构体定义
+  Ros2/unity_aeb_brain.py                 — ROS2 AEB 节点 (Python)
+
+【UI 系统】
+  UI/MasterUIManager.cs                   — 主 UI 管理器 (HUD + 控制面板)
+  UI/UIPanelBuilder.cs                    — UI 面板生成器 (零装箱 TextMeshPro)
+  UI/RuntimeInputManager.cs               — 运行时输入管理
+
+【工具类】
+  Utilities/KDTree.cs                     — 二维 KD 树空间索引
+  Utilities/RoadMathUtility.cs            — 道路数学工具 (曲线生成/车道平移)
+  Utilities/GeometryUtility.cs            — 几何工具
+  Utilities/SplineMath.cs                 — 样条数学
+  Utilities/TopologyUtility.cs            — 拓扑工具
+  Utilities/TriangulationUtility.cs       — 三角剖分
+  Utilities/RoadMeshCombiner.cs           — Mesh 合并
+  Utilities/RoadMeshUtility.cs            — Mesh 工具
+  Utilities/RoadUVProjector.cs            — UV 映射
+  Utilities/RoadBooleanUtility.cs         — 布尔运算
+  Utilities/SlopeInterceptor.cs           — 坡度拦截 (乡村路网过滤)
+
+【其他】
+  CameraController.cs                     — 相机控制 (T 键切换主车)
+  SystemDataManager.cs                    — 系统数据记录
+  EnvironmentMeshBuilder.cs               — 环境 Mesh 生成
+  DebugPanel.cs                           — 调试面板
+  export_tree.py                          — 目录树导出脚本
+
+
+================================================================================
+                            全文完
+================================================================================

@@ -319,16 +319,11 @@ public class CameraController : MonoBehaviour
         SimpleAutoDrive drive = oldTarget.GetComponent<SimpleAutoDrive>();
         if (drive == null) return;
 
-        // 曾是主车 → 释放控制权，重新锚定到车流
+        // 曾是主车 → 释放控制权，由 SimpleAutoDrive.MergeBackToTraffic() 接管归位
         drive.isPlayerControlled = false;
 
-        // 如果车刚好卡住(路径空或不在车道上)，重新寻路
-        int laneId = WorldModel.Instance.FindNearestLane(oldTarget.position, oldTarget.forward);
-        if (laneId < 0) laneId = WorldModel.Instance.FindNearestLane(oldTarget.position);
-        if (laneId >= 0)
-        {
-            drive.SetPath(new List<int> { laneId }, 0f);
-            Debug.Log($"[CameraCtrl] {oldTarget.name} 离场,已重置回车流");
-        }
+        // ★ 修复：不再在此调用 SetPath，避免与 MergeBackToTraffic 的路径规划冲突
+        // MergeBackToTraffic 会在下一帧自动处理：吸附车道 → 锁定轨迹 → 重新寻路
+        Debug.Log($"[CameraCtrl] {oldTarget.name} 离场,移交自动驾驶");
     }
 }

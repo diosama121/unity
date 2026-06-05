@@ -325,30 +325,38 @@ public class WorldModel : MonoBehaviour
         float minDist = float.MaxValue;
         for (int i = 0; i < lines.Count; i++)
         {
-            // ★ 方向校验：停止线的法线必须迎向车头（Dot < -0.5），防止锁定侧向横穿马路的停止线
+            // ★ 方向校验：停止线法线(Normal)指向从邻居到路口，车头(fwd2D)应与法线同向才算接近该停止线
+            // 法线同向 → Dot > 0.5 → 保留；反向(Dot < 0.5) → 车在驶离，滤掉
             if (hasForward)
             {
                 float dot = Vector3.Dot(fwd2D, lines[i].Normal);
-                if (dot > -0.5f) continue; // 停止线背对车头或侧向，跳过
+                if (dot < 0.5f) continue;
             }
 
             float d = Vector3.Distance(fromPos, lines[i].Position);
             if (d < minDist) { minDist = d; nearest = lines[i]; }
         }
-        return nearest ?? lines[0]; // 兜底：如果方向过滤后全空，返回第一个
+        return nearest; // 方向过滤后全空返回 null，避免误返回出口停止线
     }
 
     private Vector3 CalculateNodeTangent(RoadNode node)
     {
         if (node.NeighborIds.Count == 0) return Vector3.forward;
 
-        // ★ 修复：统一使用节点到邻居的加权平均方向，不依赖邻居存储顺序
+        // ★ 修复：使用节点到邻居的向外方向平均，不依赖邻居存储顺序
         // 旧代码 (p1-p0) 在邻居顺序随机时有 50% 概率切线反向，导致网格翻转成"莫比乌斯环"
         Vector3 avgDir = Vector3.zero;
         foreach (var nbId in node.NeighborIds)
         {
             avgDir += (_graph[nbId].WorldPos - node.WorldPos).normalized;
         }
+
+        // 直线道路特殊处理：两个邻居方向相反，相加为零向量，取其中一个
+        if (avgDir.sqrMagnitude < 0.001f && node.NeighborIds.Count == 2)
+        {
+            return (_graph[node.NeighborIds[0]].WorldPos - node.WorldPos).normalized;
+        }
+
         return (avgDir / node.NeighborIds.Count).normalized;
     }
 

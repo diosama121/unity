@@ -237,17 +237,24 @@ public List<TrafficLightInstance> GetTrafficLightInstances()
         if (facingDir == Vector3.zero) facingDir = Vector3.forward;
         facingDir.Normalize();
 
-        float groundY = WorldModel.Instance != null ? WorldModel.Instance.GetUnifiedHeight(node.position.x, node.position.z) : 0f;
-        Vector3 basePos = new Vector3(node.position.x, groundY, node.position.z) + Vector3.up * heightOffset;
         Vector3 rightDir = Vector3.Cross(Vector3.up, facingDir).normalized;
-        
-        // 【核心修复】：灯放路边，不再放路中间
-        // facingDir = 从路口指向邻居方向, rightDir = 路右侧方向
-        // 灯放在：路口中心往邻居方向退 roadHalf 米 + 路右肩(roadHalf+sidewalkMargin)
         float roadW = roadBuilder != null ? roadBuilder.roadWidth : 6f;
         float roadHalf = roadW * 0.5f;
         float sidewalkMargin = 2.0f;
-        Vector3 spawnPos = basePos + (-facingDir) * roadHalf + rightDir * (roadHalf + sidewalkMargin);
+
+        // ★ 修复：红绿灯放在停止线位置（路口两路连接处），而不是路口中心固定偏移
+        // 停止线位置 = 路口中心 + 来车方向 * (路口半径 + 5m)，与WorldModel.GenerateStopLines一致
+        float intersectRadius = 6f;
+        if (WorldModel.Instance != null)
+        {
+            RoadNode wmNode = WorldModel.Instance.GetNode(node.id);
+            if (wmNode != null && wmNode.IntersectionRadius > 0)
+                intersectRadius = wmNode.IntersectionRadius;
+        }
+        float safeStopDistance = intersectRadius + 5.0f;
+        Vector3 stopLinePos = node.position + facingDir * safeStopDistance;
+        float groundY = WorldModel.Instance != null ? WorldModel.Instance.GetUnifiedHeight(stopLinePos.x, stopLinePos.z) : 0f;
+        Vector3 spawnPos = new Vector3(stopLinePos.x, groundY, stopLinePos.z) + Vector3.up * heightOffset + rightDir * (roadHalf + sidewalkMargin);
         
        
         // 创建交通灯GameObject
