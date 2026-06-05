@@ -505,9 +505,10 @@ class UnityAEBBridge(Node):
             # -------------------------------------------------
 
             cmd = {
-                "linear_velocity":  linear_velocity,
-                "angular_velocity": angular_velocity,
-                "enable_control":   enable_control
+                "msg_type":          "control_command",
+                "linear_velocity":   linear_velocity,
+                "angular_velocity":  angular_velocity,
+                "enable_control":    enable_control
             }
 
             self._send_json(cmd)
@@ -543,7 +544,7 @@ class UnityAEBBridge(Node):
     def _build_global_state(self) -> dict:
 
         return {
-            "type":            "global_state",
+            "msg_type":        "global_state",
             "aeb":             self.enable_aeb,
             "aeb_state":       self.aeb_state,
             "hud":             self.show_hud,
@@ -686,6 +687,36 @@ class UnityAEBBridge(Node):
                         rclpy.shutdown()
                     sys.exit(0)
 
+                # ── IJKL 车辆控制 ──
+                elif cmd == 'i':
+                    self.manual_linear  = 3.0
+                    self.manual_angular = 0.0
+                    self.control_mode   = "MANUAL"
+                    self._safe_print(f"\n{COLOR_CYAN}[DRIVE] FORWARD{COLOR_RESET}")
+
+                elif cmd == 'k':
+                    self.manual_linear  = -3.0
+                    self.manual_angular = 0.0
+                    self.control_mode   = "MANUAL"
+                    self._safe_print(f"\n{COLOR_CYAN}[DRIVE] BACKWARD{COLOR_RESET}")
+
+                elif cmd == 'j':
+                    self.manual_linear  = 0.0
+                    self.manual_angular = 2.0
+                    self.control_mode   = "MANUAL"
+                    self._safe_print(f"\n{COLOR_CYAN}[DRIVE] TURN LEFT{COLOR_RESET}")
+
+                elif cmd == 'l':
+                    self.manual_linear  = 0.0
+                    self.manual_angular = -2.0
+                    self.control_mode   = "MANUAL"
+                    self._safe_print(f"\n{COLOR_CYAN}[DRIVE] TURN RIGHT{COLOR_RESET}")
+
+                elif cmd == ' ':
+                    self.manual_linear  = 0.0
+                    self.manual_angular = 0.0
+                    self._safe_print(f"\n{COLOR_YELLOW}[DRIVE] STOP{COLOR_RESET}")
+
         finally:
             # 无论如何都还原终端设置
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
@@ -730,6 +761,36 @@ class UnityAEBBridge(Node):
                     if rclpy.ok():
                         rclpy.shutdown()
                     sys.exit(0)
+
+                # ── IJKL 车辆控制 ──
+                elif cmd == 'i':
+                    self.manual_linear  = 3.0
+                    self.manual_angular = 0.0
+                    self.control_mode   = "MANUAL"
+                    self._safe_print(f"{COLOR_CYAN}[DRIVE] FORWARD{COLOR_RESET}")
+
+                elif cmd == 'k':
+                    self.manual_linear  = -3.0
+                    self.manual_angular = 0.0
+                    self.control_mode   = "MANUAL"
+                    self._safe_print(f"{COLOR_CYAN}[DRIVE] BACKWARD{COLOR_RESET}")
+
+                elif cmd == 'j':
+                    self.manual_linear  = 0.0
+                    self.manual_angular = 2.0
+                    self.control_mode   = "MANUAL"
+                    self._safe_print(f"{COLOR_CYAN}[DRIVE] TURN LEFT{COLOR_RESET}")
+
+                elif cmd == 'l':
+                    self.manual_linear  = 0.0
+                    self.manual_angular = -2.0
+                    self.control_mode   = "MANUAL"
+                    self._safe_print(f"{COLOR_CYAN}[DRIVE] TURN RIGHT{COLOR_RESET}")
+
+                elif cmd == '' or cmd == ' ':
+                    self.manual_linear  = 0.0
+                    self.manual_angular = 0.0
+                    self._safe_print(f"{COLOR_YELLOW}[DRIVE] STOP{COLOR_RESET}")
 
             except Exception:
                 pass

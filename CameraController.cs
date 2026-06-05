@@ -283,8 +283,20 @@ public class CameraController : MonoBehaviour
 
             if (bestNode != null)
             {
-                // 重置到路口位置+找最近车道
-                go.transform.position = bestNode.WorldPos + Vector3.up * 1f;
+                // ★ 修复：每辆车沿不同邻居方向偏移，防止叠在一起
+                Vector3 offset = Vector3.zero;
+                if (bestNode.NeighborIds != null && bestNode.NeighborIds.Count > 0 && WorldModel.Instance != null)
+                {
+                    int nbIdx = count % bestNode.NeighborIds.Count;
+                    int nbId = bestNode.NeighborIds[nbIdx];
+                    RoadNode nbNode = WorldModel.Instance.GetNode(nbId);
+                    if (nbNode != null)
+                    {
+                        Vector3 dir = (nbNode.WorldPos - bestNode.WorldPos).normalized;
+                        offset = dir * (3f + count * 0.5f); // 沿邻居方向分散
+                    }
+                }
+                go.transform.position = bestNode.WorldPos + Vector3.up * 1f + offset;
 
                 int laneId = WorldModel.Instance.FindNearestLane(go.transform.position);
                 if (laneId >= 0)

@@ -887,6 +887,16 @@ public class SimpleAutoDrive : MonoBehaviour
 
         // 获取停止线
         StopLine stopLine = worldModel.GetNearestStopLine(nearestNode.Id, transform.position, transform.forward);
+        
+        // ★ 修复：停止线有 AssociatedPhaseId 说明这是红绿灯路口，不是 StopSign
+        // GetIntersectionState 永远返回 Uncontrolled（SetIntersectionState 被注释），
+        // 导致绿灯时 CheckStopSign 误触发，重新把 redLightAhead 设为 true，车锁死在 L1 刹车
+        if (stopLine != null && stopLine.AssociatedPhaseId >= 0)
+        {
+            _stopSignTimer = 0f;
+            return false;
+        }
+        
         float distToLine = stopLine != null
             ? Vector3.Distance(transform.position, stopLine.Position)
             : distToNode - 5f;
@@ -1035,8 +1045,28 @@ public class SimpleAutoDrive : MonoBehaviour
         {
             if (lane.NextConnectorIds != null && lane.NextConnectorIds.Count > 0)
             {
-                int randConn = lane.NextConnectorIds[Random.Range(0, lane.NextConnectorIds.Count)];
-                if (worldModel.GlobalConnectors.TryGetValue(randConn, out LaneConnector conn))
+                // ★ 修复：避免拓扑顺延回到已走过的车道（防止直路反复/路口卡死循环）
+                var visitedLaneIds = new HashSet<int>();
+                foreach (int pid in pathEdgeIds)
+                    if (pid > 0) visitedLaneIds.Add(pid);
+
+                // 优先找未访问过的连接器，避免回到已走过的车道
+                int bestConn = -1;
+                foreach (int connId in lane.NextConnectorIds)
+                {
+                    if (!worldModel.GlobalConnectors.TryGetValue(connId, out LaneConnector testConn)) continue;
+                    if (!visitedLaneIds.Contains(testConn.ToLaneId))
+                    {
+                        bestConn = connId;
+                        break;
+                    }
+                }
+
+                // 如果全部已访问过，随机选一个（比死循环好）
+                if (bestConn < 0)
+                    bestConn = lane.NextConnectorIds[Random.Range(0, lane.NextConnectorIds.Count)];
+
+                if (worldModel.GlobalConnectors.TryGetValue(bestConn, out LaneConnector conn))
                 {
                     // ★ 保存延伸前的位置，用于防止闪现
                     Vector3 preExtendPos = currentTrajectory != null
