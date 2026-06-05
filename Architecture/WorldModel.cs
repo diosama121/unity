@@ -313,32 +313,37 @@ public class WorldModel : MonoBehaviour
         Debug.Log($"[WorldModel] 停止线生成完成: {GlobalStopLines.Count}个路口");
     }
 
-    public StopLine GetNearestStopLine(int junctionId, Vector3 fromPos)
+    public StopLine GetNearestStopLine(int junctionId, Vector3 fromPos, Vector3 fromForward = default)
     {
         if (!GlobalStopLines.TryGetValue(junctionId, out var lines) || lines.Count == 0)
             return null;
 
-        StopLine nearest = lines[0];
-        float minDist = Vector3.Distance(fromPos, nearest.Position);
-        for (int i = 1; i < lines.Count; i++)
+        bool hasForward = fromForward.sqrMagnitude > 0.1f;
+        Vector3 fwd2D = hasForward ? new Vector3(fromForward.x, 0f, fromForward.z).normalized : Vector3.zero;
+
+        StopLine nearest = null;
+        float minDist = float.MaxValue;
+        for (int i = 0; i < lines.Count; i++)
         {
+            // ★ 方向校验：停止线的法线必须迎向车头（Dot < -0.5），防止锁定侧向横穿马路的停止线
+            if (hasForward)
+            {
+                float dot = Vector3.Dot(fwd2D, lines[i].Normal);
+                if (dot > -0.5f) continue; // 停止线背对车头或侧向，跳过
+            }
+
             float d = Vector3.Distance(fromPos, lines[i].Position);
             if (d < minDist) { minDist = d; nearest = lines[i]; }
         }
-        return nearest;
+        return nearest ?? lines[0]; // 兜底：如果方向过滤后全空，返回第一个
     }
 
     private Vector3 CalculateNodeTangent(RoadNode node)
     {
         if (node.NeighborIds.Count == 0) return Vector3.forward;
 
-        if (node.NeighborIds.Count == 2)
-        {
-            Vector3 p0 = _graph[node.NeighborIds[0]].WorldPos;
-            Vector3 p1 = _graph[node.NeighborIds[1]].WorldPos;
-            return (p1 - p0).normalized;
-        }
-
+        // ★ 修复：统一使用节点到邻居的加权平均方向，不依赖邻居存储顺序
+        // 旧代码 (p1-p0) 在邻居顺序随机时有 50% 概率切线反向，导致网格翻转成"莫比乌斯环"
         Vector3 avgDir = Vector3.zero;
         foreach (var nbId in node.NeighborIds)
         {
@@ -527,7 +532,7 @@ public class WorldModel : MonoBehaviour
                     if (dot < 0.5f) continue;
                 }
                 bestDist = sqrD;
-                bestLaneId = kvp.Key; // ConnectorId 也返回，调用方自己判断正负号
+                bestLaneId = -kvp.Key - 1; // ★ Connector 负数映射：严格匹配 SimpleAutoDrive 对 Connector 的负数定义规范
             }
         }
 
@@ -597,6 +602,24 @@ public class WorldModel : MonoBehaviour
                 {
                     Point = pt,
                     LaneId = lane.LaneId
+                });
+            }
+        }
+
+        // ★ 修复：路口连接器也采样进 KDTree，防止路口重定位时找不到转弯线
+        foreach (var kvp in GlobalConnectors)
+        {
+            LaneConnector conn = kvp.Value;
+            if (conn.TurnCurve == null || conn.TurnCurve.TotalLength <= 0) continue;
+
+            for (float dist = 0; dist <= conn.TurnCurve.TotalLength; dist += 3f)
+            {
+                float t = Mathf.Clamp01(dist / conn.TurnCurve.TotalLength);
+                Vector3 pt = conn.TurnCurve.GetPoint(t);
+                _laneSamples.Add(new LaneKDEntry
+                {
+                    Point = pt,
+                    LaneId = -kvp.Key - 1 // 负数映射，匹配 FindNearestLaneBruteForce 的 Connector 定义
                 });
             }
         }

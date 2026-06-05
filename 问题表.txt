@@ -1,128 +1,151 @@
-这就说到点子上了。路口被“吸走”或者乱切车道，本质上是“无脑空间搜索”和“状态跟踪”打架了。
-我扫了眼现在的 WorldModel.cs，发现一个明显的盲区。你在 FindNearestLane 里加了车头朝向过滤，这思路很对，但这段逻辑只遍历了直行的 GlobalLanes，完全没有管路口里的 GlobalConnectors。
-车子开进路口，如果因为任何原因（比如避障、手动微调）触发了重新吸附的逻辑，真理层一搜，发现附近根本没东西，强行把距离最近的一条直行车道丢给它。车子在视觉上就瞬间被“吸”出弯道了。
-我们得改掉这种频繁向世界要坐标的习惯，路口是空间重叠的重灾区，靠算距离一定会找错。系统得改成死磕拓扑关系的“轨道车”模式。
-具体的解法分两步：
-第一步是轨道强绑定。 只要导航给车子发了路书，这辆车在执行层就变成“瞎子”。它身上必须存着当前这条曲线（无论是 Lane 还是 Connector）的引用。每帧的位移只靠推进曲线上的参数 t 来完成，绝对禁止它在正常行驶中去调用 FindNearest。只要你不主动让它松手，它就不可能被别的线吸走。
-第二步是路口的拓扑接力。 当车子在当前直行车道走到尽头（t 接近 1）的时候，不要用坐标去搜前面的路口怎么转。让执行层去查真理层，通过当前 LaneId 直接读取 NextConnectorIds，根据导航的意图把对应连接器的引用直接喂给车子。车子的 t 清零，无缝切入下阶段轨道。
-顺手在 WorldModel 里补一个 FindNearestConnector 接口。如果你以后做自由乱开的模式，车子被人撞偏了需要重定位，也得让它能在路口里找回属于自己的转弯线，而不是一搜就搜到直行道上去。
-把找路的逻辑从算空间距离改成查上下级关系，这问题就根治了。
-收到。乡村地形路贴不上，视觉上出现“悬空”或“穿模”的经典问题，我顺着 ProceduralRoadBuilder 和 WorldModel 扒了一遍，主要是地形采样和网格生成的逻辑脱节了。
-除此之外，我还揪出了几个藏在底层会导致系统崩溃的暗雷。直接看问题单：
-一、 乡村道路“贴不上地”的三重死结
-1. 路口网格被强行“拍扁” (ProcessMesh)
-在 ProceduralRoadBuilder 的 ProcessMesh 方法里处理路口内部顶点时，有这么一句：
-if (!isBoundary) finalY = boundaryAvgY + roadHeightOffset;
-这行代码极其粗暴。它把整个路口内部所有的顶点高度，全部强行锁死在边缘顶点的平均高度上。如果是平坦的城市无所谓，但在起伏的乡村地形中，这会直接造出一块巨大的“纯平钢板”——要么半边插进山体里，要么半边悬在半空中。路口内部顶点必须实时采样 TerrainGridSystem 的高度，而不能用平均值。
-2. 样条线 (Spline) 缺乏中间采样
-WorldModel.GenerateAndRegisterLanes 生成车道时，通过 RoadMathUtility.GetRoadSpline 获取数学曲线。这根曲线只保证了头尾两个 Node 贴合了地形，中间的控制点全是靠纯数学插值拉出来的。在没有地表烘焙的乡村模式下，连绵起伏的地形会直接穿破这根直愣愣的样条线。直线和长弯道生成时，必须按照 stepDist 沿途向 TerrainGridSystem 重新要高度。
-3. 掩耳盗铃的地形烘焙
-你在 BuildRoads 里写了：
-if (roadGen != null && !roadGen.isCountryside) terrainGrid.BakeRoadMask(allPolys);
-城市式下，地形会向道路妥协（被压平）；乡村模式下你跳过了烘焙，想让道路贴合地形，但前面的网格生成（上述两点）又全都是按“纯平”逻辑写的。两边互不让步，路自然就贴不上去了。
-二、 执行层与仲裁层的致命暗雷 (随时引发智障行为)
-1. 基础巡航 (L0) 把“倒车”当“刹车”
-看 SubsumptionEngine.ComputeL0，当车辆当前速度大于目标巡航速度时，算出来的 throttle 是一个负值（最多到 -0.3）。
-再看执行层 SimpleCarController.ApplyCommand，它只认 isBraking 为真才调用刹车减速度。如果 isBraking 为假且 throttle 为负，它会算出 targetSpeed = -9 m/s（假设极速30），然后调用 acceleration 去疯狂加速倒车！
-后果：NPC 车速稍微快一点，或者下坡时，它不会踩刹车，而是直接挂倒挡疯狂抽搐减速。
-2. 初始化时序导致 3D 几何崩坏
-WorldModel.TriggerWorldGeneration 里的调用顺序有大问题：
-此时 TerrainGrid 还没初始化！
-在 IngestAndPrecomputeGraph 里，你不仅存了节点，还计算了邻居间的夹角、最大距离、IntersectionRadius 等一堆几何数据。因为此时 terrainGrid 没初始化，所有高度返回都是 0。这些极度依赖 3D 空间真实距离的拓扑数据，全是在 2D 纯平面的假象下算出来的，等后面重新赋了高度，路口的半径和夹角全乱套了。
-3. 彻底无视路口的寻路接口
-这和你之前提到的“路口吸附错乱”相互印证。WorldModel.FindNearestLaneBruteForce 里面：
-foreach (var kvp in GlobalLanes)
-全局搜索死死绑定了直行车道，完全遗漏了 GlobalConnectors 字典！
-一旦有任何逻辑（比如碰撞恢复、动态规划重算）在路口中央调用了这个方法，系统对脚下的连接器视而不见，直接把车子隔空瞬移到几十米外的某条直行道上。
-a4 的修补指令：
-ProcessMesh 内部顶点的 finalY 必须改写为调用 WorldModel.Instance.GetUnifiedHeight(v2D.x, v2D.y) + offset。
-ComputeL0 在超速时，必须输出 brake = 差值比例 并且 throttle = 0，绝对禁止输出负油门。
-TerrainGrid.Initialize 必须提到 IngestAndPrecomputeGraph 之前执行，这是物理世界的基石，不能后置。
-先来个方案吧。
-接下来的问题，ros的键盘控制无效，汽车控制这里的r键重置会把车都卡在同一个位置车子会卡死，ros2的设置无效
-怎么看都是brake。
-刚才咱们理顺了路口吸附和底层架构脱节的问题，现在视角切到车辆微观控制、空间几何构建和传感器上。这几个 Bug 如果不修，你的仿真跑起来会像“灵异事件”。
-下面是第二波“排雷清单”，全是在极端测试或长时间运行必定暴露的硬伤：
-一、 灾难级的“红绿灯倒车” (执行层 & 仲裁层错位)
-问题源码： SubsumptionEngine.cs (L1 交通规则层) & SimpleCarController.cs (ApplyCommand)
-致死逻辑： 在 ComputeL1 中，为了在红绿灯前减速，你输出了负油门 throttle = -brake，并且设定 isHardBrake = false。
-到了执行层的 SimpleCarController，因为 isHardBrake 是 false，系统走的是正常加减速逻辑：
-float targetSpeed = cmd.throttle * maxSpeed;
-如果此时 brake = 0.5，targetSpeed 直接变成 -15m/s！接着系统发现 -15 的绝对值比当前速度大，它会调用 acceleration (加速) 而不是 brakeDeceleration (减速)！
-后果： 你的 NPC 车开到红绿灯前，不仅不会安稳停下，反而会减速到 0 后，瞬间挂倒挡一脚油门往后撞，把后面的车全怼飞。
-二、 满天乱飞的 U-Turn 连接器 (路网生成 Bug)
-问题源码： WorldModel.cs 中的 BuildUTurnConnector
-致死逻辑：
-当死路触发兜底 U-Turn 时，你试图在车道末端画一个掉头圆弧。但你看你取的点：
-Vector3 p1 = lane.CenterSpline.GetPoint(1f); (车道终点)
-Vector3 p2 = lane.CenterSpline.GetPoint(0f); (车道起点)
-你用终点和起点做插值生成连接器！如果这条马路有 100 米长，两个点距离 dist 就是 100，你的控制点膨胀系数 mag = dist * 0.8f 等于 80 米。
-后果： 只要在死胡同触发掉头，系统会生成一条横跨整个城镇、飞在半空中、弧度高达 80 米的“彩虹桥连接器”，车子直接起飞飞回起点。
-(注：正确的 U-Turn 必须是连向同路段反方向 Lane 的 0f 点，而不是本 Lane 的 0f 点)
-三、 上坡触发“幽灵刹车” (ROS2 传感器 Bug)
-问题源码： ROS2BridgeV2.cs 中的 GenerateLidarPoints
-致死逻辑：
-你的 LiDAR 射线是严格跟着车头 _carTransform.forward 射出去的，并且 LayerMask 是 ~0 (所有层)。
-在平地没问题。但在你刚刚提到的乡村起伏地形里，当车辆开始上坡时，车头前方的地面相对射线是“翘起”的。
-射线会直接打在 5 米外上坡的柏油路面上，然后把这个距离传给 ROS2。
-后果： 只要一上坡，Python 大脑就会以为前方 5 米有绝对死物，算出 TTC < 1.5s，瞬间触发 AEB 把车死死钉在坡上，永远开不上去。
-(解决：LayerMask 必须剔除 Terrain 和 Road 层，只能扫 Vehicle 和 Pedestrian)
-四、 永远停不下来的“芝诺乌龟” (纵向控制公式崩坏)
-问题源码： SubsumptionEngine.cs 中的 ComputeL1
-致死逻辑：
-刹车速度公式：targetSpd = Mathf.Lerp(0f, s.currentSpeed, stopDist / 18f);
-注意这里的 s.currentSpeed。随着车靠近停止线，stopDist 变小，targetSpd 变小，导致 currentSpeed 变小。
-下一帧，currentSpeed 变小了，去乘一个小于 1 的系数，targetSpd 进一步变小。
-这在数学上是一个无限衰减的指数渐近线！
-后果： 你的车离停止线 5 米时还有 2m/s，离 2 米时变成 0.5m/s，离 1 米时变成 0.1m/s。它会以肉眼几乎不可见的速度永远在向停止线蠕动，导致路口通行效率暴跌。目标速度必须根据 maxSpeed 或固定距离映射，绝对不能把 currentSpeed 放在等式右边作为乘数基准
-a4 修复优先级建议：
-先杀 ROS2 LiDAR 射线 Bug 和 倒车 Bug。这两个最致命，会直接导致你的自动驾驶演示崩溃变成碰碰车。
-把 LiDAR Layer 剥离出来，建一个 Obstacle 专属 Layer。
-强行在 SimpleCarController 截断负向 targetSpeed（除非明确挂了倒挡）。
-重写 L1 的刹车公式：把 s.currentSpeed 换成进路口前的快照速度，或者直接基于 stopDist 做绝对值的线性映射。
-修复 U-Turn 端点：死路兜底时，如果找不到反向车道，在路口终点原地画一个半径按照路宽的的小半圆接回反向，严禁使用本车道的起点 GetPoint(0f)。
-致命问题一：为什么 ROS2 永远都在触发 “Brake”？
-病因：雷达在“吃土”。
-你看 ROS2BridgeV2.cs 里的 GenerateLidarPoints() 方法。你设定的 lidarLayerMask 默认是 ~0（检测所有层），并且射线发射点只比车身中心高了 0.8f。
-在 Unity 里，只要路面稍微有点起伏，或者车头因为加速减速产生一点点 Pitch（俯仰）倾斜，这 11 根 50米长的射线就会直接打在车头前方 2~3 米的柏油路面上！
-传给 Python 后，Python 一算：前方 3 米有绝对死物，车速 10km/h，TTC < 1.5s，立刻下发紧急制动。所以它永远都在急刹。
-解药：
-去 Unity 的 Inspector 面板，找到主车上的 ROS2BridgeV2 组件。
-把 Lidar Layer Mask 展开，取消勾选 Default、Road、Terrain，确保它只勾选 Vehicle 和 Pedestrian (NPC和行人)。
-(如果不方便改层级，就在代码里把 Vector3.up * 0.8f 改成 Vector3.up * 1.5f 抬高雷达).
-致命问题二：为什么 ROS 键盘遥控 (teleop) 无效？
-病因：你在桥接器里把控制线给“剪断”了。
-在 ROS2BridgeV2.cs 的 Update 末尾：
-这段代码只认 BRAKING 状态！当你在键盘上按 i 前进时，Python 发过来的是正常的控制指令，但在 Unity 里，ROS2BridgeV2 收到 rosLinearVelocity 后根本没有往下传给汽车底盘，直接把它扔进垃圾桶了。
-解药（替换 ROS2BridgeV2.cs Update 最后的逻辑）：
-必须增加对 useRosControl 的手动接管处理，绕开 SimpleAutoDrive 本地大脑，直连底盘：
-致命问题三：为什么 R 键重置会把车卡死在同一个位置？
-病因：物理黑洞（奇点）叠加 + 大脑死机。
-看 SimpleCarController.cs 里的 ResetPosition()。
-你的重置逻辑是找最近的路网节点 nearest = WorldModel.Instance.GetNearestNode(...)，然后把坐标严格等于 nearest.WorldPos。如果按 R，所有 NPC 车都会寻找离自己最近的节点。如果几辆车离同一个路口近，它们会被瞬间吸进同一个坐标点，物理碰撞体互相挤压瞬间锁死。
-更致命的是，上面的 AI 大脑 SimpleAutoDrive 是一辆在轨道 (Spline) 上跑的车。你瞬间把车瞬移了几十米，却没有清空 SimpleAutoDrive 的历史路径数据。大脑以为自己还在上一个轨道的 50% 处，算出来的切线和坐标全是错的，当场死机瘫痪。
-解药（替换 SimpleCarController.cs 中的 ResetPosition）：
-给重置加随机偏移防重叠，并强制重置 AI 大脑的导航内存。
+看了你附带的 问题表.txt，发现你已经修复了“红绿灯空间绑架（路权免死金牌）”、“U-Turn彩虹桥”、“雷达吃土”等几个恶性 Bug，执行力很强。
 
+顺着你目前搭建的这套“基于离散烘焙曲线 (BakedTrajectory) 的轨道车架构”，我仔细扒了 SimpleAutoDrive.cs 和 SimpleCarController.cs 的底层逻辑。你提到“车辆运行不太对”，在当前的源码里，存在四个极其致命的逻辑冲突（暗雷）。
 
+如果不修，车子跑起来不仅会疯狂抽搐，死锁脱困功能也完全是个摆设。
 
-快速执行建议：
-先改 Unity 里 ROS2BridgeV2 的 Lidar Layer Mask，把 Terrain 和 Road 剔除，你的车立马就不会一直处于 "BRAKING" 状态了。然后再把另外两段代码贴进去，键盘控制和 R 键就活了。
-“对面没车也卡死”加上“路口中间抖两下”，这绝对不是雷达探测的问题，而是极其经典的“红绿灯空间绑架” (Stopline Hostage)。
-我还原一下你的车在路口里经历了什么地狱折磨：
-路口中间抖两下：车在路口转弯时，系统一直在用空间距离去搜最近的停止线。随着车身旋转，周围其他方向（侧向、对向）的停止线会在某一帧被判定为“在车头前方”。如果那条线刚好是红灯，车就会被瞬间强踩刹车（抖一下）；下一帧车身转过去了，判定解除了，又给一脚油门（又抖一下）。
-路口尽头永远卡死：车转完弯，来到路口尽头准备驶出。此时离它物理距离最近的，是对面车道（迎面开来）的停止线！由于车身还没完全摆正，系统判定这条红灯停止线在车头正前方 1 米处。车子瞬间踩死刹车。因为对面没车，这个灯可能一直红着，你的车就被这条根本不属于它的停止线永远“绑架”在了路口尽头。
-破解之道非常简单，回归最基础的交通法规：
-“已经合法进入路口（行驶在连接器上）的车辆，拥有绝对路权，无视一切红绿灯和停止标志。”
-直接去 SimpleAutoDrive.cs 里，在这两个路口检测方法的最开头，加上这道“路权免死金牌”：
-1. 修复红绿灯绑架
-找到 CheckRedLightUnified() 方法，
-2. 修复 Stop Sign 绑架
-附加排雷：如果你在路口前刹车太慢
-如果你发现车子在进路口前，明明看见红灯了，但是刹车像乌龟一样越来越慢（我之前提过的芝诺乌龟 Bug），打开你的 SubsumptionEngine.cs，找到 ComputeL1 里面的 targetSpd 计算公式。
-把这一行（如果有的话）：
-float targetSpd = Mathf.Lerp(0f, s.currentSpeed, stopDist / 18f);
-直接替换成这绝对线性的一行：
-float targetSpd = Mathf.Clamp(stopDist * 0.6f, 0f, s.targetCruiseSpeed);
-加上这段路权豁免之后，你的车在路口中间绝对不会再犹豫，一脚油门行云流水直接转过去。立刻保存去跑一圈试试！
-先看对不对，再看行不行。
+💣 致命暗雷一：位移与贴地的“神仙打架”（车身疯狂抽搐的元凶）
+病因：
+你在 SimpleAutoDrive.cs 的 SnapToCurve() 里面，严格按照样条线 (Spline) 的切线算出了车身旋转，并且强制设定了高度：pos.y = baseY + 0.15f;
+但是！在 SimpleCarController.cs 的 Update() 里，哪怕它是 NPC，它也会执行这段代码：
+
+C#
+if (isNPC || manualControl) {
+    ApplyGroundAlignment(); // <--- 灾难在这里
+    return;
+}
+ApplyGroundAlignment() 干了什么？它把高度强制改成了 baseY + npcSuspensionHeight (默认0.5f)，并且根据地形网格的法线重新算了一遍旋转并覆盖了 transform.rotation。
+后果： 你的车每一帧都在被两个脚本“夺舍”。上一帧按曲线对齐（高度0.15），下一帧被地形法线强扭（高度0.5）。肉眼看过去，车子在路口和上下坡时会疯狂高频上下震动，并且转弯时车头会像抽筋一样摆动。
+
+💣 致命暗雷二：主车的“双倍速度与幽灵位移”
+病因：
+还是 SimpleCarController.cs 的 Update，对于主车（isNPC = false）且在自动驾驶状态（manualControl = false）时，它绕过了上面的 return，继续往下执行：
+
+C#
+float moveStep = currentSpeed * Time.deltaTime;
+transform.position += transform.forward * moveStep;
+而主车上的 SimpleAutoDrive 已经在 AdvanceOnEdge(moveDist) 里推动了距离，并调用了 SnapToCurve() 更新了坐标。
+后果：
+主车进入自动驾驶时，每一帧被向前推进了两次（一次沿着曲线，一次顺着车头直行）。主车会以两倍速狂飙，且在弯道会因为直行向量的叠加，被硬生生推离预定轨道！
+
+💣 致命暗雷三：“仰卧起坐”式死锁（永远无法重新寻路）
+病因：
+看 SimpleAutoDrive.cs 里的倒车逻辑：
+
+C#
+if (reverseTimer > reverseDuration) {
+    longState = LongitudinalState.Stopped; // 倒车结束，变回停止
+}
+结合前面的逻辑：停止超过 10 秒 -> 倒车 2.5 秒 -> 变回停止 -> 再等 10 秒 -> 倒车 2.5 秒……
+后果：
+它形成了一个完美的无限死循环！更致命的是，你辛辛苦苦写的 _deadlockRecovery.Update() 只有在 currentTrajectory == null 时才会执行。而陷入这个死循环的车辆，其轨迹永远不为空。所以这辆车会永远在原地“仰卧起坐”，直到世界末日也不会触发强制重寻路。
+
+💣 致命暗雷四：自断退路的路径裁剪
+病因：
+TrimPassedEdges() 只要走过 10 个边，就把前面的边全删了，并且把 currentEdgeIndex 设为 0。
+后果：
+当车子触发了上面的倒车逻辑（需要向后退避）时，一旦退到了当前边的起点（currentDistOnEdge = 0），它需要 currentEdgeIndex-- 退回上一条边。但因为前面的边被你删了（currentEdgeIndex 已经是 0 了），车子会像撞到一堵空气墙一样，再也退不动了。
+🛠️ 终极修复方案
+把以下代码替换到对应的文件里，系统会瞬间丝滑流畅。
+
+1. 根治执行层争夺权 (修改 SimpleCarController.cs)
+彻底剥夺 SimpleCarController 在自动驾驶模式下的运动干涉权，将身心完全交给轨道引擎。
+找到 SimpleCarController.cs 的 Update()，替换为：
+
+C#
+void Update()
+{
+    // ★ 修复：查询大脑是否正在进行轨道接管
+    SimpleAutoDrive autoDrive = GetComponent<SimpleAutoDrive>();
+    bool isDrivenBySpline = (autoDrive != null && !autoDrive.isPlayerControlled && autoDrive.currentEdgeLength > 0f);
+
+    // 如果正被轨道引擎接管，底盘变身纯木偶，不做任何位移和贴地计算！(解决抽搐和双倍速)
+    if (isDrivenBySpline) return; 
+
+    if (isNPC || manualControl)
+    {
+        ApplyGroundAlignment();
+        return;
+    }
+
+    // 1. 位移
+    float moveStep = currentSpeed * Time.deltaTime;
+    transform.position += transform.forward * moveStep;
+
+    // 2. 转向
+    if (Mathf.Abs(currentSpeed) > 0.01f)
+    {
+        float turnAmount = currentSteeringAngle * (currentSpeed / maxSpeed) * Time.deltaTime;
+        transform.Rotate(0f, turnAmount, 0f);
+    }
+
+    // 3. 贴地
+    ApplyGroundAlignment();
+}
+2. 打破死锁循环，激活僵死恢复 (修改 SimpleAutoDrive.cs)
+找到 Update() 里处理倒车的这一块代码，增加对僵死状态的强制打破：
+
+C#
+        // ==========================================
+        // 倒车逻辑 (修复死锁循环)
+        // ==========================================
+        if (longState == LongitudinalState.Reverse)
+        {
+            reverseTimer += Time.deltaTime;
+            if (reverseTimer > reverseDuration)
+            {
+                longState = LongitudinalState.Stopped;
+                stoppedTimer = 0f;
+                targetSpd = 0f;
+                brakeHard = false;
+                
+                // ★ 修复：倒车结束后，依然被堵死？直接清空轨迹，强行触发 _deadlockRecovery！
+                if (frontDistance < safeDistance) 
+                {
+                    Debug.LogWarning($"[SimpleAutoDrive] {name} 倒车后仍受阻，摧毁当前轨迹，移交死锁脱困层");
+                    currentTrajectory = null; 
+                    currentEdgeLength = 0f;
+                    _isTrajectoryLocked = false;
+                }
+            }
+            else
+            {
+                targetSpd = -2f;
+                brakeHard = false;
+            }
+        }
+3. 修复退路被断的裁剪逻辑 (修改 SimpleAutoDrive.cs)
+在 TrimPassedEdges() 里，至少给车辆保留几条历史退路，不要一刀切到 0：
+
+C#
+    void TrimPassedEdges()
+    {
+        // ★ 修复：至少保留最近走过的 3 条边作为倒车缓冲，防止退到死胡同
+        if (currentEdgeIndex > 15 && currentEdgeIndex < pathEdgeIds.Count)
+        {
+            int retainCount = 3; 
+            int removeCount = currentEdgeIndex - retainCount;
+            if (removeCount > 0)
+            {
+                pathEdgeIds.RemoveRange(0, removeCount);
+                currentEdgeIndex = retainCount; 
+            }
+        }
+    }
+这三刀切下去，你的车队才会真正变成严谨的“轨道电车”，不会在路口抽搐，遇到堵死也会正常触发你写的强制跳跃 ForceNewDestination 逻辑了。你可以跑起来试试看！
+****注意：上述代码仅作为参考，如果你有更好的实现，可以不按这个来。
+首当其冲的是 “上坡秒变瞎子”的追尾惨案。
+在 SimpleAutoDrive 的 CheckFrontVehicleFake 里面，NPC车为了省性能用了个简化的数学雷达。算前车距离时，把目标向量的 Y 轴强行抹零了（toOther.y = 0），这是对的。偏偏它忘了把自己的车头向量 myFwd 也压平。
+车子一旦开上斜坡，车头是指向天的，拿一个指天的向量去和水平向量算点积（Dot），数值立马暴跌，根本过不了 0.7f 的判定线。只要有坡度，NPC 的假雷达就彻底失效，前车就算停在鼻子上它也看不见，直接全速撞上去。算点积前必须把 myFwd 也压扁重归一化。
+
+另外一个是 切回自动驾驶直接变成“智障”。
+玩家手动开完车按键切回自动，走的是 MergeBackToTraffic。这方法前半截写得挺好，找车道、吸附、算进度都没问题。结果临门一脚，先把 _isTrajectoryLocked 强行设成 true，紧接着下一行去调 RequestNewPath()。
+进寻路函数一看，第一行就是“如果轨迹锁死直接 return”。车子其实根本没拿到去目的地的路书，脑子里只有当前这一截几十米的车道，走到尽头后要不卡死，要不就只能靠拓扑瞎转悠了。调用寻路前绝对不能提前上锁。
+
+还有一个是 路口重定位的“空间跃迁”。
+在 WorldModel 的 FindNearestLane 里，如果外部调用没传车头方向，它会走捷径去查 KDTree。坏就坏在构建这棵空间树的时候，采样点全是从 GlobalLanes（直行道）里抽的，一根 GlobalConnectors（路口转弯线）都没放进去。
+要是车子在路口正中央发生碰撞需要重定位，调用这个无方向的接口，它根本感知不到脚下的转弯线，会被直接瞬移吸附到几十米外的直行车道上。路口范围内的 KDTree 采样是个严重盲区。
+
+最后提一嘴 环岛的无解死锁。
+CheckRoundaboutYield 的逻辑太糙了，只要环岛中心 20 米内有别的车，无脑踩刹车让行。如果有两辆或者四辆车同时到达不同的入口，它们会互相把对方框在 20 米的警戒线里，大家一起停下，谁也不敢动。怎么着也得加个方向判断，如果那辆车已经过了你的路口，或者是在朝环岛外开，就不能再傻等了。
+上面是第二轮问题。

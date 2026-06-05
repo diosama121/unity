@@ -249,7 +249,6 @@ public List<TrafficLightInstance> GetTrafficLightInstances()
         float sidewalkMargin = 2.0f;
         Vector3 spawnPos = basePos + (-facingDir) * roadHalf + rightDir * (roadHalf + sidewalkMargin);
         
-        // ... 下面的生成 GameObject 等代码保持原样不变 ...
        
         // 创建交通灯GameObject
         GameObject tlObj;

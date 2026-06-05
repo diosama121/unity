@@ -459,6 +459,15 @@ public class SimpleAutoDrive : MonoBehaviour
                 stoppedTimer = 0f;
                 targetSpd = 0f;
                 brakeHard = false;
+
+                // ★ 修复：倒车结束后仍被堵死？清空轨迹，触发 _deadlockRecovery 强制重寻路！
+                if (frontDistance < safeDistance)
+                {
+                    Debug.LogWarning($"[SimpleAutoDrive] {name} 倒车后仍受阻，摧毁当前轨迹，移交死锁脱困层");
+                    currentTrajectory = null;
+                    currentEdgeLength = 0f;
+                    _isTrajectoryLocked = false;
+                }
             }
             else
             {
@@ -657,11 +666,13 @@ public class SimpleAutoDrive : MonoBehaviour
 
     void TrimPassedEdges()
     {
-        if (currentEdgeIndex > 10 && currentEdgeIndex < pathEdgeIds.Count)
+        // ★ 修复：至少保留最近走过的 3 条边作为倒车缓冲，防止退到死胡同
+        if (currentEdgeIndex > 15 && currentEdgeIndex < pathEdgeIds.Count)
         {
-            int removeCount = currentEdgeIndex;
+            int retainCount = 3;
+            int removeCount = currentEdgeIndex - retainCount;
             pathEdgeIds.RemoveRange(0, removeCount);
-            currentEdgeIndex = 0;
+            currentEdgeIndex = retainCount;
         }
     }
 
@@ -760,9 +771,10 @@ public class SimpleAutoDrive : MonoBehaviour
             frontDistance = CheckFrontVehicleFake();
         }
 
-        // ★ 红灯时：用停止线距离钳制frontDistance，让状态机自动减速停车
-        if (redLightAhead && hasStopLineAhead && distToStopLine > 0)
-            frontDistance = Mathf.Min(frontDistance, distToStopLine);
+        // ★ 红灯时：停止线距离已由 L1 交规层（SubsumptionEngine）处理平滑减速
+        // 禁止污染 frontDistance！否则 L0 防碰撞层会在停止线前触发 AEB 急刹"磕头"
+        // if (redLightAhead && hasStopLineAhead && distToStopLine > 0)
+        //     frontDistance = Mathf.Min(frontDistance, distToStopLine);
     }
 
     /// <summary> 统一红绿灯检测：查WorldModel相位状态 + 停止线距离 </summary>
@@ -785,7 +797,7 @@ public class SimpleAutoDrive : MonoBehaviour
         if (distToNode > 30f) return false;
 
         // 获取该路口的停止线
-        StopLine stopLine = worldModel.GetNearestStopLine(nearestNode.Id, transform.position);
+        StopLine stopLine = worldModel.GetNearestStopLine(nearestNode.Id, transform.position, transform.forward);
         distToStopLine = stopLine != null
             ? Vector3.Distance(transform.position, stopLine.Position)
             : distToNode - 5f;
@@ -833,7 +845,7 @@ public class SimpleAutoDrive : MonoBehaviour
         if (state != IntersectionState.Uncontrolled) { _stopSignTimer = 0f; return false; }
 
         // 获取停止线
-        StopLine stopLine = worldModel.GetNearestStopLine(nearestNode.Id, transform.position);
+        StopLine stopLine = worldModel.GetNearestStopLine(nearestNode.Id, transform.position, transform.forward);
         float distToLine = stopLine != null
             ? Vector3.Distance(transform.position, stopLine.Position)
             : distToNode - 5f;
@@ -889,16 +901,25 @@ public class SimpleAutoDrive : MonoBehaviour
             new Vector3(nearestNode.WorldPos.x, 0, nearestNode.WorldPos.z));
         if (distToNode > 25f) return false; // 太远不检测
 
-        // 检查环岛内是否有其他车辆（距离路口中心 < 20m 且不是自己）
+        // 检查环岛内是否有其他车辆需要让行
         AllCars.RemoveAll(c => c == null);
+        Vector3 myFwd2D = new Vector3(transform.forward.x, 0f, transform.forward.z).normalized;
         foreach (var car in AllCars)
         {
             if (car == this || car == null) continue;
+            Vector3 toCar = car.transform.position - transform.position;
+            toCar.y = 0f;
             float carDistToNode = Vector3.Distance(
                 new Vector3(car.transform.position.x, 0, car.transform.position.z),
                 new Vector3(nearestNode.WorldPos.x, 0, nearestNode.WorldPos.z));
-            if (carDistToNode < 20f)
-                return true; // 环岛内有车，让行
+            if (carDistToNode > 20f) continue;
+
+            // ★ 方向判断：如果对方已经驶过我的路口（在后方），或正在驶离环岛，不再傻等
+            Vector3 carFwd2D = new Vector3(car.transform.forward.x, 0f, car.transform.forward.z).normalized;
+            float dotToMe = Vector3.Dot(carFwd2D, -toCar.normalized);
+            if (dotToMe < -0.2f) continue; // 对方背离我行驶，不构成威胁
+
+            return true; // 环岛内有威胁车辆，让行
         }
 
         return false;
@@ -909,7 +930,8 @@ public class SimpleAutoDrive : MonoBehaviour
     {
         float minDist = 30f;
         Vector3 myPos = transform.position;
-        Vector3 myFwd = transform.forward;
+        // ★ 修复：压平车头向量，防止上坡时点积暴跌导致雷达失效
+        Vector3 myFwd = new Vector3(transform.forward.x, 0f, transform.forward.z).normalized;
         // 清理null引用
         AllCars.RemoveAll(c => c == null);
 
@@ -1197,12 +1219,12 @@ public class SimpleAutoDrive : MonoBehaviour
 
         // 设置当前距离为吸附点距离
         currentDistOnEdge = Mathf.Clamp(distOnLane, 0f, currentEdgeLength);
-        _isTrajectoryLocked = true;
 
         Debug.Log($"[SimpleAutoDrive] {name} 回归车流 → 车道{nearestLaneId} 距离{distOnLane:F1}m");
 
-        // 7. 继续延伸到目的地
+        // 7. 继续延伸到目的地（★ 修复：先寻路再上锁，防止 RequestNewPath 被锁拦截）
         RequestNewPath();
+        _isTrajectoryLocked = true;
     }
 
     // ==========================================

@@ -77,8 +77,14 @@ public class SimpleCarController : MonoBehaviour
     // ==========================================
     void Update()
     {
-        // NPC 车辆位移完全由 SimpleAutoDrive.SnapToCurve 接管，此处不再移动/旋转，
-        // 否则两套位移系统会在转弯时互相打架导致抽搐。
+        // ★ 修复：查询大脑是否正在进行轨道接管
+        SimpleAutoDrive autoDrive = GetComponent<SimpleAutoDrive>();
+        bool isDrivenBySpline = (autoDrive != null && !autoDrive.isPlayerControlled && autoDrive.currentEdgeLength > 0f);
+
+        // 如果正被轨道引擎接管，底盘变身纯木偶，不做任何位移和贴地计算！
+        // 解决：1) 与SimpleAutoDrive.SnapToCurve的贴地打架  2) 主车双倍速度
+        if (isDrivenBySpline) return;
+
         if (isNPC || manualControl)
         {
             ApplyGroundAlignment();
