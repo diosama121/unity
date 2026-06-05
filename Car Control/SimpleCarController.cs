@@ -62,7 +62,11 @@ public class SimpleCarController : MonoBehaviour
         else
         {
             float targetSpeed = cmd.throttle * maxSpeed;
-            float accel = (Mathf.Abs(targetSpeed) > Mathf.Abs(currentSpeed)) ? acceleration : brakeDeceleration;
+            // 跨越零点（当前速度与目标速度异号）→ 必须先刹车再反向加速
+            bool crossingZero = (currentSpeed > 0.01f && targetSpeed < -0.01f) ||
+                                (currentSpeed < -0.01f && targetSpeed > 0.01f);
+            float accel = crossingZero ? brakeDeceleration
+                         : (Mathf.Abs(targetSpeed) > Mathf.Abs(currentSpeed)) ? acceleration : brakeDeceleration;
             currentSpeed = Mathf.MoveTowards(currentSpeed, targetSpeed, accel * Time.deltaTime);
         }
         currentSteeringAngle = cmd.steering * maxSteeringAngle;

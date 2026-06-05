@@ -82,8 +82,25 @@ public class SubsumptionEngine
         else if (A1) candidateLayer = 1;
         else candidateLayer = 0;
 
-        // 4. 时间窗防抖
-        candidateLayer = ApplyDebounce(candidateLayer, dt);
+        // 4. 时间窗防抖：升维（切入高危层）零延迟，降维（退出高危）才防抖
+        //    AEB 必须立即响应，不允许等 0.5s
+        if (candidateLayer > _lastActiveLayer)
+        {
+            // 升维：立即切换，无需防抖
+            _pendingLayer = -1;
+            _debounceTimer = 0f;
+        }
+        else if (candidateLayer < _lastActiveLayer)
+        {
+            // 降维：需要 0.5s 防抖，防止离开危险态后立即回弹
+            candidateLayer = ApplyDebounce(candidateLayer, dt);
+        }
+        else
+        {
+            // 同层：重置防抖状态
+            _pendingLayer = -1;
+            _debounceTimer = 0f;
+        }
         _lastActiveLayer = candidateLayer;
         ActiveLayer = candidateLayer;
 
@@ -105,7 +122,20 @@ public class SubsumptionEngine
     private LayerOutput ComputeL0(SensorInput s)
     {
         float speedDiff = s.targetCruiseSpeed - s.currentSpeed;
-        float throttle = Mathf.Clamp(speedDiff / Mathf.Max(s.maxSpeed, 1f), -0.3f, 1f);
+        // 超速时输出刹车并禁止负油门（负油门会被执行层当成倒车加速）
+        if (speedDiff < 0f)
+        {
+            float brake = Mathf.Clamp01(-speedDiff / Mathf.Max(s.maxSpeed, 1f));
+            return new LayerOutput
+            {
+                throttle = 0f,
+                brake = brake,
+                targetSpeed = s.targetCruiseSpeed,
+                isHardBrake = false,
+                state = LongitudinalState.FreeDrive
+            };
+        }
+        float throttle = Mathf.Clamp(speedDiff / Mathf.Max(s.maxSpeed, 1f), 0f, 1f);
         return new LayerOutput
         {
             throttle = throttle,
@@ -121,10 +151,12 @@ public class SubsumptionEngine
     // ============================================================
     private LayerOutput ComputeL1(SensorInput s)
     {
-        // 距停止线越近，减速度越大
+        // 红绿灯刹车：物理解法 v²=2ad → a = v²/(2d)
+        // 避免 Lerp(currentSpeed, 0, stopDist/18) 的指数坍缩
         float stopDist = Mathf.Max(s.distToStopLine, 0.1f);
-        float brake = Mathf.Clamp01(1f - stopDist / 18f); // 18m 内开始线性增强刹车
-        float targetSpd = Mathf.Lerp(0f, s.currentSpeed, stopDist / 18f);
+        float requiredDecel = (s.currentSpeed * s.currentSpeed) / (2f * stopDist);
+        float brake = Mathf.Clamp01(requiredDecel / Mathf.Max(s.maxDeceleration, 0.1f));
+        float targetSpd = 0f;
 
         return new LayerOutput
         {
@@ -149,10 +181,18 @@ public class SubsumptionEngine
         float speedDiff = targetSpd - s.currentSpeed;
         float throttle = Mathf.Clamp(speedDiff / Mathf.Max(s.maxSpeed, 1f), -0.5f, 1f);
 
+        // 刹车力度按需减速比例，不再除以 maxSpeed 稀释
+        float brake = 0f;
+        if (s.currentSpeed > targetSpd)
+        {
+            float excess = s.currentSpeed - targetSpd;
+            brake = Mathf.Clamp01(excess / Mathf.Max(s.currentSpeed, 0.1f));
+        }
+
         return new LayerOutput
         {
             throttle = throttle,
-            brake = s.currentSpeed > targetSpd ? Mathf.Clamp01((s.currentSpeed - targetSpd) / s.maxSpeed) : 0f,
+            brake = brake,
             targetSpeed = targetSpd,
             isHardBrake = false,
             state = LongitudinalState.FollowCar

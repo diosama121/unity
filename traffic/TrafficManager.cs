@@ -59,16 +59,124 @@ public class TrafficManager : MonoBehaviour
                 int activeCount = npcVehicles.FindAll(n => n != null).Count;
                 if (activeCount > 2)
                 {
-                    var weakest = npcVehicles.FindLast(n => n != null);
-                    if (weakest != null)
+                    // 删除离主相机最远的NPC，避免删掉玩家视野内的车
+                    Camera mainCam = Camera.main;
+                    Vector3 camPos = mainCam != null ? mainCam.transform.position : Vector3.zero;
+                    SimpleAutoDrive farthest = null;
+                    float maxDist = -1f;
+                    foreach (var npc in npcVehicles)
                     {
-                        npcVehicles.Remove(weakest);
-                        Destroy(weakest.gameObject);
-                        Debug.Log("[TrafficManager] FPS=" + Mathf.RoundToInt(lastFps) + " < 40, despawning 1 NPC. Remaining: " + npcVehicles.Count);
+                        if (npc == null) continue;
+                        float d = Vector3.Distance(npc.transform.position, camPos);
+                        if (d > maxDist) { maxDist = d; farthest = npc; }
+                    }
+                    if (farthest != null)
+                    {
+                        npcVehicles.Remove(farthest);
+                        Destroy(farthest.gameObject);
+                        Debug.Log("[TrafficManager] FPS=" + Mathf.RoundToInt(lastFps) + " < 40, despawning farthest NPC (" + maxDist.ToString("F0") + "m away). Remaining: " + npcVehicles.Count);
                     }
                 }
             }
+
+            // NPC生命周期管理：检查终点到达，回收并重生
+            RecycleFinishedNPCs();
         }
+    }
+
+    private void RecycleFinishedNPCs()
+    {
+        if (WorldModel.Instance == null || WorldModel.Instance.GlobalLanes == null || WorldModel.Instance.GlobalLanes.Count == 0)
+            return;
+
+        for (int i = npcVehicles.Count - 1; i >= 0; i--)
+        {
+            SimpleAutoDrive npc = npcVehicles[i];
+            if (npc == null || npc.gameObject == null)
+            {
+                npcVehicles.RemoveAt(i);
+                continue;
+            }
+
+            // 检查是否到达终点（路径进度 >= 95% 或 控制器已停止）
+            bool reachedEnd = npc.longState == LongitudinalState.Stopped;
+            if (!reachedEnd)
+            {
+                // 简单距离检查：离任何车道端点太远且速度极低
+                float speed = npc.currentSpeed;
+                if (speed < 0.2f)
+                {
+                    Vector3 pos = npc.transform.position;
+                    bool nearAnyLane = false;
+                    foreach (var laneKvp in WorldModel.Instance.GlobalLanes)
+                    {
+                        if (laneKvp.Value.CenterSpline == null || laneKvp.Value.CenterSpline.TotalLength < 5f) continue;
+                        float t = laneKvp.Value.CenterSpline.GetClosestT(pos, 0.5f);
+                        Vector3 pt = laneKvp.Value.CenterSpline.GetPoint(t);
+                        if (Vector3.Distance(pos, pt) < 8f)
+                        {
+                            nearAnyLane = true;
+                            break;
+                        }
+                    }
+                    if (!nearAnyLane) reachedEnd = true;
+                }
+            }
+
+            if (reachedEnd)
+            {
+                // 回收并重生到新车道
+                GameObject npcObj = npc.gameObject;
+                SimpleCarController controller = npcObj.GetComponent<SimpleCarController>();
+                if (controller == null) controller = npcObj.GetComponentInChildren<SimpleCarController>();
+
+                if (RespawnNPCOnNewLane(npc, npcObj, controller))
+                {
+                    // 成功重生，保持列表
+                }
+                else
+                {
+                    // 无法重生，销毁
+                    npcVehicles.RemoveAt(i);
+                    Destroy(npcObj);
+                }
+            }
+        }
+    }
+
+    private bool RespawnNPCOnNewLane(SimpleAutoDrive npc, GameObject npcObj, SimpleCarController controller)
+    {
+        if (WorldModel.Instance == null) return false;
+
+        // 收集可用车道
+        List<Lane> availableLanes = new List<Lane>();
+        foreach (var kvp in WorldModel.Instance.GlobalLanes)
+        {
+            if (kvp.Value.CenterSpline != null && kvp.Value.CenterSpline.TotalLength > 10f)
+                availableLanes.Add(kvp.Value);
+        }
+        if (availableLanes.Count == 0) return false;
+
+        // 随机选一条新车道，远离当前位置
+        Lane chosenLane = availableLanes[Random.Range(0, availableLanes.Count)];
+        float startT = Random.Range(0.1f, 0.9f);
+        Vector3 rawPos = chosenLane.CenterSpline.GetPoint(startT);
+        Vector3 spawnPos = rawPos + Vector3.up * spawnHeightOffset;
+
+        if (Physics.CheckSphere(spawnPos, 4.0f, npcSpawnBlockMask))
+            return false;
+
+        Vector3 forwardPt = chosenLane.CenterSpline.GetPoint(Mathf.Clamp01(startT + 0.02f));
+        Vector3 forwardDir = (forwardPt - rawPos).normalized;
+        if (forwardDir.sqrMagnitude < 0.001f) forwardDir = Vector3.forward;
+
+        npcObj.transform.position = rawPos;
+        npcObj.transform.rotation = Quaternion.LookRotation(forwardDir);
+        if (controller != null) controller.currentSpeed = 0f;
+
+        float startDist = startT * chosenLane.CenterSpline.TotalLength;
+        npc.SetPath(new List<int> { chosenLane.LaneId }, startDist);
+        return true;
     }
 
   public void SpawnNPCs()

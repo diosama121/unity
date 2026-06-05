@@ -183,6 +183,12 @@ public class ProceduralRoadBuilder : MonoBehaviour
                 terrainGrid.BakeRoadMask(allPolys);
             }
         }
+
+        // 城镇模式：生成建筑和人行道
+        if (generateCity && !roadGen.isCountryside)
+        {
+            GenerateCity(allPolys);
+        }
     }
 
     public struct IntersectionMeshData
@@ -190,6 +196,89 @@ public class ProceduralRoadBuilder : MonoBehaviour
         public Mesh RenderMesh;
         public Mesh ColliderMesh;
         public Vector3[] Contour;
+    }
+
+    private void GenerateCity(List<Vector3[]> roadPolys)
+    {
+        if (WorldModel.Instance == null) return;
+
+        GameObject cityRoot = new GameObject("City_Buildings");
+        cityRoot.transform.SetParent(transform, false);
+
+        HashSet<string> processedEdges = new HashSet<string>();
+        float stepDist = meshResolution;
+
+        // 遍历所有道路段，在道路两侧放置建筑与人行道
+        foreach (var node in WorldModel.Instance.Nodes)
+        {
+            if (node.NeighborIds == null) continue;
+
+            foreach (int neighborId in node.NeighborIds)
+            {
+                string edgeKey = Mathf.Min(node.Id, neighborId) + "_" + Mathf.Max(node.Id, neighborId);
+                if (processedEdges.Contains(edgeKey)) continue;
+                processedEdges.Add(edgeKey);
+
+                if (!WorldModel.Instance.GlobalSplineCache.TryGetValue(edgeKey, out var spline))
+                    spline = RoadMathUtility.GetRoadSpline(node.Id, neighborId, stepDist, roadWidth);
+                if (spline == null || spline.Count < 2) continue;
+
+                // 计算总长度
+                float totalLen = 0f;
+                for (int i = 1; i < spline.Count; i++)
+                    totalLen += Vector3.Distance(spline[i - 1].Pos, spline[i].Pos);
+
+                float halfRoad = roadWidth * 0.5f;
+                float buildingInterval = 15f; // 建筑间距
+
+                // 沿道路两侧放置建筑
+                for (int side = -1; side <= 1; side += 2) // -1=左侧, +1=右侧
+                {
+                    float offset = halfRoad + sidewalkWidth + 2f; // 建筑退缩距离
+
+                    for (float dist = buildingInterval * 0.5f; dist < totalLen; dist += buildingInterval)
+                    {
+                        // 沿样条累计距离找最近点
+                        SplinePoint sp = spline[0];
+                        float accumDist = 0f;
+                        float bestDiff = float.MaxValue;
+                        for (int i = 0; i < spline.Count; i++)
+                        {
+                            if (i > 0) accumDist += Vector3.Distance(spline[i - 1].Pos, spline[i].Pos);
+                            float diff = Mathf.Abs(accumDist - dist);
+                            if (diff < bestDiff) { bestDiff = diff; sp = spline[i]; }
+                        }
+
+                        // 计算建筑位置：道路边缘 + 人行道 + 退缩
+                        Vector3 roadPos = sp.Pos;
+                        Vector3 perpDir = Vector3.Cross(sp.Tangent, Vector3.up).normalized * side;
+                        Vector3 buildingPos = roadPos + perpDir * offset;
+
+                        float y = WorldModel.Instance.GetUnifiedHeight(buildingPos.x, buildingPos.z);
+                        buildingPos.y = y;
+
+                        // 随机建筑尺寸
+                        float bw = Random.Range(4f, 10f);
+                        float bd = Random.Range(4f, 8f);
+                        float bh = Random.Range(buildingHeight * 0.5f, buildingHeight * 1.5f);
+
+                        GameObject building = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                        building.name = $"Building_{edgeKey}_{side}_{dist:F0}";
+                        building.transform.SetParent(cityRoot.transform);
+                        building.transform.position = buildingPos;
+                        building.transform.localScale = new Vector3(bw, bh, bd);
+                        building.transform.rotation = Quaternion.LookRotation(sp.Tangent);
+
+                        if (buildingMaterial != null)
+                        {
+                            building.GetComponent<MeshRenderer>().sharedMaterial = buildingMaterial;
+                        }
+                    }
+                }
+            }
+        }
+
+        Debug.Log($"[ProceduralRoadBuilder] 城镇生成完成: 建筑已放置");
     }
 
     private struct BoundaryData
@@ -272,17 +361,17 @@ public class ProceduralRoadBuilder : MonoBehaviour
 
         var renderOptions = new ConstraintOptions { ConformingDelaunay = true };
         var renderQuality = new QualityOptions { MinimumAngle = 20, MaximumArea = 1.5 };
-        result.RenderMesh = ProcessMesh(poly.Triangulate(renderOptions, renderQuality), sortedEntries, exactBoundaryDict, true);
+        result.RenderMesh = ProcessMesh(poly.Triangulate(renderOptions, renderQuality), sortedEntries, exactBoundaryDict, true, center);
 
         var colliderOptions = new ConstraintOptions { ConformingDelaunay = false };
         var colliderQuality = new QualityOptions { MinimumAngle = 15 };
-        result.ColliderMesh = ProcessMesh(poly.Triangulate(colliderOptions, colliderQuality), sortedEntries, exactBoundaryDict, false);
+        result.ColliderMesh = ProcessMesh(poly.Triangulate(colliderOptions, colliderQuality), sortedEntries, exactBoundaryDict, false, center);
 
         result.Contour = authoritativeContour.ToArray();
         return result;
     }
 
-    private Mesh ProcessMesh(TriangleNet.Meshing.IMesh triMesh, List<JunctionEdgeEntry> entries, Dictionary<Vector2, BoundaryData> exactBoundaryDict, bool isRenderMesh)
+    private Mesh ProcessMesh(TriangleNet.Meshing.IMesh triMesh, List<JunctionEdgeEntry> entries, Dictionary<Vector2, BoundaryData> exactBoundaryDict, bool isRenderMesh, Vector3 junctionCenter)
     {
         List<Vector3> finalVertices = new List<Vector3>();
         List<int> finalTriangles = new List<int>();
@@ -342,7 +431,13 @@ public class ProceduralRoadBuilder : MonoBehaviour
                     }
 
                     if (!isBoundary)
-                        finalY = boundaryAvgY + roadHeightOffset;
+                    {
+                        // 路口内部顶点：实时采样地形高度，避免乡村起伏地形被"拍平"
+                        if (WorldModel.Instance != null)
+                            finalY = WorldModel.Instance.GetUnifiedHeight(v2D.x, v2D.y) + roadHeightOffset;
+                        else
+                            finalY = boundaryAvgY + roadHeightOffset;
+                    }
 
                     finalVertices.Add(new Vector3(v2D.x, finalY, v2D.y));
                     finalNormals.Add(finalNormal);
@@ -372,14 +467,16 @@ public class ProceduralRoadBuilder : MonoBehaviour
             }
             mesh.normals = meshNormals;
 
-            // 生成 UV 坐标
+            // 生成 UV 坐标：路口用径向UV（以路口中心为原点），消除与道路接缝的纹理断层
             Vector2[] uv = new Vector2[finalVertices.Count];
+            Vector2 juncCenter2D = new Vector2(junctionCenter.x, junctionCenter.z);
             for (int i = 0; i < finalVertices.Count; i++)
             {
-                uv[i] = new Vector2(
-                    finalVertices[i].x * uvScale,
-                    finalVertices[i].z * uvScale
-                );
+                Vector2 v2D = new Vector2(finalVertices[i].x, finalVertices[i].z);
+                Vector2 delta = v2D - juncCenter2D;
+                float dist = delta.magnitude;
+                float angle = Mathf.Atan2(delta.y, delta.x);
+                uv[i] = new Vector2(angle * 0.5f, dist * uvScale);
             }
             mesh.uv = uv;
         }

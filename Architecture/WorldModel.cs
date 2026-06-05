@@ -64,9 +64,12 @@ public class WorldModel : MonoBehaviour
 
         Bounds worldBounds = CalculateWorldBounds();
 
-        IngestAndPrecomputeGraph(roadGenerator);
-
+        // ★★★ 必须先初始化 TerrainGrid，再 IngestAndPrecomputeGraph ★★★
+        // 否则 IngestAndPrecomputeGraph 里所有 GetUnifiedHeight 返回 0，
+        // 导致 IntersectionRadius、夹角等几何数据全在 2D 假象下计算
         terrainGrid.Initialize(worldBounds);
+
+        IngestAndPrecomputeGraph(roadGenerator);
 
         foreach (var node in _graph.Values)
         {
@@ -495,7 +498,86 @@ public class WorldModel : MonoBehaviour
             }
         }
 
+        // 遍历所有连接器（路口内转弯线），防止路口空间搜索时遗漏
+        foreach (var kvp in GlobalConnectors)
+        {
+            LaneConnector conn = kvp.Value;
+            if (conn.TurnCurve == null || conn.TurnCurve.TotalLength <= 0) continue;
+
+            float totalLen = conn.TurnCurve.TotalLength;
+            Vector3 startPt = conn.TurnCurve.GetPoint(0);
+            Vector3 endPt = conn.TurnCurve.GetPoint(1);
+            float safeExpand = totalLen * 0.5f + maxRadius + 5f;
+            float minX = Mathf.Min(startPt.x, endPt.x) - safeExpand;
+            float maxX = Mathf.Max(startPt.x, endPt.x) + safeExpand;
+            float minZ = Mathf.Min(startPt.z, endPt.z) - safeExpand;
+            float maxZ = Mathf.Max(startPt.z, endPt.z) + safeExpand;
+            if (posXZ.x < minX || posXZ.x > maxX || posXZ.y < minZ || posXZ.y > maxZ) continue;
+
+            float t = conn.TurnCurve.GetClosestT(worldPos, 0.5f);
+            Vector3 pt = conn.TurnCurve.GetPoint(t);
+            float sqrD = (posXZ.x - pt.x) * (posXZ.x - pt.x) + (posXZ.y - pt.z) * (posXZ.y - pt.z);
+
+            if (sqrD < bestDist && sqrD < maxRadius * maxRadius)
+            {
+                if (hasForward)
+                {
+                    Vector3 connDir = conn.TurnCurve.GetTangent(t);
+                    float dot = Vector3.Dot(forward.normalized, connDir.normalized);
+                    if (dot < 0.5f) continue;
+                }
+                bestDist = sqrD;
+                bestLaneId = kvp.Key; // ConnectorId 也返回，调用方自己判断正负号
+            }
+        }
+
         return bestLaneId;
+    }
+
+    /// <summary>
+    /// 在路口内搜索最近的连接器（转弯曲线）。用于自由模式/碰撞恢复重定位。
+    /// 返回 ConnectorId，调用方需在 GlobalConnectors 中查找。
+    /// </summary>
+    public int FindNearestConnector(Vector3 worldPos, Vector3 forward = default, float maxRadius = 15f)
+    {
+        int bestId = -1;
+        float bestDist = float.MaxValue;
+        Vector2 posXZ = new Vector2(worldPos.x, worldPos.z);
+        bool hasForward = (forward != default && forward.sqrMagnitude > 0.1f);
+
+        foreach (var kvp in GlobalConnectors)
+        {
+            LaneConnector conn = kvp.Value;
+            if (conn.TurnCurve == null || conn.TurnCurve.TotalLength <= 0) continue;
+
+            float totalLen = conn.TurnCurve.TotalLength;
+            Vector3 startPt = conn.TurnCurve.GetPoint(0);
+            Vector3 endPt = conn.TurnCurve.GetPoint(1);
+            float safeExpand = totalLen * 0.5f + maxRadius + 5f;
+            float minX = Mathf.Min(startPt.x, endPt.x) - safeExpand;
+            float maxX = Mathf.Max(startPt.x, endPt.x) + safeExpand;
+            float minZ = Mathf.Min(startPt.z, endPt.z) - safeExpand;
+            float maxZ = Mathf.Max(startPt.z, endPt.z) + safeExpand;
+            if (posXZ.x < minX || posXZ.x > maxX || posXZ.y < minZ || posXZ.y > maxZ) continue;
+
+            float t = conn.TurnCurve.GetClosestT(worldPos, 0.5f);
+            Vector3 pt = conn.TurnCurve.GetPoint(t);
+            float sqrD = (posXZ.x - pt.x) * (posXZ.x - pt.x) + (posXZ.y - pt.z) * (posXZ.y - pt.z);
+
+            if (sqrD < bestDist && sqrD < maxRadius * maxRadius)
+            {
+                if (hasForward)
+                {
+                    Vector3 connDir = conn.TurnCurve.GetTangent(t);
+                    float dot = Vector3.Dot(forward.normalized, connDir.normalized);
+                    if (dot < 0.5f) continue;
+                }
+                bestDist = sqrD;
+                bestId = conn.ConnectorId;
+            }
+        }
+
+        return bestId;
     }
 
     public void RebuildLaneSpatialIndex()
@@ -621,8 +703,8 @@ public class WorldModel : MonoBehaviour
 
                 foreach (Lane exit in exitLanes)
                 {
-                    // 同一路段跳过
-                    if (entry.RoadId == exit.RoadId) continue;
+                    // 同一车道跳过（允许同路段不同方向，即合法U-turn）
+                    if (entry.LaneId == exit.LaneId) continue;
                     // 同一出口道路已处理过
                     if (usedExitRoads.Contains(exit.RoadId)) continue;
 
@@ -724,12 +806,23 @@ public class WorldModel : MonoBehaviour
         List<Vector3> pts = new List<Vector3> { p1, mid1, mid2, p2 };
         CatmullRomSpline spline = new CatmullRomSpline(pts, false);
 
+        // 查找同路段的反向车道作为掉头目标
+        int reverseLaneId = -1;
+        foreach (var kvp in GlobalLanes)
+        {
+            if (kvp.Value.RoadId == lane.RoadId && kvp.Value.Direction != lane.Direction)
+            {
+                reverseLaneId = kvp.Key;
+                break;
+            }
+        }
+
         LaneConnector connector = new LaneConnector
         {
             ConnectorId = _nextConnectorId++,
             JunctionId = node.Id,
             FromLaneId = lane.LaneId,
-            ToLaneId = lane.LaneId,          // 自己连自己，形成掉头
+            ToLaneId = reverseLaneId >= 0 ? reverseLaneId : lane.LaneId, // 反向车道，避免逆行
             Polyline  = pts,
             TurnCurve = spline,
             TurnType = TurnType.UTurn
