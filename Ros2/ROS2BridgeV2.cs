@@ -124,6 +124,14 @@ public class ROS2BridgeV2 : MonoBehaviour
             }
         }
 
+        // ★ ROS2 接管时，如果没有主车，自动选第一辆可用的车
+        if (main == null && useRosControl && all.Length > 0)
+        {
+            main = all[0];
+            main.isPlayerControlled = true;
+            Debug.Log($"[ROS2Bridge] ROS2接管 → 自动选定主车: {main.name}");
+        }
+
         if (main == null)
         {
             _carController = null;
@@ -233,6 +241,12 @@ public class ROS2BridgeV2 : MonoBehaviour
             rosLinearVelocity = 0f;
             rosAngularVelocity = 0f;
 
+            if (_carController != null)
+            {
+                _carController.isNPC = true;          // 恢复NPC标记
+                _carController.manualControl = false;
+            }
+
             if (_autoDrive != null)
             {
                 _autoDrive.enabled = true;
@@ -308,6 +322,8 @@ public class ROS2BridgeV2 : MonoBehaviour
             if (useRosControl && _carController != null)
             {
                 if (_autoDrive != null) _autoDrive.enabled = false; // 瘫痪本地AI
+                _carController.isNPC = false;          // ★ 允许底盘执行运动学位移
+                _carController.manualControl = false;  // ★ 退出手动模式，解除底盘拦截
                 _carController.ApplyCommand(new VehicleCommand
                 {
                     throttle = Mathf.Clamp(rosLinearVelocity / _carController.maxSpeed, -1f, 1f),
@@ -601,6 +617,18 @@ public class ROS2BridgeV2 : MonoBehaviour
         useRosControl = false;
         rosLinearVelocity = 0f;
         rosAngularVelocity = 0f;
+
+        // ★ 断开时恢复NPC状态，交还本地AI
+        if (_carController != null)
+        {
+            _carController.isNPC = true;
+            _carController.manualControl = false;
+        }
+        if (_autoDrive != null)
+        {
+            _autoDrive.enabled = true;
+            _autoDrive.ResetNavigation();
+        }
 
         // ★ 断开时清除AEB状态
         if (_specialSituations != null) _specialSituations.TriggerExternalAEB(false);

@@ -68,7 +68,7 @@ class UnityAEBBridge(Node):
         # TCP配置
         # =====================================================
 
-        self.host = '0.0.0.0'
+        self.host = '172.21.16.202'
         self.port = 10086
 
         self.server_socket  = None
@@ -165,6 +165,12 @@ class UnityAEBBridge(Node):
             target=self.keyboard_input_loop,
             daemon=True
         ).start()
+
+        # =====================================================
+        # 控制指令周期性发送（独立于 vehicle_state，防止死锁）
+        # =====================================================
+
+        self._control_timer = self.create_timer(0.1, self._control_timer_callback)
 
         # =====================================================
         # 启动信息
@@ -446,6 +452,17 @@ class UnityAEBBridge(Node):
 
         self.manual_linear  = max(min(float(msg.linear.x), 8.0), -3.0)
         self.manual_angular = float(msg.angular.z)
+
+    # =========================================================
+    # 控制指令定时发送回调（独立于 vehicle_state，防止死锁）
+    # =========================================================
+
+    def _control_timer_callback(self):
+        """
+        每 0.1 秒发送一次控制指令，不依赖 vehicle_state 回包。
+        解决 Unity 端无主车导致 vehicle_state 不发，进而 Python 也不发控制指令的死锁。
+        """
+        self.send_control_to_unity()
 
     # =========================================================
     # 发送控制到Unity
