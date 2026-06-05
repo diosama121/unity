@@ -144,9 +144,17 @@ public class SimpleCarController : MonoBehaviour
             if (nearest != null)
             {
                 Vector3 safePos = nearest.WorldPos;
+                // ★ 必须加随机微调，防止多车瞬间重叠爆炸
+                safePos += new Vector3(UnityEngine.Random.Range(-2f, 2f), 0, UnityEngine.Random.Range(-2f, 2f));
                 safePos.y = WorldModel.Instance.GetUnifiedHeight(safePos.x, safePos.z) + 1.0f;
+
                 transform.position = safePos;
-                transform.rotation = Quaternion.identity;
+                // ★ 车头顺着路网朝向摆正
+                transform.rotation = Quaternion.LookRotation(nearest.Tangent != Vector3.zero ? nearest.Tangent : Vector3.forward);
+
+                // ★ 必须打晕 AI 让它重新认路
+                SimpleAutoDrive autoDrive = GetComponent<SimpleAutoDrive>();
+                if (autoDrive != null) autoDrive.ResetNavigation();
             }
         }
         else

@@ -287,7 +287,7 @@ public class ROS2BridgeV2 : MonoBehaviour
             SendEmergencyVehicleState();
         }
 
-        // 5. ★ ROS2 AEB → SpecialSituations（统一控制流，不再直接操控车辆）
+        // 5. ★ ROS2 AEB → SpecialSituations（统一控制流）
         if (_rosAebState == "BRAKING" && rosLinearVelocity < 0f)
         {
             if (_specialSituations != null)
@@ -295,11 +295,30 @@ public class ROS2BridgeV2 : MonoBehaviour
             _aebActive = true;
             _aebWarningTimer = aebWarningDuration;
         }
-        else if (_aebActive)
+        else
         {
-            if (_specialSituations != null)
-                _specialSituations.TriggerExternalAEB(false);
-            _aebActive = false;
+            if (_aebActive)
+            {
+                if (_specialSituations != null)
+                    _specialSituations.TriggerExternalAEB(false);
+                _aebActive = false;
+            }
+
+            // ★ 常规 ROS2 遥控/巡航接管（非AEB状态下恢复遥控权）
+            if (useRosControl && _carController != null)
+            {
+                if (_autoDrive != null) _autoDrive.enabled = false; // 瘫痪本地AI
+                _carController.ApplyCommand(new VehicleCommand
+                {
+                    throttle = Mathf.Clamp(rosLinearVelocity / _carController.maxSpeed, -1f, 1f),
+                    steering = Mathf.Clamp(rosAngularVelocity / _carController.maxSteeringAngle, -1f, 1f),
+                    isBraking = false
+                });
+            }
+            else
+            {
+                if (_autoDrive != null && !_autoDrive.enabled) _autoDrive.enabled = true;
+            }
         }
     }
 

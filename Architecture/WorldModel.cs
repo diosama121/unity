@@ -788,17 +788,38 @@ public class WorldModel : MonoBehaviour
 
     private LaneConnector BuildUTurnConnector(Lane lane, RoadNode node)
     {
-        float len = lane.CenterSpline.TotalLength;
-        Vector3 p1 = lane.CenterSpline.GetPoint(1f);   // 终点（驶入路口的点）
-        Vector3 p2 = lane.CenterSpline.GetPoint(0f);   // 起点（掉头后要回到的点）
+        // 查找同路段的反向车道作为掉头目标
+        Lane reverseLane = null;
+        foreach (var kvp in GlobalLanes)
+        {
+            if (kvp.Value.RoadId == lane.RoadId && kvp.Value.Direction != lane.Direction)
+            {
+                reverseLane = kvp.Value;
+                break;
+            }
+        }
 
-        // 取切线：入口方向（指向终点）和出口方向（从起点出发）
-        Vector3 entryDir = (p1 - lane.CenterSpline.GetPoint(Mathf.Max(0f, 1f - 2f / len))).normalized;
-        Vector3 exitDir = (lane.CenterSpline.GetPoint(Mathf.Min(1f, 2f / len)) - p2).normalized;
+        Vector3 p1 = lane.CenterSpline.GetPoint(1f);   // 终点（死路尽头）
+        Vector3 entryDir = lane.CenterSpline.GetTangent(1f);
 
-        // 掉头需要一个大弧线，控制点向外拉远
-        float dist = Vector3.Distance(p1, p2);
-        float mag = dist * 0.8f;
+        // ★ 反向车道起点（同节点，对向车道，距离≈路宽），而非本车道起点（可能100米外）
+        Vector3 p2;
+        Vector3 exitDir;
+        if (reverseLane != null)
+        {
+            p2 = reverseLane.CenterSpline.GetPoint(0f);  // 反向车道起点（死路尽头对侧）
+            exitDir = reverseLane.CenterSpline.GetTangent(0f);
+        }
+        else
+        {
+            // 兜底：原地画小半圆掉头
+            p2 = p1;
+            exitDir = -entryDir;
+        }
+
+        // ★ 掉头弧线只放大到路宽的2倍，杜绝"彩虹桥"
+        float roadWidth = roadBuilder != null ? roadBuilder.roadWidth : 6f;
+        float mag = Mathf.Min(Vector3.Distance(p1, p2) * 0.8f, roadWidth * 2f);
 
         Vector3 mid1 = SplineMath.EvaluateHermite(0.33f, p1, entryDir * mag, p2, exitDir * mag);
         Vector3 mid2 = SplineMath.EvaluateHermite(0.66f, p1, entryDir * mag, p2, exitDir * mag);
@@ -806,23 +827,12 @@ public class WorldModel : MonoBehaviour
         List<Vector3> pts = new List<Vector3> { p1, mid1, mid2, p2 };
         CatmullRomSpline spline = new CatmullRomSpline(pts, false);
 
-        // 查找同路段的反向车道作为掉头目标
-        int reverseLaneId = -1;
-        foreach (var kvp in GlobalLanes)
-        {
-            if (kvp.Value.RoadId == lane.RoadId && kvp.Value.Direction != lane.Direction)
-            {
-                reverseLaneId = kvp.Key;
-                break;
-            }
-        }
-
         LaneConnector connector = new LaneConnector
         {
             ConnectorId = _nextConnectorId++,
             JunctionId = node.Id,
             FromLaneId = lane.LaneId,
-            ToLaneId = reverseLaneId >= 0 ? reverseLaneId : lane.LaneId, // 反向车道，避免逆行
+            ToLaneId = reverseLane != null ? reverseLane.LaneId : lane.LaneId,
             Polyline  = pts,
             TurnCurve = spline,
             TurnType = TurnType.UTurn

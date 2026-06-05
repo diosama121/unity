@@ -246,7 +246,9 @@ public class SimpleAutoDrive : MonoBehaviour
             if (distOnEdge > currentEdgeLength) break;
             
             Vector3 point = currentTrajectory.GetPointAtDistance(distOnEdge);
-            Collider[] hits = Physics.OverlapSphere(point, 1.0f, mask);
+            // ★ 防啃地：抬高 0.8m，扫描球缩小到 0.4m
+            point.y += 0.8f;
+            Collider[] hits = Physics.OverlapSphere(point, 0.4f, mask);
             
             foreach (var hit in hits)
             {
@@ -767,6 +769,12 @@ public class SimpleAutoDrive : MonoBehaviour
     bool CheckRedLightUnified()
     {
         if (worldModel == null) return false;
+
+        // ★ 路权免死金牌：已行驶在连接器（路口转弯线）上的车辆，拥有绝对路权
+        // 无视一切红绿灯和停止标志，防止"空间绑架"
+        if (currentEdgeIndex < pathEdgeIds.Count && pathEdgeIds[currentEdgeIndex] < 0)
+            return false;
+
         RoadNode nearestNode = worldModel.GetNearestNode(transform.position);
         if (nearestNode == null) return false;
         if (nearestNode.Type != NodeType.Intersection && nearestNode.Type != NodeType.Merge) return false;
@@ -806,6 +814,11 @@ public class SimpleAutoDrive : MonoBehaviour
     bool CheckStopSign()
     {
         if (worldModel == null) return false;
+
+        // ★ 路权免死金牌：行驶在连接器上的车辆不受StopSign约束
+        if (currentEdgeIndex < pathEdgeIds.Count && pathEdgeIds[currentEdgeIndex] < 0)
+            return false;
+
         RoadNode nearestNode = worldModel.GetNearestNode(transform.position);
         if (nearestNode == null) return false;
         if (nearestNode.Type != NodeType.Intersection && nearestNode.Type != NodeType.Merge) return false;
@@ -914,7 +927,7 @@ public class SimpleAutoDrive : MonoBehaviour
 
             // 横向判断：同一道路（侧向偏移 < 4m）
             float lateralDist = Mathf.Abs(Vector3.Cross(myFwd, toOther).y);
-            if (lateralDist > 4f) continue;
+            if (lateralDist > 2f) continue; // 缩减横向扫描宽度，无视旁侧车道
 
             if (dist < minDist) minDist = dist;
         }

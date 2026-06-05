@@ -160,10 +160,10 @@ public class SubsumptionEngine
 
         return new LayerOutput
         {
-            throttle = -brake,
+            throttle = 0f, // ★ 禁止负油门：负值会被执行层当成倒车加速
             brake = brake,
             targetSpeed = targetSpd,
-            isHardBrake = false,
+            isHardBrake = true, // ★ 硬刹车，强制走 brakeDeceleration 路径
             state = LongitudinalState.Stopped
         };
     }
