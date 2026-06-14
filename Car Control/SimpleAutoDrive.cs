@@ -16,7 +16,7 @@ public class SimpleAutoDrive : MonoBehaviour
     public float targetSpeed        = 8f;
     public float safeDistance       = 4f;
     public float emergencyBrakeDist = 3.5f;
-    // [已移除] lookAheadMin/Max/safeFollowSpeed/dynamicLookAhead — 旧PID转向参数，现由SnapToCurve接管
+    
 
     [Header("传感器设置")]
     public float sensorForwardOffset = 4f;
@@ -70,6 +70,9 @@ public class SimpleAutoDrive : MonoBehaviour
     public bool IsDeadlockPerturbating   => _deadlockRecovery?.IsPerturbating ?? false;
     public bool IsYieldingToEmergency    => _emergencyYieldHandler?.IsYielding ?? false;
     public float PullOverOffset           => _pullOverHandler?.CurrentOffset ?? 0f;
+
+    [Header("特种车辆")]
+    public bool isEmergencyVehicle = false; // ★ 标识这辆车是不是救护车/警车
 
     public DriveState currentState
     {
@@ -150,7 +153,7 @@ public class SimpleAutoDrive : MonoBehaviour
     // ========== 信息面板开关（U键） ==========
     private bool _showInfoPanel = true;
 
-    // ========== NPC全局注册表（假检测用） ==========
+    // ========== NPC全局注册表（检测用） ==========
     public static List<SimpleAutoDrive> AllCars = new List<SimpleAutoDrive>();
 
     // ========== 红绿灯/交规 ==========
@@ -322,31 +325,33 @@ public class SimpleAutoDrive : MonoBehaviour
         }
 
         // ==========================================
-        // ★ 轨迹为空 → 死锁恢复（DeadlockRecovery接管）
+        // ★ 修复1：把死锁检测提出来，让它每帧都运行，不再受"轨迹为空"的限制
+        // ==========================================
+        _deadlockRecovery.Update(transform.position, Time.deltaTime);
+
+        // 如果触发了 Stage 2 的强制重规划
+        if (_deadlockRecovery.NeedsForceRepath)
+        {
+            Debug.LogWarning($"[SimpleAutoDrive] {name} 彻底死锁，强制重规划");
+            _deadlockRecovery.Reset();
+            MergeBackToTraffic(); // ★ 用MergeBackToTraffic代替ForceNewDestination，避免闪现
+            return;
+        }
+
+        // ==========================================
+        // 轨迹为空 → 死锁恢复（DeadlockRecovery接管）
         // ==========================================
         if (currentTrajectory == null || currentEdgeLength <= 0)
         {
-            _deadlockRecovery.Update(transform.position, Time.deltaTime);
-
-            if (_deadlockRecovery.NeedsForceRepath)
+            _recoveryTimer += Time.deltaTime;
+            if (_recoveryTimer > recoveryInterval)
             {
-                Debug.LogWarning($"[SimpleAutoDrive] {name} 死锁脱困Stage2：强制重规划");
-                _deadlockRecovery.Reset();
-                ForceNewDestination();
-            }
-            else
-            {
-                _recoveryTimer += Time.deltaTime;
-                if (_recoveryTimer > recoveryInterval)
-                {
-                    _recoveryTimer = 0f;
-                    RequestNewPath();
-                }
+                _recoveryTimer = 0f;
+                RequestNewPath();
             }
             return;
         }
         _recoveryTimer = 0f;
-        _deadlockRecovery.Reset(); // 轨迹正常，重置死锁检测
 
         // ==========================================
         // 传感器采样
@@ -356,7 +361,7 @@ public class SimpleAutoDrive : MonoBehaviour
         // ==========================================
         // 紧急车辆让行检测（论文 §5.4 TF-2）
         // ==========================================
-        _emergencyYieldHandler.Update(transform.position, false, Time.deltaTime);
+        _emergencyYieldHandler.Update(transform.position, isEmergencyVehicle, Time.deltaTime);
 
         // ==========================================
         // 直路让行靠边（PullOverHandler）
@@ -425,6 +430,23 @@ public class SimpleAutoDrive : MonoBehaviour
         {
             brakeHard = extCmd.Value.isBraking;
             targetSpd = 0f;
+        }
+
+        // ==========================================
+        // ★ 修复2：死锁脱困 Stage 1 注入物理微扰（高斯微扰退火）
+        // ==========================================
+        if (_deadlockRecovery.IsPerturbating && !brakeHard)
+        {
+            // 给油门加点随机速度（可能是正的往前拱，可能是负的往后缩）
+            targetSpd += _deadlockRecovery.PerturbationSpeed;
+            
+            // 横向微扰：让车不只是直上直下，左右微微"抽搐"打破雷达锁死的完美僵局
+            Vector3 tangent = currentTrajectory.GetTangentAtDistance(currentDistOnEdge);
+            Vector3 lateralWiggle = transform.right * _deadlockRecovery.PerturbationSteering * 2f;
+            transform.position += lateralWiggle * Time.deltaTime;
+            
+            // 扰动期间强行解除死刹车，允许蠕动
+            brakeHard = false;
         }
 
         // ==========================================
@@ -774,6 +796,15 @@ public class SimpleAutoDrive : MonoBehaviour
         if (!redLightAhead && CheckRoundaboutYield())
             redLightAhead = true;
 
+        // ★ 救护车路口封锁：如果我是普通车，救护车就在附近，且前方有路口，强行视为红灯！
+        if (!isEmergencyVehicle && _emergencyYieldHandler.ShouldYieldAtIntersection)
+        {
+            if (hasStopLineAhead)
+            {
+                redLightAhead = true;
+            }
+        }
+
         if (isPlayerControlled)
         {
             // 主车：真实物理雷达（后续对接ROS2）
@@ -1000,6 +1031,13 @@ public class SimpleAutoDrive : MonoBehaviour
         foreach (var car in AllCars)
         {
             if (car == this || car == null) continue;
+
+            // ★ 修复：如果我是救护车，且这辆普通车已经靠边让行了，直接无视它的碰撞体积！
+            if (this.isEmergencyVehicle && car._pullOverHandler != null && car._pullOverHandler.IsActive)
+            {
+                continue; // 摩西分海，直接开过去
+            }
+
             Vector3 toOther = car.transform.position - myPos;
             toOther.y = 0;
             float dist = toOther.magnitude;

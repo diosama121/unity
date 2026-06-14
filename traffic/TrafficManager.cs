@@ -98,29 +98,15 @@ public class TrafficManager : MonoBehaviour
                 continue;
             }
 
-            // 检查是否到达终点（路径进度 >= 95% 或 控制器已停止）
-            bool reachedEnd = npc.longState == LongitudinalState.Stopped;
-            if (!reachedEnd)
+            // ★ 终极修复：绝对不要因为车速为0就把车重生了！
+            // 停车和死锁交给 SimpleAutoDrive 自己的大脑去处理。
+            // 这里的 TrafficManager 只负责给"掉出地图"的灵异车辆收尸。
+            bool reachedEnd = false;
+            
+            // 如果车子掉入虚空（比如 Y 轴小于 -20），才判定为需要回收
+            if (npc.transform.position.y < -20f)
             {
-                // 简单距离检查：离任何车道端点太远且速度极低
-                float speed = npc.currentSpeed;
-                if (speed < 0.2f)
-                {
-                    Vector3 pos = npc.transform.position;
-                    bool nearAnyLane = false;
-                    foreach (var laneKvp in WorldModel.Instance.GlobalLanes)
-                    {
-                        if (laneKvp.Value.CenterSpline == null || laneKvp.Value.CenterSpline.TotalLength < 5f) continue;
-                        float t = laneKvp.Value.CenterSpline.GetClosestT(pos, 0.5f);
-                        Vector3 pt = laneKvp.Value.CenterSpline.GetPoint(t);
-                        if (Vector3.Distance(pos, pt) < 8f)
-                        {
-                            nearAnyLane = true;
-                            break;
-                        }
-                    }
-                    if (!nearAnyLane) reachedEnd = true;
-                }
+                reachedEnd = true;
             }
 
             if (reachedEnd)
@@ -130,14 +116,11 @@ public class TrafficManager : MonoBehaviour
                 SimpleCarController controller = npcObj.GetComponent<SimpleCarController>();
                 if (controller == null) controller = npcObj.GetComponentInChildren<SimpleCarController>();
 
-                if (RespawnNPCOnNewLane(npc, npcObj, controller))
-                {
-                    // 成功重生，保持列表
-                }
-                else
-                {
-                    // ★ 暗雷三修复：重生失败不销毁，等下一轮 schedulingCheckInterval 再试
-                    // 防止 CheckSphere 偶然碰撞导致NPC越跑越少
+                if (RespawnNPCOnNewLane(npc, npcObj, controller)) {
+                    // 成功重生
+                } else {
+                    npcVehicles.RemoveAt(i);
+                    Destroy(npcObj);
                 }
             }
         }
@@ -417,7 +400,7 @@ public class TrafficManager : MonoBehaviour
         GameObject evObj = Instantiate(prefab, spawnPos, Quaternion.LookRotation(forward));
         evObj.name = "Emergency_Vehicle";
 
-        // 已移除幻觉代码：AIStateBubble 和 DangerZoneVisualizer
+      
 
         SimpleCarController controller = evObj.GetComponent<SimpleCarController>();
         if (controller == null) controller = evObj.GetComponentInChildren<SimpleCarController>();
@@ -431,6 +414,7 @@ public class TrafficManager : MonoBehaviour
         if (autoDrive == null) autoDrive = evObj.GetComponentInChildren<SimpleAutoDrive>();
         if (autoDrive != null)
         {
+            autoDrive.isEmergencyVehicle = true; // ★ 接线：标识为救护车，避让系统才能正确识别
             if (pathPlanner != null && WorldModel.Instance != null)
             {
                 RoadNode targetNode = GetFarNodeFromWorld(nearestNode);
